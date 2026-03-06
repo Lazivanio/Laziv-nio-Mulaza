@@ -1,0 +1,5 @@
+{
+  "name": "FactuModern - Sistema de Faturação Eletrônica",
+  "description": "Um sistema moderno de faturação eletrônica com módulos para Administradores, Donos de Lojas e Vendedores.",
+  "requestFramePermissions": []
+}
