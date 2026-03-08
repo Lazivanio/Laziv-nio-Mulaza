@@ -5,6 +5,7 @@ export interface User {
   email: string;
   name: string;
   role: UserRole;
+  store_id?: number | null;
 }
 
 export interface Store {
@@ -31,6 +32,8 @@ export interface Product {
   category: string;
   image_url: string;
   is_promo: boolean;
+  discount_percent?: number;
+  promo_name?: string;
 }
 
 export interface Transaction {

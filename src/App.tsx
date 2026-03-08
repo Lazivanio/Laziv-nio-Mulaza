@@ -1,6 +1,11 @@
 import { useState, useEffect, ReactNode, FormEvent } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, Cell, PieChart, Pie, Legend
+} from 'recharts';
+
+import { 
   LayoutGrid,
   Coffee,
   Beer,
@@ -44,7 +49,17 @@ import {
   ChevronLeft,
   Trash2,
   Edit2,
-  Power
+  Power,
+  Minus,
+  ArrowRightLeft,
+  ShieldCheck,
+  LifeBuoy,
+  Monitor,
+  FilePieChart,
+  Lock as LockIcon,
+  ShieldAlert,
+  HelpCircle,
+  Cpu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -142,7 +157,7 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
   </AnimatePresence>
 );
 
-// --- Pages ---
+// --- Admin Panel ---
 
 const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [email, setEmail] = useState('owner@factu.com');
@@ -368,112 +383,703 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
 
 // --- Admin Module ---
 
-const AdminDashboard = () => {
-  const [stores, setStores] = useState<any[]>([]);
-  const [transactions, setTransactions] = useState<any[]>([]);
+const AdminPanel = ({ user }: { user: User }) => {
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [dashboardData, setDashboardData] = useState<any>({
+    stats: { totalClients: 0, activeClients: 0, totalStores: 0, pendingSupport: 0, expiredLicenses: 0, expiringSoon: 0 },
+    recentClients: []
+  });
+  const [clients, setClients] = useState<any[]>([]);
+  const [licenses, setLicenses] = useState<any[]>([]);
+  const [tickets, setTickets] = useState<any[]>([]);
+  const [monitoring, setMonitoring] = useState<any>({
+    stats: { totalTransactions: 0, todayTransactions: 0 },
+    recentActivity: [],
+    uptime: 0
+  });
+  const [plans, setPlans] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const fetchData = () => {
-    fetch('/api/admin/stores').then(res => res.json()).then(setStores);
-    fetch('/api/admin/transactions').then(res => res.json()).then(setTransactions);
+  const fetchData = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const endpoints = [
+        '/api/admin/dashboard',
+        '/api/admin/clients',
+        '/api/admin/licenses',
+        '/api/admin/support',
+        '/api/admin/monitoring',
+        '/api/admin/plans'
+      ];
+
+      const responses = await Promise.all(endpoints.map(url => fetch(url)));
+      
+      const failed = responses.find(r => !r.ok);
+      if (failed) {
+        throw new Error(`Failed to fetch ${failed.url}: ${failed.statusText}`);
+      }
+
+      const [dashData, clientsData, licensesData, ticketsData, monitoringData, plansData] = await Promise.all(
+        responses.map(r => r.json())
+      );
+
+      setDashboardData(dashData);
+      setClients(clientsData);
+      setLicenses(licensesData);
+      setTickets(ticketsData);
+      setMonitoring(monitoringData);
+      setPlans(plansData);
+    } catch (e: any) {
+      console.error("Error fetching admin data", e);
+      setError(e.message);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  useEffect(fetchData, []);
+  useEffect(() => {
+    fetchData();
+  }, []);
 
-  const toggleLicense = async (storeId: number, currentStatus: string) => {
-    const newStatus = currentStatus === 'active' ? 'expired' : 'active';
-    const res = await fetch('/api/admin/stores/toggle-license', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ store_id: storeId, status: newStatus })
-    });
-    if (res.ok) fetchData();
-  };
+  if (isLoading) return <div className="p-8 text-center text-zinc-500">Carregando painel administrativo...</div>;
+
+  if (error) {
+    return (
+      <div className="p-8 text-center">
+        <div className="bg-rose-50 border border-rose-100 p-6 rounded-2xl max-w-md mx-auto">
+          <AlertTriangle className="text-rose-600 mx-auto mb-4" size={48} />
+          <h3 className="text-lg font-bold text-rose-900 mb-2">Erro ao carregar dados</h3>
+          <p className="text-sm text-rose-700 mb-6">{error}</p>
+          <button 
+            onClick={fetchData}
+            className="bg-rose-600 text-white px-6 py-2 rounded-xl font-bold hover:bg-rose-700 transition-all"
+          >
+            Tentar Novamente
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-end">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Painel do Administrador</h2>
-          <p className="text-zinc-500">Bem-vindo de volta, Master.</p>
+    <div className="flex h-screen bg-zinc-50 overflow-hidden">
+      {/* Sidebar */}
+      <aside className="w-64 bg-white border-r border-zinc-200 flex flex-col">
+        <div className="p-6 border-b border-zinc-100">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-black text-white rounded-xl flex items-center justify-center">
+              <ShieldCheck size={24} />
+            </div>
+            <div>
+              <h1 className="font-black text-lg leading-none">ADMIN</h1>
+              <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest mt-1">Platform Master</p>
+            </div>
+          </div>
         </div>
-        <button className="bg-black text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium hover:bg-zinc-800 transition-colors">
-          <Plus size={18} />
-          Nova Licença
-        </button>
-      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard label="Total de Lojas" value={stores.length} icon={Store} trend="+12%" color="blue" />
-        <StatCard label="Receita Total" value="Kz 1.250.000" icon={DollarSign} trend="+8%" color="emerald" />
-        <StatCard label="Licenças Ativas" value={stores.filter(s => s.license_status === 'active').length} icon={CreditCard} color="amber" />
-        <StatCard label="Suporte Pendente" value="3" icon={Users} color="rose" />
-      </div>
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+          <button 
+            onClick={() => setActiveTab('dashboard')}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'dashboard' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
+          >
+            <LayoutDashboard size={20} />
+            <span className="font-bold text-sm">Dashboard</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('clients')}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'clients' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
+          >
+            <Users size={20} />
+            <span className="font-bold text-sm">Clientes</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('licenses')}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'licenses' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
+          >
+            <CreditCard size={20} />
+            <span className="font-bold text-sm">Licenças</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('support')}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'support' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
+          >
+            <LifeBuoy size={20} />
+            <span className="font-bold text-sm">Suporte</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('monitoring')}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'monitoring' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
+          >
+            <Monitor size={20} />
+            <span className="font-bold text-sm">Monitoramento</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('reports')}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'reports' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
+          >
+            <FilePieChart size={20} />
+            <span className="font-bold text-sm">Relatórios</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('settings')}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'settings' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
+          >
+            <Settings2 size={20} />
+            <span className="font-bold text-sm">Configurações</span>
+          </button>
+        </nav>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
-            <h3 className="font-bold">Lojas Recentes</h3>
-            <Link to="/admin/stores" className="text-sm text-zinc-500 hover:text-black flex items-center gap-1">
-              Ver todas <ChevronRight size={14} />
-            </Link>
+        <div className="p-4 border-t border-zinc-100">
+          <div className="flex items-center gap-3 px-4 py-3">
+            <div className="w-8 h-8 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600">
+              <UserIcon size={16} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold truncate">{user.name}</p>
+              <p className="text-[10px] text-zinc-400 truncate">{user.email}</p>
+            </div>
+            <button onClick={() => window.location.reload()} className="text-zinc-400 hover:text-rose-500 transition-colors">
+              <LogOut size={18} />
+            </button>
           </div>
-          <div className="divide-y divide-zinc-100">
-            {stores.map(store => (
-              <div key={store.id} className="p-4 flex items-center justify-between hover:bg-zinc-50 transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-zinc-100 rounded-lg flex items-center justify-center text-zinc-600">
-                    <Store size={20} />
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto">
+        <header className="h-20 bg-white border-b border-zinc-200 flex items-center justify-between px-8 sticky top-0 z-10">
+          <div>
+            <h2 className="text-xl font-black">
+              {activeTab === 'dashboard' && 'Visão Geral da Plataforma'}
+              {activeTab === 'clients' && 'Gestão de Clientes'}
+              {activeTab === 'licenses' && 'Controle de Licenças'}
+              {activeTab === 'support' && 'Centro de Suporte'}
+              {activeTab === 'monitoring' && 'Monitoramento do Sistema'}
+              {activeTab === 'reports' && 'Relatórios de Uso'}
+              {activeTab === 'settings' && 'Configurações Globais'}
+            </h2>
+            <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">
+              {new Date().toLocaleDateString('pt-PT', { weekday: 'long', day: 'numeric', month: 'long' })}
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-full text-[10px] font-black uppercase">
+              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+              Sistemas Operacionais
+            </div>
+          </div>
+        </header>
+
+        <div className="p-8">
+          {activeTab === 'dashboard' && (
+            <div className="space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <StatCard label="Total de Clientes" value={dashboardData.stats.totalClients} icon={Users} color="blue" />
+                <StatCard label="Clientes Ativos" value={dashboardData.stats.activeClients} icon={ShieldCheck} color="emerald" />
+                <StatCard label="Lojas no Sistema" value={dashboardData.stats.totalStores} icon={Store} color="amber" />
+                <StatCard label="Suporte Pendente" value={dashboardData.stats.pendingSupport} icon={LifeBuoy} color="rose" />
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <Card className="lg:col-span-2">
+                  <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+                    <h3 className="font-bold">Clientes Recentes</h3>
+                    <button onClick={() => setActiveTab('clients')} className="text-xs font-bold text-zinc-400 hover:text-black transition-colors">Ver Todos</button>
                   </div>
-                  <div>
-                    <p className="font-semibold text-sm">{store.name}</p>
-                    <p className="text-xs text-zinc-500">Dono: {store.owner_name}</p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-zinc-50">
+                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">NIF</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data Registro</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-50">
+                        {dashboardData.recentClients.map((client: any) => (
+                          <tr key={client.id} className="hover:bg-zinc-50/50 transition-colors">
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 bg-zinc-100 rounded-lg flex items-center justify-center text-zinc-600 font-bold text-xs">
+                                  {client.name.charAt(0)}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-bold">{client.name}</p>
+                                  <p className="text-[10px] text-zinc-400">{client.email}</p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-sm font-medium text-zinc-600">{client.nif || '---'}</td>
+                            <td className="px-6 py-4 text-sm text-zinc-500">{new Date(client.created_at).toLocaleDateString()}</td>
+                            <td className="px-6 py-4">
+                              <span className={cn(
+                                "px-2 py-1 rounded-full text-[10px] font-black uppercase",
+                                client.status === 'active' ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                              )}>
+                                {client.status === 'active' ? 'Ativo' : 'Suspenso'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+
+                <Card>
+                  <div className="p-6 border-b border-zinc-100">
+                    <h3 className="font-bold">Alertas de Licença</h3>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div className="p-4 bg-rose-50 border border-rose-100 rounded-xl flex items-start gap-3">
+                      <AlertTriangle className="text-rose-600 mt-0.5" size={18} />
+                      <div>
+                        <p className="text-sm font-bold text-rose-900">{dashboardData.stats.expiredLicenses} Licenças Expiradas</p>
+                        <p className="text-xs text-rose-600 mt-1">Clientes sem acesso ao sistema.</p>
+                      </div>
+                    </div>
+                    <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-3">
+                      <Calendar className="text-amber-600 mt-0.5" size={18} />
+                      <div>
+                        <p className="text-sm font-bold text-amber-900">{dashboardData.stats.expiringSoon} Expirações Próximas</p>
+                        <p className="text-xs text-amber-600 mt-1">Vencimento nos próximos 7 dias.</p>
+                      </div>
+                    </div>
+                    <button onClick={() => setActiveTab('licenses')} className="w-full py-3 bg-black text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-all">
+                      Gerenciar Licenças
+                    </button>
+                  </div>
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'clients' && (
+            <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <div className="relative w-96">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                  <input type="text" placeholder="Pesquisar clientes por nome, email ou NIF..." className="w-full pl-12 pr-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" />
+                </div>
+                <button className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all">
+                  <Plus size={20} />
+                  Novo Cliente
+                </button>
+              </div>
+
+              <Card>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-zinc-50">
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Contacto</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">NIF</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data Registro</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estado</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Acções</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-50">
+                      {clients.map((client: any) => (
+                        <tr key={client.id} className="hover:bg-zinc-50/50 transition-colors">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 bg-zinc-100 rounded-xl flex items-center justify-center text-zinc-600 font-bold">
+                                {client.name.charAt(0)}
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold">{client.name}</p>
+                                <p className="text-[10px] text-zinc-400">{client.email}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-zinc-600">{client.phone || '---'}</td>
+                          <td className="px-6 py-4 text-sm font-medium text-zinc-600">{client.nif || '---'}</td>
+                          <td className="px-6 py-4 text-sm text-zinc-500">{new Date(client.created_at).toLocaleDateString()}</td>
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-2 py-1 rounded-full text-[10px] font-black uppercase",
+                              client.status === 'active' ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                            )}>
+                              {client.status === 'active' ? 'Ativo' : 'Suspenso'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-black transition-all">
+                                <Edit2 size={16} />
+                              </button>
+                              <button className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-rose-500 transition-all">
+                                <ShieldAlert size={16} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {activeTab === 'licenses' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <Card className="p-6 bg-emerald-50 border-emerald-100">
+                  <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Total Ativas</p>
+                  <h3 className="text-3xl font-black text-emerald-900">{licenses.filter(l => l.status === 'active').length}</h3>
+                </Card>
+                <Card className="p-6 bg-amber-50 border-amber-100">
+                  <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1">A Expirar</p>
+                  <h3 className="text-3xl font-black text-amber-900">{dashboardData.stats.expiringSoon}</h3>
+                </Card>
+                <Card className="p-6 bg-rose-50 border-rose-100">
+                  <p className="text-[10px] font-black text-rose-600 uppercase tracking-widest mb-1">Expiradas</p>
+                  <h3 className="text-3xl font-black text-rose-900">{dashboardData.stats.expiredLicenses}</h3>
+                </Card>
+              </div>
+
+              <Card>
+                <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+                  <h3 className="font-bold">Histórico de Licenciamento</h3>
+                  <button className="text-xs font-bold bg-black text-white px-4 py-2 rounded-lg hover:bg-zinc-800 transition-all">Nova Licença</button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-zinc-50">
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente / Loja</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Início</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Expiração</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estado</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Acções</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-50">
+                      {licenses.map((license: any) => (
+                        <tr key={license.id} className="hover:bg-zinc-50/50 transition-colors">
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-bold">{license.client_name}</p>
+                            <p className="text-[10px] text-zinc-400">{license.store_name || 'Todas as Lojas'}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="px-2 py-1 bg-zinc-100 text-zinc-600 text-[10px] font-black rounded-full uppercase">
+                              {license.plan_type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-zinc-500">{new Date(license.start_date).toLocaleDateString()}</td>
+                          <td className="px-6 py-4 text-sm font-bold text-zinc-700">{new Date(license.expiry_date).toLocaleDateString()}</td>
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-2 py-1 rounded-full text-[10px] font-black uppercase",
+                              license.status === 'active' ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                            )}>
+                              {license.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <button className="text-xs font-bold text-black hover:underline">Renovar</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {activeTab === 'support' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex gap-2">
+                    <button className="px-4 py-2 bg-black text-white rounded-lg text-xs font-bold">Abertos</button>
+                    <button className="px-4 py-2 bg-white text-zinc-500 border border-zinc-200 rounded-lg text-xs font-bold hover:bg-zinc-50">Pendentes</button>
+                    <button className="px-4 py-2 bg-white text-zinc-500 border border-zinc-200 rounded-lg text-xs font-bold hover:bg-zinc-50">Fechados</button>
                   </div>
                 </div>
-                <div className="text-right flex flex-col items-end gap-2">
-                  <button 
-                    onClick={() => toggleLicense(store.id, store.license_status)}
-                    className={cn(
-                      "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-colors",
-                      store.license_status === 'active' ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "bg-rose-100 text-rose-700 hover:bg-rose-200"
-                    )}
-                  >
-                    {store.license_status}
-                  </button>
-                  <p className="text-[10px] text-zinc-400">Expira em: {store.license_expiry}</p>
+
+                <div className="space-y-4">
+                  {tickets.map((ticket: any) => (
+                    <Card key={ticket.id} className="p-6 hover:border-black transition-all cursor-pointer group">
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-zinc-100 rounded-xl flex items-center justify-center text-zinc-600">
+                            <HelpCircle size={20} />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-sm group-hover:text-black transition-colors">{ticket.subject}</h4>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">De: {ticket.client_name} • {new Date(ticket.created_at).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                        <span className={cn(
+                          "px-2 py-1 rounded-full text-[10px] font-black uppercase",
+                          ticket.status === 'open' ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"
+                        )}>
+                          {ticket.status}
+                        </span>
+                      </div>
+                      <p className="text-sm text-zinc-600 line-clamp-2">{ticket.description}</p>
+                      <div className="mt-4 pt-4 border-t border-zinc-50 flex justify-end">
+                        <button className="text-xs font-bold text-black flex items-center gap-1 hover:gap-2 transition-all">
+                          Responder <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    </Card>
+                  ))}
+                  {tickets.length === 0 && (
+                    <div className="text-center py-20">
+                      <div className="w-16 h-16 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-400 mx-auto mb-4">
+                        <ShieldCheck size={32} />
+                      </div>
+                      <p className="text-zinc-500 font-bold">Nenhuma solicitação pendente</p>
+                      <p className="text-xs text-zinc-400">Bom trabalho! Todos os clientes foram atendidos.</p>
+                    </div>
+                  )}
                 </div>
               </div>
-            ))}
-          </div>
-        </Card>
 
-        <Card>
-          <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
-            <h3 className="font-bold">Últimas Transações do Sistema</h3>
-            <Link to="/admin/payments" className="text-sm text-zinc-500 hover:text-black flex items-center gap-1">
-              Ver todas <ChevronRight size={14} />
-            </Link>
-          </div>
-          <div className="divide-y divide-zinc-100">
-            {transactions.slice(0, 5).map(t => (
-              <div key={t.id} className="p-4 flex items-center justify-between hover:bg-zinc-50 transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-zinc-100 rounded-lg flex items-center justify-center text-zinc-600">
-                    <ShoppingCart size={20} />
+              <div className="space-y-6">
+                <Card className="p-6 bg-black text-white">
+                  <h3 className="font-bold mb-4">Resumo de Atendimento</h3>
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-zinc-400">Tempo médio de resposta</span>
+                      <span className="font-bold">14 min</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-zinc-400">Taxa de resolução</span>
+                      <span className="font-bold">98.2%</span>
+                    </div>
+                    <div className="pt-4 border-t border-white/10">
+                      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Satisfação do Cliente</p>
+                      <div className="flex gap-1">
+                        {[1,2,3,4,5].map(i => <Sparkles key={i} size={14} className="text-amber-400 fill-amber-400" />)}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-semibold text-sm">{t.store_name}</p>
-                    <p className="text-xs text-zinc-500">{new Date(t.timestamp).toLocaleString()}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-bold text-sm">Kz {t.total_amount.toLocaleString()}</p>
-                  <p className="text-[10px] text-zinc-400">Vendedor: {t.seller_name}</p>
-                </div>
+                </Card>
               </div>
-            ))}
-          </div>
-        </Card>
-      </div>
+            </div>
+          )}
+
+          {activeTab === 'monitoring' && (
+            <div className="space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <Card className="p-6">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
+                      <Cpu size={24} />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estado da API</p>
+                      <h4 className="font-bold text-emerald-600">Operacional</h4>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-zinc-500">Latência</span>
+                      <span className="font-bold">42ms</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-500 w-[15%]" />
+                    </div>
+                  </div>
+                </Card>
+                <Card className="p-6">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+                      <Activity size={24} />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Uptime</p>
+                      <h4 className="font-bold text-blue-600">99.98%</h4>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-zinc-500">Tempo de Atividade</span>
+                      <span className="font-bold">{Math.floor(monitoring.uptime / 3600)}h {Math.floor((monitoring.uptime % 3600) / 60)}m</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500 w-[99%]" />
+                    </div>
+                  </div>
+                </Card>
+                <Card className="p-6">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
+                      <History size={24} />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Transações Hoje</p>
+                      <h4 className="font-bold text-amber-600">{monitoring.stats.todayTransactions}</h4>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-zinc-500">Total Histórico</span>
+                      <span className="font-bold">{monitoring.stats.totalTransactions}</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-amber-500 w-[65%]" />
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              <Card>
+                <div className="p-6 border-b border-zinc-100">
+                  <h3 className="font-bold">Actividade Recente da Plataforma</h3>
+                </div>
+                <div className="p-6">
+                  <div className="space-y-6">
+                    {monitoring.recentActivity.map((activity: any, idx: number) => (
+                      <div key={idx} className="flex items-start gap-4">
+                        <div className="w-2 h-2 bg-emerald-500 rounded-full mt-2" />
+                        <div className="flex-1">
+                          <p className="text-sm">
+                            <span className="font-bold">Nova {activity.type}</span> processada em <span className="font-bold">{activity.store_name}</span>
+                          </p>
+                          <p className="text-xs text-zinc-400 mt-1">{new Date(activity.timestamp).toLocaleString()} • Valor: Kz {activity.value.toLocaleString()}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {activeTab === 'reports' && (
+            <div className="space-y-8">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <Card className="p-6">
+                  <h3 className="font-bold mb-6">Crescimento de Clientes</h3>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={[
+                        { name: 'Jan', value: 4 },
+                        { name: 'Fev', value: 7 },
+                        { name: 'Mar', value: 12 },
+                        { name: 'Abr', value: 18 },
+                        { name: 'Mai', value: 25 },
+                        { name: 'Jun', value: 32 },
+                      ]}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#a1a1aa' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                        <Tooltip />
+                        <Area type="monotone" dataKey="value" stroke="#000" fill="#000" fillOpacity={0.05} strokeWidth={3} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+                <Card className="p-6">
+                  <h3 className="font-bold mb-6">Renovações vs Expirações</h3>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={[
+                        { name: 'Jan', ren: 2, exp: 0 },
+                        { name: 'Fev', ren: 4, exp: 1 },
+                        { name: 'Mar', ren: 8, exp: 2 },
+                        { name: 'Abr', ren: 12, exp: 1 },
+                        { name: 'Mai', ren: 15, exp: 3 },
+                        { name: 'Jun', ren: 22, exp: 2 },
+                      ]}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#a1a1aa' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                        <Tooltip />
+                        <Legend />
+                        <Bar dataKey="ren" name="Renovações" fill="#10b981" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="exp" name="Expirações" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'settings' && (
+            <div className="max-w-4xl space-y-8">
+              <Card>
+                <div className="p-6 border-b border-zinc-100">
+                  <h3 className="font-bold">Planos de Subscrição</h3>
+                </div>
+                <div className="p-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {plans.map((plan: any) => (
+                      <div key={plan.id} className="p-6 border border-zinc-200 rounded-2xl hover:border-black transition-all group">
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <h4 className="font-black text-lg">{plan.name}</h4>
+                            <p className="text-2xl font-black mt-1">Kz {plan.price.toLocaleString()}<span className="text-xs text-zinc-400 font-bold">/mês</span></p>
+                          </div>
+                          <button className="p-2 text-zinc-400 hover:text-black transition-colors">
+                            <Edit2 size={18} />
+                          </button>
+                        </div>
+                        <ul className="space-y-3 mb-6">
+                          <li className="flex items-center gap-2 text-sm text-zinc-600">
+                            <ShieldCheck size={16} className="text-emerald-500" />
+                            Até {plan.max_stores} lojas
+                          </li>
+                          <li className="flex items-center gap-2 text-sm text-zinc-600">
+                            <ShieldCheck size={16} className="text-emerald-500" />
+                            Até {plan.max_products} produtos
+                          </li>
+                        </ul>
+                        <button className="w-full py-3 border border-zinc-200 rounded-xl text-sm font-bold group-hover:bg-black group-hover:text-white transition-all">
+                          Editar Plano
+                        </button>
+                      </div>
+                    ))}
+                    <button className="p-6 border-2 border-dashed border-zinc-200 rounded-2xl flex flex-col items-center justify-center gap-2 text-zinc-400 hover:text-black hover:border-black transition-all group">
+                      <Plus size={32} className="group-hover:scale-110 transition-transform" />
+                      <span className="font-bold">Criar Novo Plano</span>
+                    </button>
+                  </div>
+                </div>
+              </Card>
+
+              <Card>
+                <div className="p-6 border-b border-zinc-100">
+                  <h3 className="font-bold">Configurações de Notificação</h3>
+                </div>
+                <div className="p-6 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-sm">Avisos de Expiração</p>
+                      <p className="text-xs text-zinc-500">Enviar email automático 7 dias antes da licença expirar.</p>
+                    </div>
+                    <div className="w-12 h-6 bg-emerald-500 rounded-full relative">
+                      <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full" />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-sm">Relatórios Semanais</p>
+                      <p className="text-xs text-zinc-500">Enviar resumo de performance para o administrador.</p>
+                    </div>
+                    <div className="w-12 h-6 bg-zinc-200 rounded-full relative">
+                      <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full" />
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            </div>
+          )}
+        </div>
+      </main>
     </div>
   );
 };
@@ -801,61 +1407,227 @@ const MyStores = ({ user }: { user: User }) => {
 
 const StoreAdmin = ({ user }: { user: User }) => {
   const { storeId } = useParams();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'products' | 'stock' | 'staff' | 'reports' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'products' | 'promotions' | 'stock' | 'staff' | 'reports' | 'settings'>('dashboard');
   const [storeData, setStoreData] = useState<any>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [staff, setStaff] = useState<any[]>([]);
+  const [staffPerformance, setStaffPerformance] = useState<any[]>([]);
+  const [promotions, setPromotions] = useState<any[]>([]);
+  const [stockMovements, setStockMovements] = useState<any[]>([]);
+  const [stockReport, setStockReport] = useState<any>(null);
+  const [reportsData, setReportsData] = useState<any>(null);
+  const [stores, setStores] = useState<any[]>([]);
+  const [settingsForm, setSettingsForm] = useState({ name: '', nif: '', phone: '', address: '', logo_url: '', status: 'active' });
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
-  const [productForm, setProductForm] = useState({ name: '', price: '', stock: '', category: '', image_url: '' });
+  const [editingStaff, setEditingStaff] = useState<any>(null);
+  const [editingProduct, setEditingProduct] = useState<any>(null);
+  const [isPromoModalOpen, setIsPromoModalOpen] = useState(false);
+  const [isStockModalOpen, setIsStockModalOpen] = useState(false);
+  const [productForm, setProductForm] = useState({ name: '', price: '', stock: '', category: '', image_url: '', min_stock: '5' });
   const [staffForm, setStaffForm] = useState({ name: '', email: '', password: '', salary: '', shift_info: '' });
+  const [promoForm, setPromoForm] = useState({ name: '', start_date: '', end_date: '', discount_percent: '', product_ids: [] as number[] });
+  const [stockForm, setStockForm] = useState({ product_id: '', type: 'in', quantity: '', reason: '', to_store_id: '' });
   const navigate = useNavigate();
 
   const fetchData = () => {
     fetch(`/api/owner/store-details/${storeId}`)
       .then(res => res.json())
-      .then(setStoreData);
+      .then(data => {
+        setStoreData(data);
+        if (data.store) {
+          setSettingsForm({
+            name: data.store.name || '',
+            nif: data.store.nif || '',
+            phone: data.store.phone || '',
+            address: data.store.address || '',
+            logo_url: data.store.logo_url || '',
+            status: data.store.status || 'active'
+          });
+        }
+      });
     fetch(`/api/owner/products/${storeId}`)
       .then(res => res.json())
       .then(setProducts);
     fetch(`/api/owner/staff/${storeId}`)
       .then(res => res.json())
       .then(setStaff);
+    fetch(`/api/owner/staff-performance/${storeId}`)
+      .then(res => res.json())
+      .then(setStaffPerformance);
+    fetch(`/api/owner/promotions/${storeId}`)
+      .then(res => res.json())
+      .then(setPromotions);
+    fetch(`/api/owner/stock/movements/${storeId}`)
+      .then(res => res.json())
+      .then(setStockMovements);
+    fetch(`/api/owner/stock/report/${storeId}`)
+      .then(res => res.json())
+      .then(setStockReport);
+    fetch(`/api/owner/reports/${storeId}`)
+      .then(res => res.json())
+      .then(setReportsData);
+    fetch('/api/admin/stores')
+      .then(res => res.json())
+      .then(setStores);
   };
 
   useEffect(fetchData, [storeId]);
 
   const handleAddProduct = async (e: FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/owner/products', {
-      method: 'POST',
+    const url = editingProduct ? `/api/owner/products/${editingProduct.id}` : '/api/owner/products';
+    const method = editingProduct ? 'PUT' : 'POST';
+
+    const res = await fetch(url, {
+      method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...productForm, store_id: Number(storeId), price: Number(productForm.price), stock: Number(productForm.stock) })
+      body: JSON.stringify({ 
+        ...productForm, 
+        store_id: Number(storeId), 
+        price: Number(productForm.price), 
+        stock: Number(productForm.stock),
+        min_stock: Number(productForm.min_stock)
+      })
     });
     if (res.ok) {
       setIsProductModalOpen(false);
-      setProductForm({ name: '', price: '', stock: '', category: '', image_url: '' });
+      setEditingProduct(null);
+      setProductForm({ name: '', price: '', stock: '', category: '', image_url: '', min_stock: '5' });
       fetchData();
     }
   };
 
+  const handleEditProduct = (product: any) => {
+    setEditingProduct(product);
+    setProductForm({
+      name: product.name,
+      price: product.price.toString(),
+      stock: product.stock.toString(),
+      category: product.category,
+      image_url: product.image_url,
+      min_stock: (product.min_stock || 5).toString()
+    });
+    setIsProductModalOpen(true);
+  };
+
   const handleAddStaff = async (e: FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/owner/staff', {
-      method: 'POST',
+    const url = editingStaff ? `/api/owner/staff/${editingStaff.id}` : '/api/owner/staff';
+    const method = editingStaff ? 'PUT' : 'POST';
+    
+    const res = await fetch(url, {
+      method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...staffForm, store_id: Number(storeId), salary: Number(staffForm.salary) })
     });
     if (res.ok) {
       setIsStaffModalOpen(false);
+      setEditingStaff(null);
       setStaffForm({ name: '', email: '', password: '', salary: '', shift_info: '' });
       fetchData();
     }
   };
 
+  const handleDeleteStaff = async (id: number) => {
+    if (confirm('Tem certeza que deseja demitir este colaborador?')) {
+      await fetch(`/api/owner/staff/${id}`, { method: 'DELETE' });
+      fetchData();
+    }
+  };
+
+  const handleEditStaff = (member: any) => {
+    setEditingStaff(member);
+    setStaffForm({
+      name: member.name,
+      email: member.email,
+      password: '', // Don't show password
+      salary: member.salary.toString(),
+      shift_info: member.shift_info
+    });
+    setIsStaffModalOpen(true);
+  };
+
   const handleDeleteProduct = async (id: number) => {
     if (confirm('Tem certeza que deseja eliminar este produto?')) {
       await fetch(`/api/owner/products/${id}`, { method: 'DELETE' });
+      fetchData();
+    }
+  };
+
+  const handleAddPromo = async (e: FormEvent) => {
+    e.preventDefault();
+    if (promoForm.product_ids.length === 0) return alert('Selecione pelo menos um produto');
+    
+    const res = await fetch('/api/owner/promotions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        ...promoForm, 
+        store_id: Number(storeId), 
+        discount_percent: Number(promoForm.discount_percent) 
+      })
+    });
+    if (res.ok) {
+      setIsPromoModalOpen(false);
+      setPromoForm({ name: '', start_date: '', end_date: '', discount_percent: '', product_ids: [] });
+      fetchData();
+    }
+  };
+
+  const handleDeletePromo = async (id: number) => {
+    if (confirm('Tem certeza que deseja eliminar esta promoção?')) {
+      await fetch(`/api/owner/promotions/${id}`, { method: 'DELETE' });
+      fetchData();
+    }
+  };
+
+  const handleStockMovement = async (e: FormEvent) => {
+    e.preventDefault();
+    const isTransfer = stockForm.type === 'transfer';
+    const endpoint = isTransfer ? '/api/owner/stock/transfer' : '/api/owner/stock/movement';
+    
+    const body = isTransfer ? {
+      from_store_id: Number(storeId),
+      to_store_id: Number(stockForm.to_store_id),
+      product_id: Number(stockForm.product_id),
+      user_id: user.id,
+      quantity: Number(stockForm.quantity),
+      reason: stockForm.reason
+    } : {
+      store_id: Number(storeId),
+      product_id: Number(stockForm.product_id),
+      user_id: user.id,
+      type: stockForm.type,
+      quantity: stockForm.type === 'in' ? Number(stockForm.quantity) : -Number(stockForm.quantity),
+      reason: stockForm.reason
+    };
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (res.ok) {
+      setIsStockModalOpen(false);
+      setStockForm({ product_id: '', type: 'in', quantity: '', reason: '', to_store_id: '' });
+      fetchData();
+    } else {
+      const data = await res.json();
+      alert(data.error || 'Erro ao processar movimento de stock');
+    }
+  };
+
+  const handleUpdateSettings = async (e: FormEvent) => {
+    e.preventDefault();
+    const res = await fetch(`/api/owner/store-settings/${storeId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settingsForm)
+    });
+    if (res.ok) {
+      alert('Configurações actualizadas com sucesso!');
       fetchData();
     }
   };
@@ -896,6 +1668,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
             { id: 'products', icon: Package, label: 'Produtos' },
+            { id: 'promotions', icon: Tag, label: 'Promoções' },
             { id: 'stock', icon: Barcode, label: 'Stock' },
             { id: 'staff', icon: Users, label: 'Pessoal' },
             { id: 'reports', icon: BarChart3, label: 'Relatórios' },
@@ -995,12 +1768,20 @@ const StoreAdmin = ({ user }: { user: User }) => {
             <Card>
               <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
                 <h3 className="font-bold">Gestão de Produtos</h3>
-                <button 
-                  onClick={() => setIsProductModalOpen(true)}
-                  className="bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
-                >
-                  <Plus size={16} /> Novo Produto
-                </button>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => setIsPromoModalOpen(true)}
+                    className="bg-amber-100 text-amber-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-amber-200 transition-colors"
+                  >
+                    <Tag size={16} /> Criar Promoção
+                  </button>
+                  <button 
+                    onClick={() => setIsProductModalOpen(true)}
+                    className="bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
+                  >
+                    <Plus size={16} /> Novo Produto
+                  </button>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
@@ -1023,7 +1804,16 @@ const StoreAdmin = ({ user }: { user: User }) => {
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm text-zinc-500">{product.category}</td>
-                        <td className="px-6 py-4 text-sm font-bold">Kz {product.price.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-sm font-bold">
+                          {product.discount_percent ? (
+                            <div className="flex flex-col">
+                              <span className="text-zinc-400 line-through text-[10px]">Kz {product.price.toLocaleString()}</span>
+                              <span className="text-emerald-600">Kz {(product.price * (1 - product.discount_percent / 100)).toLocaleString()}</span>
+                            </div>
+                          ) : (
+                            <span>Kz {product.price.toLocaleString()}</span>
+                          )}
+                        </td>
                         <td className="px-6 py-4">
                           <span className={cn(
                             "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
@@ -1036,10 +1826,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-2">
-                            <button className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg"><Edit2 size={16} /></button>
+                            <button 
+                              onClick={() => handleEditProduct(product)}
+                              className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
+                            >
+                              <Edit2 size={16} />
+                            </button>
                             <button 
                               onClick={() => handleDeleteProduct(product.id)}
-                              className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                              className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
                             >
                               <Trash2 size={16} />
                             </button>
@@ -1053,123 +1848,549 @@ const StoreAdmin = ({ user }: { user: User }) => {
             </Card>
           )}
 
-          {activeTab === 'staff' && (
+          {activeTab === 'promotions' && (
             <Card>
               <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
-                <h3 className="font-bold">Equipa da Loja</h3>
+                <h3 className="font-bold">Promoções Ativas</h3>
                 <button 
-                  onClick={() => setIsStaffModalOpen(true)}
+                  onClick={() => setIsPromoModalOpen(true)}
                   className="bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
                 >
-                  <Plus size={16} /> Adicionar Colaborador
+                  <Plus size={16} /> Nova Promoção
                 </button>
               </div>
-              <div className="divide-y divide-zinc-100">
-                {staff.map(member => (
-                  <div key={member.id} className="p-6 flex items-center justify-between hover:bg-zinc-50 transition-colors">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-400">
-                        <UserIcon size={24} />
-                      </div>
-                      <div>
-                        <p className="font-bold">{member.name}</p>
-                        <p className="text-xs text-zinc-500">{member.email} • {member.shift_info}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-6">
-                      <div className="text-right">
-                        <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Salário</p>
-                        <p className="font-bold">Kz {member.salary.toLocaleString()}</p>
-                      </div>
-                      <button className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg">
-                        <ChevronRight size={20} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
+                      <th className="px-6 py-4 font-semibold">Nome</th>
+                      <th className="px-6 py-4 font-semibold">Período</th>
+                      <th className="px-6 py-4 font-semibold">Desconto</th>
+                      <th className="px-6 py-4 font-semibold">Produtos</th>
+                      <th className="px-6 py-4 font-semibold text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {promotions.map(promo => (
+                      <tr key={promo.id} className="hover:bg-zinc-50 transition-colors">
+                        <td className="px-6 py-4 font-bold text-sm">{promo.name}</td>
+                        <td className="px-6 py-4 text-xs">
+                          {new Date(promo.start_date).toLocaleDateString()} - {new Date(promo.end_date).toLocaleDateString()}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-[10px] font-bold">
+                            -{promo.discount_percent}%
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-xs text-zinc-500 max-w-xs truncate">
+                          {promo.product_names}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button 
+                            onClick={() => handleDeletePromo(promo.id)}
+                            className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {promotions.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-12 text-center text-zinc-400">Nenhuma promoção registada.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </Card>
+          )}
+
+          {activeTab === 'staff' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <Card className="lg:col-span-2">
+                  <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
+                    <h3 className="font-bold">Equipa da Loja</h3>
+                    <button 
+                      onClick={() => {
+                        setEditingStaff(null);
+                        setStaffForm({ name: '', email: '', password: '', salary: '', shift_info: '' });
+                        setIsStaffModalOpen(true);
+                      }}
+                      className="bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
+                    >
+                      <Plus size={16} /> Adicionar Colaborador
+                    </button>
+                  </div>
+                  <div className="divide-y divide-zinc-100">
+                    {staff.map(member => (
+                      <div key={member.id} className="p-6 flex items-center justify-between hover:bg-zinc-50 transition-colors">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-400">
+                            <UserIcon size={24} />
+                          </div>
+                          <div>
+                            <p className="font-bold">{member.name}</p>
+                            <p className="text-xs text-zinc-500">{member.email} • {member.shift_info}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="text-right">
+                            <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Salário</p>
+                            <p className="font-bold">Kz {member.salary.toLocaleString()}</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => handleEditStaff(member)}
+                              className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
+                            >
+                              <Edit2 size={18} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteStaff(member.id)}
+                              className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
+                <Card>
+                  <div className="p-6 border-b border-zinc-100">
+                    <h3 className="font-bold">Desempenho de Vendas</h3>
+                  </div>
+                  <div className="p-4 space-y-4">
+                    {staffPerformance.map((perf: any, idx: number) => (
+                      <div key={idx} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                        <div className="flex justify-between items-start mb-2">
+                          <p className="font-bold text-sm">{perf.name}</p>
+                          <span className="text-[10px] font-black bg-black text-white px-2 py-0.5 rounded-full">
+                            {perf.total_sales} Vendas
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-end">
+                          <div>
+                            <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-widest">Faturamento</p>
+                            <p className="font-black text-emerald-600">Kz {(perf.total_revenue || 0).toLocaleString()}</p>
+                          </div>
+                          <div className="w-16 h-1 bg-zinc-200 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-emerald-500" 
+                              style={{ width: `${Math.min(100, (perf.total_revenue / 100000) * 100)}%` }} 
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {staffPerformance.length === 0 && (
+                      <p className="text-center py-8 text-zinc-400 text-sm italic">Nenhum dado de desempenho disponível.</p>
+                    )}
+                  </div>
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'reports' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <Card className="lg:col-span-2 p-6">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="font-bold">Faturamento (Últimos 30 dias)</h3>
+                    <div className="flex items-center gap-2 text-xs font-bold text-zinc-400">
+                      <div className="w-3 h-3 bg-emerald-500 rounded-full" /> Receita
+                    </div>
+                  </div>
+                  <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={reportsData?.salesByDay || []}>
+                        <defs>
+                          <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
+                        <XAxis 
+                          dataKey="date" 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{ fontSize: 10, fill: '#a1a1aa' }}
+                          tickFormatter={(str) => new Date(str).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' })}
+                        />
+                        <YAxis 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{ fontSize: 10, fill: '#a1a1aa' }}
+                          tickFormatter={(val) => `Kz ${val >= 1000 ? (val/1000).toFixed(1) + 'k' : val}`}
+                        />
+                        <Tooltip 
+                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                          formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Receita']}
+                        />
+                        <Area type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                <Card className="p-6">
+                  <h3 className="font-bold mb-6">Top 5 Produtos</h3>
+                  <div className="space-y-4">
+                    {reportsData?.topProducts?.map((product: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-black text-white rounded-lg flex items-center justify-center text-xs font-bold">
+                            #{idx + 1}
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold truncate max-w-[120px]">{product.name}</p>
+                            <p className="text-[10px] text-zinc-400">{product.quantity} unidades</p>
+                          </div>
+                        </div>
+                        <p className="text-sm font-black">Kz {product.revenue.toLocaleString()}</p>
+                      </div>
+                    ))}
+                    {(!reportsData?.topProducts || reportsData.topProducts.length === 0) && (
+                      <p className="text-center py-8 text-zinc-400 text-sm italic">Nenhum dado disponível.</p>
+                    )}
+                  </div>
+                </Card>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card className="p-6">
+                  <h3 className="font-bold mb-6">Vendas por Categoria</h3>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={reportsData?.salesByCategory || []}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={80}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          {(reportsData?.salesByCategory || []).map((entry: any, index: number) => (
+                            <Cell key={`cell-${index}`} fill={['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'][index % 5]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend verticalAlign="bottom" height={36}/>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                <Card className="p-6">
+                  <h3 className="font-bold mb-6">Métodos de Pagamento</h3>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={reportsData?.paymentMethods || []}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#a1a1aa' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                        <Tooltip 
+                          cursor={{ fill: '#f4f4f5' }}
+                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                        />
+                        <Bar dataKey="value" radius={[10, 10, 0, 0]}>
+                          {(reportsData?.paymentMethods || []).map((entry: any, index: number) => (
+                            <Cell key={`cell-${index}`} fill={['#10b981', '#3b82f6', '#f59e0b'][index % 3]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+              </div>
+            </div>
           )}
 
           {activeTab === 'settings' && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <Card className="lg:col-span-2">
                 <div className="p-6 border-b border-zinc-100">
-                  <h3 className="font-bold">Configurações Administrativas</h3>
+                  <h3 className="font-bold">Configurações da Loja</h3>
                 </div>
-                <div className="p-6 space-y-6">
-                  <div className="grid grid-cols-2 gap-6">
+                <form onSubmit={handleUpdateSettings} className="p-6 space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome da Loja</label>
+                      <input 
+                        type="text" 
+                        value={settingsForm.name}
+                        onChange={e => setSettingsForm({...settingsForm, name: e.target.value})}
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                      />
+                    </div>
                     <div>
                       <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF da Empresa</label>
-                      <input type="text" defaultValue={store.nif} className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" />
+                      <input 
+                        type="text" 
+                        value={settingsForm.nif}
+                        onChange={e => setSettingsForm({...settingsForm, nif: e.target.value})}
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Telefone de Contacto</label>
-                      <input type="text" defaultValue={store.phone} className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" />
+                      <input 
+                        type="text" 
+                        value={settingsForm.phone}
+                        onChange={e => setSettingsForm({...settingsForm, phone: e.target.value})}
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                      />
                     </div>
-                    <div className="col-span-2">
-                      <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Séries de Faturação</label>
-                      <div className="p-4 border border-zinc-100 rounded-xl flex items-center justify-between">
-                        <div>
-                          <p className="font-bold text-sm">Série 2026/A</p>
-                          <p className="text-xs text-zinc-500">Próximo número: FT 2026/124</p>
-                        </div>
-                        <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-black rounded-full uppercase">Em Uso</span>
-                      </div>
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
+                      <input 
+                        type="text" 
+                        value={settingsForm.address}
+                        onChange={e => setSettingsForm({...settingsForm, address: e.target.value})}
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                      />
+                    </div>
+                    <div className="col-span-full">
+                      <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">URL do Logotipo</label>
+                      <input 
+                        type="text" 
+                        value={settingsForm.logo_url}
+                        onChange={e => setSettingsForm({...settingsForm, logo_url: e.target.value})}
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                        placeholder="https://..."
+                      />
                     </div>
                   </div>
-                  <button className="bg-black text-white px-8 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all">
-                    Guardar Configurações
-                  </button>
-                </div>
-              </Card>
-
-              <Card>
-                <div className="p-6 border-b border-zinc-100">
-                  <h3 className="font-bold">Estado da Loja</h3>
-                </div>
-                <div className="p-6 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-bold text-sm">Visibilidade no Sistema</p>
-                      <p className="text-xs text-zinc-500">Permitir vendas nesta unidade.</p>
-                    </div>
-                    <button className={cn(
-                      "w-12 h-6 rounded-full transition-all relative",
-                      store.status === 'active' ? "bg-emerald-500" : "bg-zinc-200"
-                    )}>
-                      <div className={cn(
-                        "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                        store.status === 'active' ? "right-1" : "left-1"
-                      )} />
+                  <div className="pt-4 border-t border-zinc-100 flex justify-end">
+                    <button type="submit" className="bg-black text-white px-8 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95">
+                      Guardar Alterações
                     </button>
                   </div>
-                  <div className="pt-4 border-t border-zinc-100">
-                    <button className="w-full flex items-center justify-center gap-2 py-3 text-rose-600 font-bold hover:bg-rose-50 rounded-xl transition-colors">
+                </form>
+              </Card>
+
+              <div className="space-y-6">
+                <Card>
+                  <div className="p-6 border-b border-zinc-100">
+                    <h3 className="font-bold">Estado da Unidade</h3>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-bold text-sm">Operacional</p>
+                        <p className="text-xs text-zinc-500">Permitir vendas nesta unidade.</p>
+                      </div>
+                      <button 
+                        onClick={() => setSettingsForm({...settingsForm, status: settingsForm.status === 'active' ? 'inactive' : 'active'})}
+                        className={cn(
+                          "w-12 h-6 rounded-full transition-all relative",
+                          settingsForm.status === 'active' ? "bg-emerald-500" : "bg-zinc-200"
+                        )}
+                      >
+                        <div className={cn(
+                          "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm",
+                          settingsForm.status === 'active' ? "right-1" : "left-1"
+                        )} />
+                      </button>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card className="border-rose-100 bg-rose-50/10">
+                  <div className="p-6 border-b border-rose-100">
+                    <h3 className="font-bold text-rose-600">Zona de Perigo</h3>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <p className="text-xs text-zinc-500">
+                      Eliminar uma loja é uma acção irreversível. Todos os dados de produtos, vendas e colaboradores serão perdidos.
+                    </p>
+                    <button className="w-full flex items-center justify-center gap-2 py-3 text-rose-600 font-bold hover:bg-rose-100 rounded-xl transition-colors border border-rose-200">
                       <Trash2 size={18} />
                       Eliminar Loja Permanentemente
                     </button>
                   </div>
-                </div>
-              </Card>
+                </Card>
+              </div>
             </div>
           )}
           
-          {(activeTab === 'stock' || activeTab === 'reports') && (
-            <Card className="p-12 text-center space-y-4">
-              <div className="w-20 h-20 bg-zinc-100 text-zinc-400 rounded-full flex items-center justify-center mx-auto">
-                <BarChart3 size={40} />
+          {activeTab === 'stock' && (
+            <div className="space-y-6">
+              {/* Stock Overview Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <Card className="p-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center">
+                      <Package size={24} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Total Produtos</p>
+                      <p className="text-2xl font-black">{stockReport?.stats?.total_products || 0}</p>
+                    </div>
+                  </div>
+                </Card>
+                <Card className="p-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center">
+                      <BarChart3 size={24} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Quantidade Total</p>
+                      <p className="text-2xl font-black">{stockReport?.stats?.total_quantity || 0}</p>
+                    </div>
+                  </div>
+                </Card>
+                <Card className="p-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center">
+                      <DollarSign size={24} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Valor do Stock</p>
+                      <p className="text-2xl font-black">Kz {(stockReport?.stats?.total_value || 0).toLocaleString()}</p>
+                    </div>
+                  </div>
+                </Card>
               </div>
-              <div>
-                <h3 className="text-xl font-bold">Módulo em Desenvolvimento</h3>
-                <p className="text-zinc-500 max-w-sm mx-auto">Estamos a preparar relatórios avançados e gestão de stock detalhada para esta unidade.</p>
+
+              {/* Low Stock Alerts */}
+              {stockReport?.lowStock?.length > 0 && (
+                <Card className="border-rose-200 bg-rose-50/30">
+                  <div className="p-4 border-b border-rose-100 flex items-center gap-2 text-rose-700">
+                    <AlertTriangle size={20} />
+                    <h3 className="font-bold">Alertas de Stock Baixo</h3>
+                  </div>
+                  <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {stockReport.lowStock.map((p: any) => (
+                      <div key={p.id} className="flex items-center justify-between p-3 bg-white border border-rose-100 rounded-xl shadow-sm">
+                        <div className="flex items-center gap-3">
+                          <img src={p.image_url} alt="" className="w-8 h-8 rounded object-cover" referrerPolicy="no-referrer" />
+                          <div>
+                            <p className="text-xs font-bold text-zinc-800">{p.name}</p>
+                            <p className="text-[10px] text-zinc-400">Mínimo: {p.min_stock}</p>
+                          </div>
+                        </div>
+                        <span className="text-xs font-black text-rose-600 bg-rose-50 px-2 py-1 rounded-lg">
+                          {p.stock} un
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Inventory List */}
+                <Card className="lg:col-span-2">
+                  <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
+                    <h3 className="font-bold">Inventário / Lista de Stock</h3>
+                    <button 
+                      onClick={() => setIsStockModalOpen(true)}
+                      className="bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
+                    >
+                      <Plus size={16} /> Movimentar Stock
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
+                          <th className="px-6 py-4 font-semibold">Produto</th>
+                          <th className="px-6 py-4 font-semibold">Loja</th>
+                          <th className="px-6 py-4 font-semibold">Stock Atual</th>
+                          <th className="px-6 py-4 font-semibold">Mínimo</th>
+                          <th className="px-6 py-4 font-semibold">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100">
+                        {products.map(product => (
+                          <tr key={product.id} className="hover:bg-zinc-50 transition-colors">
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-3">
+                                <img src={product.image_url} alt="" className="w-10 h-10 rounded-lg object-cover" referrerPolicy="no-referrer" />
+                                <span className="font-medium text-sm">{product.name}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-zinc-500">{store.name}</td>
+                            <td className="px-6 py-4 text-sm font-bold">{product.stock} un</td>
+                            <td className="px-6 py-4 text-sm text-zinc-400">{product.min_stock || 5} un</td>
+                            <td className="px-6 py-4">
+                              <span className={cn(
+                                "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
+                                product.stock > (product.min_stock || 5) ? "bg-emerald-100 text-emerald-700" : 
+                                product.stock > 0 ? "bg-amber-100 text-amber-700" : 
+                                "bg-rose-100 text-rose-700"
+                              )}>
+                                {product.stock > (product.min_stock || 5) ? "Normal" : 
+                                 product.stock > 0 ? "Baixo" : "Esgotado"}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+
+                {/* Movement History */}
+                <Card>
+                  <div className="p-6 border-b border-zinc-100">
+                    <h3 className="font-bold">Histórico de Movimentações</h3>
+                  </div>
+                  <div className="p-4 space-y-4 max-h-[600px] overflow-y-auto">
+                    {stockMovements.map((move: any) => (
+                      <div key={move.id} className="flex gap-4 p-3 hover:bg-zinc-50 rounded-xl transition-colors border border-transparent hover:border-zinc-100">
+                        <div className={cn(
+                          "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0",
+                          move.type === 'in' ? "bg-emerald-100 text-emerald-600" :
+                          move.type === 'out' ? "bg-rose-100 text-rose-600" :
+                          move.type === 'transfer' ? "bg-blue-100 text-blue-600" :
+                          "bg-amber-100 text-amber-600"
+                        )}>
+                          {move.type === 'in' ? <Plus size={20} /> :
+                           move.type === 'out' ? <Minus size={20} /> :
+                           move.type === 'transfer' ? <ArrowRightLeft size={20} /> :
+                           <Edit2 size={20} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-start">
+                            <p className="text-xs font-bold text-zinc-800 truncate">{move.product_name}</p>
+                            <span className={cn(
+                              "text-[10px] font-black",
+                              move.quantity > 0 ? "text-emerald-600" : "text-rose-600"
+                            )}>
+                              {move.quantity > 0 ? '+' : ''}{move.quantity}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-zinc-400 mt-0.5">{move.reason || (move.type === 'in' ? 'Entrada de mercadoria' : 'Saída de mercadoria')}</p>
+                          <div className="flex items-center justify-between mt-2">
+                            <p className="text-[9px] text-zinc-500 font-medium flex items-center gap-1">
+                              <Users size={10} /> {move.user_name}
+                            </p>
+                            <p className="text-[9px] text-zinc-400">
+                              {new Date(move.timestamp).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
               </div>
-            </Card>
+            </div>
           )}
         </motion.div>
       </AnimatePresence>
 
-      <Modal isOpen={isProductModalOpen} onClose={() => setIsProductModalOpen(false)} title="Novo Produto">
+      <Modal isOpen={isProductModalOpen} onClose={() => { setIsProductModalOpen(false); setEditingProduct(null); }} title={editingProduct ? "Editar Produto" : "Novo Produto"}>
         <form onSubmit={handleAddProduct} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Produto</label>
@@ -1200,14 +2421,32 @@ const StoreAdmin = ({ user }: { user: User }) => {
               />
             </div>
           </div>
-          <div>
-            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Categoria</label>
-            <input 
-              type="text" required
-              value={productForm.category}
-              onChange={e => setProductForm({...productForm, category: e.target.value})}
-              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Categoria</label>
+              <input 
+                type="text" required
+                list="categories-list"
+                value={productForm.category}
+                onChange={e => setProductForm({...productForm, category: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+                placeholder="Ex: Bebidas, Alimentos..."
+              />
+              <datalist id="categories-list">
+                {Array.from(new Set(products.map(p => p.category))).map(cat => (
+                  <option key={cat} value={cat} />
+                ))}
+              </datalist>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Stock Mínimo</label>
+              <input 
+                type="number" required
+                value={productForm.min_stock}
+                onChange={e => setProductForm({...productForm, min_stock: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+              />
+            </div>
           </div>
           <div>
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">URL da Imagem</label>
@@ -1216,13 +2455,16 @@ const StoreAdmin = ({ user }: { user: User }) => {
               value={productForm.image_url}
               onChange={e => setProductForm({...productForm, image_url: e.target.value})}
               className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+              placeholder="https://exemplo.com/imagem.jpg"
             />
           </div>
-          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold">Salvar Produto</button>
+          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold">
+            {editingProduct ? "Guardar Alterações" : "Adicionar Produto"}
+          </button>
         </form>
       </Modal>
 
-      <Modal isOpen={isStaffModalOpen} onClose={() => setIsStaffModalOpen(false)} title="Novo Colaborador">
+      <Modal isOpen={isStaffModalOpen} onClose={() => { setIsStaffModalOpen(false); setEditingStaff(null); }} title={editingStaff ? "Editar Colaborador" : "Novo Colaborador"}>
         <form onSubmit={handleAddStaff} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome Completo</label>
@@ -1242,15 +2484,17 @@ const StoreAdmin = ({ user }: { user: User }) => {
               className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
             />
           </div>
-          <div>
-            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Senha Inicial</label>
-            <input 
-              type="password" required
-              value={staffForm.password}
-              onChange={e => setStaffForm({...staffForm, password: e.target.value})}
-              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-            />
-          </div>
+          {!editingStaff && (
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Senha Inicial</label>
+              <input 
+                type="password" required
+                value={staffForm.password}
+                onChange={e => setStaffForm({...staffForm, password: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+              />
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Salário (Kz)</label>
@@ -1271,7 +2515,156 @@ const StoreAdmin = ({ user }: { user: User }) => {
               />
             </div>
           </div>
-          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold">Contratar Colaborador</button>
+          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold">
+            {editingStaff ? "Guardar Alterações" : "Contratar Colaborador"}
+          </button>
+        </form>
+      </Modal>
+
+      <Modal isOpen={isPromoModalOpen} onClose={() => setIsPromoModalOpen(false)} title="Criar Promoção">
+        <form onSubmit={handleAddPromo} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome da Promoção</label>
+            <input 
+              type="text" required
+              placeholder="Ex: Black Friday, Saldo de Verão"
+              value={promoForm.name}
+              onChange={e => setPromoForm({...promoForm, name: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Data Início</label>
+              <input 
+                type="date" required
+                value={promoForm.start_date}
+                onChange={e => setPromoForm({...promoForm, start_date: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Data Término</label>
+              <input 
+                type="date" required
+                value={promoForm.end_date}
+                onChange={e => setPromoForm({...promoForm, end_date: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Desconto (%)</label>
+            <input 
+              type="number" required min="1" max="100"
+              value={promoForm.discount_percent}
+              onChange={e => setPromoForm({...promoForm, discount_percent: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Selecionar Produtos</label>
+            <div className="max-h-48 overflow-y-auto border border-zinc-200 rounded-xl p-2 space-y-1 bg-zinc-50">
+              {products.map(p => (
+                <label key={p.id} className="flex items-center gap-3 p-2 hover:bg-white rounded-lg cursor-pointer transition-colors">
+                  <input 
+                    type="checkbox"
+                    checked={promoForm.product_ids.includes(p.id)}
+                    onChange={e => {
+                      const ids = e.target.checked 
+                        ? [...promoForm.product_ids, p.id]
+                        : promoForm.product_ids.filter(id => id !== p.id);
+                      setPromoForm({...promoForm, product_ids: ids});
+                    }}
+                    className="w-4 h-4 rounded border-zinc-300 text-black focus:ring-black"
+                  />
+                  <div className="flex items-center gap-2">
+                    <img src={p.image_url} alt="" className="w-6 h-6 rounded object-cover" referrerPolicy="no-referrer" />
+                    <span className="text-sm font-medium">{p.name}</span>
+                    <span className="text-[10px] text-zinc-400">Kz {p.price.toLocaleString()}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold">Lançar Promoção</button>
+        </form>
+      </Modal>
+
+      <Modal isOpen={isStockModalOpen} onClose={() => setIsStockModalOpen(false)} title="Movimentar Stock">
+        <form onSubmit={handleStockMovement} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Tipo de Movimento</label>
+            <select 
+              required
+              value={stockForm.type}
+              onChange={e => setStockForm({...stockForm, type: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none"
+            >
+              <option value="in">Entrada de Stock</option>
+              <option value="out">Saída de Stock</option>
+              <option value="transfer">Transferência entre Lojas</option>
+              <option value="adjustment">Ajuste Manual</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Produto</label>
+            <select 
+              required
+              value={stockForm.product_id}
+              onChange={e => setStockForm({...stockForm, product_id: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none"
+            >
+              <option value="">Selecionar Produto</option>
+              {products.map(p => (
+                <option key={p.id} value={p.id}>{p.name} (Stock: {p.stock})</option>
+              ))}
+            </select>
+          </div>
+
+          {stockForm.type === 'transfer' && (
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Loja de Destino</label>
+              <select 
+                required
+                value={stockForm.to_store_id}
+                onChange={e => setStockForm({...stockForm, to_store_id: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none"
+              >
+                <option value="">Selecionar Loja</option>
+                {stores.filter(s => s.id !== Number(storeId)).map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Quantidade</label>
+              <input 
+                type="number" required min="1"
+                value={stockForm.quantity}
+                onChange={e => setStockForm({...stockForm, quantity: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Motivo / Obs</label>
+              <input 
+                type="text" required
+                placeholder="Ex: Perda, Dano, Reposição"
+                value={stockForm.reason}
+                onChange={e => setStockForm({...stockForm, reason: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+              />
+            </div>
+          </div>
+
+          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2">
+            <ArrowRightLeft size={20} /> Processar Movimento
+          </button>
         </form>
       </Modal>
     </div>
@@ -1313,8 +2706,9 @@ const SellerPOS = ({ user }: { user: User }) => {
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
-    fetch('/api/seller/products/1').then(res => res.json()).then(setProducts);
-  }, []);
+    const storeId = user.store_id || 1;
+    fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
+  }, [user.store_id]);
 
   const addToCart = (product: Product) => {
     setCart(prev => {
@@ -1340,7 +2734,12 @@ const SellerPOS = ({ user }: { user: User }) => {
     setCart(prev => prev.filter(item => item.product.id !== productId));
   };
 
-  const subtotal = cart.reduce((acc, item) => acc + (item.product.price * item.quantity), 0);
+  const subtotal = cart.reduce((acc, item) => {
+    const price = item.product.discount_percent 
+      ? item.product.price * (1 - item.product.discount_percent / 100) 
+      : item.product.price;
+    return acc + (price * item.quantity);
+  }, 0);
   const tax = subtotal * 0.14;
   const total = subtotal + tax;
 
@@ -1360,16 +2759,23 @@ const SellerPOS = ({ user }: { user: User }) => {
 
     setIsProcessing(true);
     try {
+      const storeId = user.store_id || 1;
       const res = await fetch('/api/seller/sale', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          store_id: 1,
+          store_id: storeId,
           seller_id: user.id,
           total_amount: total,
           payment_method: paymentMethod,
           cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : total,
-          items: cart.map(item => ({ id: item.product.id, quantity: item.quantity }))
+          items: cart.map(item => ({ 
+            id: item.product.id, 
+            quantity: item.quantity,
+            price: item.product.discount_percent 
+              ? item.product.price * (1 - item.product.discount_percent / 100) 
+              : item.product.price
+          }))
         })
       });
       if (res.ok) {
@@ -1377,7 +2783,7 @@ const SellerPOS = ({ user }: { user: User }) => {
         setCart([]);
         setIsPaymentModalOpen(false);
         setCashReceived('');
-        fetch('/api/seller/products/1').then(res => res.json()).then(setProducts);
+        fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
       }
     } catch (error) {
       console.error('Error finalizing sale:', error);
@@ -1389,7 +2795,7 @@ const SellerPOS = ({ user }: { user: User }) => {
   const change = paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - total : 0;
 
   const filteredProducts = products.filter(p => 
-    (category === 'Geral' || p.category === category || (category === 'Promoções' && p.is_promo)) &&
+    (category === 'Geral' || p.category === category || (category === 'Promoções' && p.discount_percent)) &&
     (p.name.toLowerCase().includes(search.toLowerCase()))
   );
 
@@ -1484,14 +2890,25 @@ const SellerPOS = ({ user }: { user: User }) => {
                     className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500" 
                     referrerPolicy="no-referrer" 
                   />
-                  {product.is_promo && (
-                    <div className="absolute top-1 right-1 bg-rose-600 text-white text-[7px] font-bold px-1 py-0.5 rounded-full uppercase shadow-sm">Promo</div>
+                  {product.discount_percent && (
+                    <div className="absolute top-1 right-1 bg-rose-600 text-white text-[7px] font-bold px-1 py-0.5 rounded-full uppercase shadow-sm">
+                      -{product.discount_percent}%
+                    </div>
                   )}
                 </div>
                 <div className="p-1.5 flex-1 flex flex-col min-h-0">
                   <h4 className="font-bold text-[10px] text-zinc-800 line-clamp-1 mb-0.5 leading-tight">{product.name}</h4>
                   <div className="mt-auto flex items-center justify-between gap-1">
-                    <p className="font-black text-orange-600 text-[10px]">Kz {product.price.toLocaleString()}</p>
+                    <div className="flex flex-col">
+                      {product.discount_percent && (
+                        <span className="text-[7px] text-zinc-400 line-through">Kz {product.price.toLocaleString()}</span>
+                      )}
+                      <p className="font-black text-orange-600 text-[10px]">
+                        Kz {(product.discount_percent 
+                          ? product.price * (1 - product.discount_percent / 100) 
+                          : product.price).toLocaleString()}
+                      </p>
+                    </div>
                     <span className={cn(
                       "text-[7px] font-bold px-1 rounded-md",
                       product.stock > 10 ? "text-emerald-600 bg-emerald-50" : "text-rose-600 bg-rose-50"
@@ -1548,11 +2965,19 @@ const SellerPOS = ({ user }: { user: User }) => {
                       >
                         +
                       </button>
-                      <span className="text-[10px] text-zinc-400 ml-1">x Kz {item.product.price.toLocaleString()}</span>
+                      <span className="text-[10px] text-zinc-400 ml-1">
+                        x Kz {(item.product.discount_percent 
+                          ? item.product.price * (1 - item.product.discount_percent / 100) 
+                          : item.product.price).toLocaleString()}
+                      </span>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs font-black text-zinc-900">Kz {(item.product.price * item.quantity).toLocaleString()}</p>
+                    <p className="text-xs font-black text-zinc-900">
+                      Kz {((item.product.discount_percent 
+                        ? item.product.price * (1 - item.product.discount_percent / 100) 
+                        : item.product.price) * item.quantity).toLocaleString()}
+                    </p>
                     <button 
                       onClick={() => removeFromCart(item.product.id)}
                       className="text-rose-400 hover:text-rose-600 p-1 transition-colors"
@@ -2201,7 +3626,7 @@ export default function App() {
         <Routes>
           {user.role === 'admin' && (
             <>
-              <Route path="/admin" element={<AdminDashboard />} />
+              <Route path="/admin" element={<AdminPanel user={user} />} />
               <Route path="*" element={<Navigate to="/admin" replace />} />
             </>
           )}
