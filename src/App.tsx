@@ -59,7 +59,11 @@ import {
   Lock as LockIcon,
   ShieldAlert,
   HelpCircle,
-  Cpu
+  Cpu,
+  Database,
+  Server,
+  Clock,
+  Zap
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -383,7 +387,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
 
 // --- Admin Module ---
 
-const AdminPanel = ({ user }: { user: User }) => {
+const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [dashboardData, setDashboardData] = useState<any>({
     stats: { totalClients: 0, activeClients: 0, totalStores: 0, pendingSupport: 0, expiredLicenses: 0, expiringSoon: 0 },
@@ -393,13 +397,84 @@ const AdminPanel = ({ user }: { user: User }) => {
   const [licenses, setLicenses] = useState<any[]>([]);
   const [tickets, setTickets] = useState<any[]>([]);
   const [monitoring, setMonitoring] = useState<any>({
-    stats: { totalTransactions: 0, todayTransactions: 0 },
+    stats: { totalTransactions: 0, todayTransactions: 0, activeUsers: 0, totalStores: 0 },
     recentActivity: [],
+    systemAlerts: [],
+    memory: { rss: 0, heapTotal: 0, heapUsed: 0 },
     uptime: 0
   });
+  const [reportsData, setReportsData] = useState<any>({
+    revenueByMonth: [],
+    clientGrowth: [],
+    licensesByPlan: [],
+    ticketsByStatus: []
+  });
   const [plans, setPlans] = useState<any[]>([]);
+  const [financeData, setFinanceData] = useState<any>({
+    payments: [],
+    stats: { totalToday: 0, totalMonth: 0, totalYear: 0, count: 0 },
+    pendingPayments: [],
+    reports: { byMonth: [], byPlan: [], byClient: [] },
+    methods: []
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Support Chat States
+  const [selectedTicket, setSelectedTicket] = useState<any>(null);
+  const [ticketMessages, setTicketMessages] = useState<any[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [supportFilter, setSupportFilter] = useState('open');
+
+  // New states for client management
+  const [selectedClient, setSelectedClient] = useState<any>(null);
+  const [clientDetails, setClientDetails] = useState<any>(null);
+  const [isClientDetailsOpen, setIsClientDetailsOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isLicenseModalOpen, setIsLicenseModalOpen] = useState(false);
+  const [isLicenseHistoryModalOpen, setIsLicenseHistoryModalOpen] = useState(false);
+  const [licenseHistory, setLicenseHistory] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterPlan, setFilterPlan] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+
+  const [licenseSearchQuery, setLicenseSearchQuery] = useState('');
+  const [licenseFilterStatus, setLicenseFilterStatus] = useState('all');
+  const [licenseFilterPlan, setLicenseFilterPlan] = useState('all');
+
+  const [clientFormData, setClientFormData] = useState({
+    name: '',
+    company_name: '',
+    email: '',
+    password: '',
+    phone: '',
+    nif: '',
+    address: ''
+  });
+
+  const [licenseFormData, setLicenseFormData] = useState({
+    plan_type: 'basic',
+    duration_months: 1,
+    store_id: ''
+  });
+
+  // Settings States
+  const [systemSettings, setSystemSettings] = useState<any>({
+    expiration_notice: 'true',
+    weekly_reports: 'false',
+    system_name: 'FactuModern'
+  });
+  const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<any>(null);
+  const [planFormData, setPlanFormData] = useState({
+    name: '',
+    price: 0,
+    max_stores: 1,
+    max_products: 100,
+    features: { reports: true, multi_store: false }
+  });
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -411,7 +486,10 @@ const AdminPanel = ({ user }: { user: User }) => {
         '/api/admin/licenses',
         '/api/admin/support',
         '/api/admin/monitoring',
-        '/api/admin/plans'
+        '/api/admin/plans',
+        '/api/admin/reports',
+        '/api/admin/settings',
+        '/api/admin/finance'
       ];
 
       const responses = await Promise.all(endpoints.map(url => fetch(url)));
@@ -421,7 +499,7 @@ const AdminPanel = ({ user }: { user: User }) => {
         throw new Error(`Failed to fetch ${failed.url}: ${failed.statusText}`);
       }
 
-      const [dashData, clientsData, licensesData, ticketsData, monitoringData, plansData] = await Promise.all(
+      const [dashData, clientsData, licensesData, ticketsData, monitoringData, plansData, reportsData, settingsData, financeData] = await Promise.all(
         responses.map(r => r.json())
       );
 
@@ -431,6 +509,9 @@ const AdminPanel = ({ user }: { user: User }) => {
       setTickets(ticketsData);
       setMonitoring(monitoringData);
       setPlans(plansData);
+      setReportsData(reportsData);
+      setSystemSettings(settingsData);
+      setFinanceData(financeData);
     } catch (e: any) {
       console.error("Error fetching admin data", e);
       setError(e.message);
@@ -438,6 +519,276 @@ const AdminPanel = ({ user }: { user: User }) => {
       setIsLoading(false);
     }
   };
+
+  const fetchClientDetails = async (clientId: number) => {
+    try {
+      const res = await fetch(`/api/admin/clients/${clientId}/details`);
+      if (!res.ok) throw new Error("Failed to fetch client details");
+      const data = await res.json();
+      setClientDetails(data);
+      setIsClientDetailsOpen(true);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleCreateClient = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/admin/clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(clientFormData)
+      });
+      if (!res.ok) throw new Error("Failed to create client");
+      setIsCreateModalOpen(false);
+      setClientFormData({ name: '', company_name: '', email: '', password: '', phone: '', nif: '', address: '' });
+      fetchData();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUpdateClient = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedClient) return;
+    try {
+      const res = await fetch(`/api/admin/clients/${selectedClient.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(clientFormData)
+      });
+      if (!res.ok) throw new Error("Failed to update client");
+      setIsEditModalOpen(false);
+      fetchData();
+      if (isClientDetailsOpen) fetchClientDetails(selectedClient.id);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUpdateStatus = async (clientId: number, newStatus: string) => {
+    try {
+      const client = clients.find(c => c.id === clientId);
+      const res = await fetch(`/api/admin/clients/${clientId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...client, status: newStatus })
+      });
+      if (!res.ok) throw new Error("Failed to update status");
+      fetchData();
+      if (isClientDetailsOpen) fetchClientDetails(clientId);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleManageLicense = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedClient) return;
+    try {
+      const expiry = new Date();
+      expiry.setMonth(expiry.getMonth() + Number(licenseFormData.duration_months));
+      
+      const res = await fetch('/api/admin/licenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: selectedClient.id,
+          store_id: licenseFormData.store_id || null,
+          plan_type: licenseFormData.plan_type,
+          start_date: new Date().toISOString().split('T')[0],
+          expiry_date: expiry.toISOString().split('T')[0],
+          features: { max_stores: 5, max_products: 1000 } // Default for now
+        })
+      });
+      if (!res.ok) throw new Error("Failed to manage license");
+      setIsLicenseModalOpen(false);
+      fetchData();
+      if (isClientDetailsOpen) fetchClientDetails(selectedClient.id);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchLicenseHistory = async (userId: number) => {
+    try {
+      const res = await fetch(`/api/admin/licenses/history/${userId}`);
+      if (!res.ok) throw new Error("Failed to fetch license history");
+      const data = await res.json();
+      setLicenseHistory(data);
+      setIsLicenseHistoryModalOpen(true);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchTicketMessages = async (ticketId: number) => {
+    try {
+      const res = await fetch(`/api/admin/support/${ticketId}/messages`);
+      if (!res.ok) throw new Error("Failed to fetch messages");
+      const data = await res.json();
+      setTicketMessages(data);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSendMessage = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedTicket || !newMessage.trim() || isSendingMessage) return;
+
+    setIsSendingMessage(true);
+    try {
+      const res = await fetch(`/api/admin/support/${selectedTicket.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sender_id: user.id,
+          message: newMessage,
+          is_admin: true
+        })
+      });
+
+      if (res.ok) {
+        setNewMessage('');
+        fetchTicketMessages(selectedTicket.id);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
+  const handleUpdateTicketStatus = async (ticketId: number, status: string) => {
+    try {
+      const res = await fetch(`/api/admin/support/${ticketId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      if (res.ok) {
+        fetchData();
+        if (selectedTicket?.id === ticketId) {
+          setSelectedTicket({ ...selectedTicket, status });
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUpdateTicketPriority = async (ticketId: number, priority: string) => {
+    try {
+      const res = await fetch(`/api/admin/support/${ticketId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priority })
+      });
+      if (res.ok) {
+        fetchData();
+        if (selectedTicket?.id === ticketId) {
+          setSelectedTicket({ ...selectedTicket, priority });
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUpdateLicenseStatus = async (licenseId: number, newStatus: string) => {
+    try {
+      const res = await fetch(`/api/admin/licenses/${licenseId}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (!res.ok) throw new Error("Failed to update license status");
+      fetchData();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRenewLicense = async (licenseId: number, months: number) => {
+    try {
+      const expiry = new Date();
+      expiry.setMonth(expiry.getMonth() + months);
+      const res = await fetch(`/api/admin/licenses/${licenseId}/renew`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiry_date: expiry.toISOString().split('T')[0] })
+      });
+      if (!res.ok) throw new Error("Failed to renew license");
+      fetchData();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSavePlan = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      const url = selectedPlan ? `/api/admin/plans/${selectedPlan.id}` : '/api/admin/plans';
+      const method = selectedPlan ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(planFormData)
+      });
+      if (!res.ok) throw new Error("Failed to save plan");
+      setIsPlanModalOpen(false);
+      fetchData();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeletePlan = async (planId: number) => {
+    if (!confirm("Tem certeza que deseja excluir este plano?")) return;
+    try {
+      const res = await fetch(`/api/admin/plans/${planId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error("Failed to delete plan");
+      fetchData();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUpdateSetting = async (key: string, value: string) => {
+    try {
+      const newSettings = { ...systemSettings, [key]: value };
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSettings)
+      });
+      if (res.ok) {
+        setSystemSettings(newSettings);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const filteredClients = clients.filter(c => {
+    const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                         (c.company_name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+                         c.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         (c.nif || '').includes(searchQuery);
+    const matchesPlan = filterPlan === 'all' || c.current_plan === filterPlan;
+    const matchesStatus = filterStatus === 'all' || c.status === filterStatus;
+    return matchesSearch && matchesPlan && matchesStatus;
+  });
+
+  const filteredLicenses = licenses.filter(l => {
+    const matchesSearch = l.client_name.toLowerCase().includes(licenseSearchQuery.toLowerCase()) || 
+                         (l.company_name?.toLowerCase() || '').includes(licenseSearchQuery.toLowerCase());
+    const matchesPlan = licenseFilterPlan === 'all' || l.plan_type === licenseFilterPlan;
+    const matchesStatus = licenseFilterStatus === 'all' || l.status === licenseFilterStatus;
+    return matchesSearch && matchesPlan && matchesStatus;
+  });
 
   useEffect(() => {
     fetchData();
@@ -495,6 +846,13 @@ const AdminPanel = ({ user }: { user: User }) => {
             <span className="font-bold text-sm">Clientes</span>
           </button>
           <button 
+            onClick={() => setActiveTab('finance')}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'finance' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
+          >
+            <Wallet size={20} />
+            <span className="font-bold text-sm">Financeiro</span>
+          </button>
+          <button 
             onClick={() => setActiveTab('licenses')}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'licenses' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
           >
@@ -540,7 +898,7 @@ const AdminPanel = ({ user }: { user: User }) => {
               <p className="text-xs font-bold truncate">{user.name}</p>
               <p className="text-[10px] text-zinc-400 truncate">{user.email}</p>
             </div>
-            <button onClick={() => window.location.reload()} className="text-zinc-400 hover:text-rose-500 transition-colors">
+            <button onClick={onLogout} className="text-zinc-400 hover:text-rose-500 transition-colors">
               <LogOut size={18} />
             </button>
           </div>
@@ -554,6 +912,7 @@ const AdminPanel = ({ user }: { user: User }) => {
             <h2 className="text-xl font-black">
               {activeTab === 'dashboard' && 'Visão Geral da Plataforma'}
               {activeTab === 'clients' && 'Gestão de Clientes'}
+              {activeTab === 'finance' && 'Gestão Financeira'}
               {activeTab === 'licenses' && 'Controle de Licenças'}
               {activeTab === 'support' && 'Centro de Suporte'}
               {activeTab === 'monitoring' && 'Monitoramento do Sistema'}
@@ -657,17 +1016,243 @@ const AdminPanel = ({ user }: { user: User }) => {
             </div>
           )}
 
+          {activeTab === 'finance' && (
+            <div className="space-y-8">
+              {/* 1️⃣ Resumo Financeiro */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <StatCard label="Total Ganho Hoje" value={`Kz ${financeData.stats.totalToday.toLocaleString()}`} icon={DollarSign} color="emerald" />
+                <StatCard label="Total Ganho no Mês" value={`Kz ${financeData.stats.totalMonth.toLocaleString()}`} icon={TrendingUp} color="blue" />
+                <StatCard label="Total Ganho no Ano" value={`Kz ${financeData.stats.totalYear.toLocaleString()}`} icon={Activity} color="indigo" />
+                <StatCard label="Pagamentos Recebidos" value={financeData.stats.count} icon={CreditCard} color="amber" />
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* 2️⃣ Receitas do Mês */}
+                <Card className="lg:col-span-2">
+                  <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+                    <h3 className="font-bold">Receitas do Mês</h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-zinc-50">
+                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Valor</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano/Licença</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-50">
+                        {financeData.payments.filter((p: any) => p.timestamp.startsWith(new Date().toISOString().substring(0, 7))).map((payment: any) => (
+                          <tr key={payment.id} className="hover:bg-zinc-50/50 transition-colors">
+                            <td className="px-6 py-4">
+                              <p className="text-sm font-bold">{payment.client_name}</p>
+                            </td>
+                            <td className="px-6 py-4 text-sm font-black text-emerald-600">Kz {payment.amount.toLocaleString()}</td>
+                            <td className="px-6 py-4">
+                              <span className="px-2 py-1 bg-zinc-100 rounded-lg text-[10px] font-bold text-zinc-600 uppercase">
+                                {payment.plan_name}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-zinc-500">{new Date(payment.timestamp).toLocaleDateString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+
+                {/* 4️⃣ Pagamentos Pendentes & Licenças a Expirar */}
+                <Card>
+                  <div className="p-6 border-b border-zinc-100">
+                    <h3 className="font-bold">Pagamentos Pendentes</h3>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    {financeData.pendingPayments.length === 0 ? (
+                      <p className="text-sm text-zinc-400 text-center py-4">Nenhum pagamento pendente.</p>
+                    ) : (
+                      financeData.pendingPayments.map((pending: any, idx: number) => (
+                        <div key={idx} className="p-4 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-3">
+                          <AlertTriangle className="text-amber-600 mt-0.5" size={18} />
+                          <div>
+                            <p className="text-sm font-bold text-amber-900">{pending.client_name}</p>
+                            <p className="text-[10px] text-amber-600 mt-1">Licença expira em: {new Date(pending.license_expiry).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                    <button onClick={() => setActiveTab('licenses')} className="w-full py-3 bg-black text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-all">
+                      Cobrar Clientes
+                    </button>
+                  </div>
+                </Card>
+              </div>
+
+              {/* 5️⃣ Relatório de Receitas */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <Card className="p-6">
+                  <h3 className="font-bold mb-6">Receita por Mês</h3>
+                  <div className="h-[250px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={financeData.reports.byMonth.slice().reverse()}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
+                        <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                        <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
+                        <Area type="monotone" dataKey="total" stroke="#10b981" fill="#10b981" fillOpacity={0.1} strokeWidth={3} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                <Card className="p-6">
+                  <h3 className="font-bold mb-6">Receita por Plano</h3>
+                  <div className="h-[250px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={financeData.reports.byPlan}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={80}
+                          paddingAngle={5}
+                          dataKey="total"
+                          nameKey="plan_name"
+                        >
+                          {financeData.reports.byPlan.map((entry: any, index: number) => (
+                            <Cell key={`cell-${index}`} fill={['#10b981', '#3b82f6', '#f59e0b'][index % 3]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend verticalAlign="bottom" height={36}/>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                <Card className="p-6">
+                  <h3 className="font-bold mb-6">Métodos de Pagamento</h3>
+                  <div className="space-y-4">
+                    {financeData.methods.map((method: any) => (
+                      <div key={method.payment_method} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-zinc-600 shadow-sm">
+                            {method.payment_method === 'Dinheiro' && <DollarSign size={16} />}
+                            {method.payment_method === 'Transferência' && <ArrowRightLeft size={16} />}
+                            {method.payment_method === 'Multicaixa' && <CreditCard size={16} />}
+                            {method.payment_method === 'Outros' && <Wallet size={16} />}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold">{method.payment_method}</p>
+                            <p className="text-[10px] text-zinc-400">{method.count} pagamentos</p>
+                          </div>
+                        </div>
+                        <p className="text-sm font-black">Kz {method.total.toLocaleString()}</p>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+
+              {/* 3️⃣ Histórico de Pagamentos */}
+              <Card>
+                <div className="p-6 border-b border-zinc-100">
+                  <h3 className="font-bold">Histórico de Pagamentos</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-zinc-50">
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Valor</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Método</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-50">
+                      {financeData.payments.map((payment: any) => (
+                        <tr key={payment.id} className="hover:bg-zinc-50/50 transition-colors">
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-bold">{payment.client_name}</p>
+                          </td>
+                          <td className="px-6 py-4 text-sm font-black text-zinc-900">Kz {payment.amount.toLocaleString()}</td>
+                          <td className="px-6 py-4">
+                            <span className="text-xs text-zinc-500 font-medium">{payment.payment_method}</span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="px-2 py-1 bg-zinc-100 rounded-lg text-[10px] font-bold text-zinc-600 uppercase">
+                              {payment.plan_name}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-zinc-500">{new Date(payment.timestamp).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </div>
+          )}
+
           {activeTab === 'clients' && (
             <div className="space-y-6">
-              <div className="flex justify-between items-center">
-                <div className="relative w-96">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-                  <input type="text" placeholder="Pesquisar clientes por nome, email ou NIF..." className="w-full pl-12 pr-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" />
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="flex flex-wrap gap-4 items-center">
+                  <div className="relative w-80">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                    <input 
+                      type="text" 
+                      placeholder="Pesquisar por nome, empresa, NIF..." 
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full pl-12 pr-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                    />
+                  </div>
+                  <select 
+                    value={filterPlan}
+                    onChange={(e) => setFilterPlan(e.target.value)}
+                    className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
+                  >
+                    <option value="all">Todos os Planos</option>
+                    <option value="basic">Basic</option>
+                    <option value="pro">Pro</option>
+                    <option value="enterprise">Enterprise</option>
+                  </select>
+                  <select 
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
+                  >
+                    <option value="all">Todos os Estados</option>
+                    <option value="active">Ativos</option>
+                    <option value="suspended">Suspensos</option>
+                    <option value="blocked">Bloqueados</option>
+                  </select>
                 </div>
-                <button className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all">
+                <button 
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all whitespace-nowrap"
+                >
                   <Plus size={20} />
                   Novo Cliente
                 </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <Card className="p-6 bg-blue-50 border-blue-100">
+                  <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">Total Clientes</p>
+                  <h3 className="text-3xl font-black text-blue-900">{clients.length}</h3>
+                </Card>
+                <Card className="p-6 bg-emerald-50 border-emerald-100">
+                  <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Clientes Ativos</p>
+                  <h3 className="text-3xl font-black text-emerald-900">{clients.filter(c => c.status === 'active').length}</h3>
+                </Card>
+                <Card className="p-6 bg-rose-50 border-rose-100">
+                  <p className="text-[10px] font-black text-rose-600 uppercase tracking-widest mb-1">Suspensos/Bloqueados</p>
+                  <h3 className="text-3xl font-black text-rose-900">{clients.filter(c => c.status !== 'active').length}</h3>
+                </Card>
               </div>
 
               <Card>
@@ -675,46 +1260,90 @@ const AdminPanel = ({ user }: { user: User }) => {
                   <table className="w-full text-left">
                     <thead>
                       <tr className="border-b border-zinc-50">
-                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Empresa / Proprietário</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Contacto</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">NIF</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data Registro</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano Atual</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Lojas</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estado</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Acções</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-50">
-                      {clients.map((client: any) => (
-                        <tr key={client.id} className="hover:bg-zinc-50/50 transition-colors">
+                      {filteredClients.map((client: any) => (
+                        <tr key={client.id} className="hover:bg-zinc-50/50 transition-colors cursor-pointer" onClick={() => fetchClientDetails(client.id)}>
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 bg-zinc-100 rounded-xl flex items-center justify-center text-zinc-600 font-bold">
-                                {client.name.charAt(0)}
+                                {client.company_name ? client.company_name.charAt(0) : client.name.charAt(0)}
                               </div>
                               <div>
-                                <p className="text-sm font-bold">{client.name}</p>
-                                <p className="text-[10px] text-zinc-400">{client.email}</p>
+                                <p className="text-sm font-bold">{client.company_name || 'Individual'}</p>
+                                <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">{client.name}</p>
                               </div>
                             </div>
                           </td>
-                          <td className="px-6 py-4 text-sm text-zinc-600">{client.phone || '---'}</td>
-                          <td className="px-6 py-4 text-sm font-medium text-zinc-600">{client.nif || '---'}</td>
-                          <td className="px-6 py-4 text-sm text-zinc-500">{new Date(client.created_at).toLocaleDateString()}</td>
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-medium text-zinc-600">{client.email}</p>
+                            <p className="text-[10px] text-zinc-400">{client.phone || 'Sem telefone'}</p>
+                          </td>
                           <td className="px-6 py-4">
                             <span className={cn(
                               "px-2 py-1 rounded-full text-[10px] font-black uppercase",
-                              client.status === 'active' ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                              client.current_plan === 'pro' ? "bg-purple-100 text-purple-700" : 
+                              client.current_plan === 'enterprise' ? "bg-blue-100 text-blue-700" : 
+                              "bg-zinc-100 text-zinc-700"
                             )}>
-                              {client.status === 'active' ? 'Ativo' : 'Suspenso'}
+                              {client.current_plan || 'Sem Plano'}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-right">
+                          <td className="px-6 py-4 text-sm font-bold text-zinc-600">{client.store_count}</td>
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-2 py-1 rounded-full text-[10px] font-black uppercase",
+                              client.status === 'active' ? "bg-emerald-100 text-emerald-700" : 
+                              client.status === 'suspended' ? "bg-amber-100 text-amber-700" :
+                              "bg-rose-100 text-rose-700"
+                            )}>
+                              {client.status === 'active' ? 'Ativo' : client.status === 'suspended' ? 'Suspenso' : 'Bloqueado'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center justify-end gap-2">
-                              <button className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-black transition-all">
+                              <button 
+                                onClick={() => {
+                                  setSelectedClient(client);
+                                  setClientFormData({
+                                    name: client.name,
+                                    company_name: client.company_name || '',
+                                    email: client.email,
+                                    password: '',
+                                    phone: client.phone || '',
+                                    nif: client.nif || '',
+                                    address: client.address || ''
+                                  });
+                                  setIsEditModalOpen(true);
+                                }}
+                                className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-black transition-all"
+                              >
                                 <Edit2 size={16} />
                               </button>
-                              <button className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-rose-500 transition-all">
-                                <ShieldAlert size={16} />
+                              <button 
+                                onClick={() => {
+                                  setSelectedClient(client);
+                                  setIsLicenseModalOpen(true);
+                                }}
+                                className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-emerald-600 transition-all"
+                              >
+                                <CreditCard size={16} />
+                              </button>
+                              <button 
+                                onClick={() => handleUpdateStatus(client.id, client.status === 'active' ? 'suspended' : 'active')}
+                                className={cn(
+                                  "p-2 hover:bg-zinc-100 rounded-lg transition-all",
+                                  client.status === 'active' ? "text-zinc-400 hover:text-rose-500" : "text-emerald-400 hover:text-emerald-600"
+                                )}
+                              >
+                                {client.status === 'active' ? <ShieldAlert size={16} /> : <ShieldCheck size={16} />}
                               </button>
                             </div>
                           </td>
@@ -729,13 +1358,55 @@ const AdminPanel = ({ user }: { user: User }) => {
 
           {activeTab === 'licenses' && (
             <div className="space-y-6">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="flex flex-wrap gap-4 items-center">
+                  <div className="relative w-80">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                    <input 
+                      type="text" 
+                      placeholder="Buscar por cliente ou empresa..." 
+                      value={licenseSearchQuery}
+                      onChange={(e) => setLicenseSearchQuery(e.target.value)}
+                      className="w-full pl-12 pr-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                    />
+                  </div>
+                  <select 
+                    value={licenseFilterPlan}
+                    onChange={(e) => setLicenseFilterPlan(e.target.value)}
+                    className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
+                  >
+                    <option value="all">Todos os Planos</option>
+                    <option value="basic">Basic</option>
+                    <option value="pro">Pro</option>
+                    <option value="enterprise">Enterprise</option>
+                  </select>
+                  <select 
+                    value={licenseFilterStatus}
+                    onChange={(e) => setLicenseFilterStatus(e.target.value)}
+                    className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
+                  >
+                    <option value="all">Todos os Estados</option>
+                    <option value="active">Ativas</option>
+                    <option value="expired">Expiradas</option>
+                    <option value="suspended">Suspensas</option>
+                  </select>
+                </div>
+                <button 
+                  onClick={() => setIsLicenseModalOpen(true)}
+                  className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all whitespace-nowrap"
+                >
+                  <Plus size={20} />
+                  Nova Licença
+                </button>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <Card className="p-6 bg-emerald-50 border-emerald-100">
                   <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Total Ativas</p>
                   <h3 className="text-3xl font-black text-emerald-900">{licenses.filter(l => l.status === 'active').length}</h3>
                 </Card>
                 <Card className="p-6 bg-amber-50 border-amber-100">
-                  <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1">A Expirar</p>
+                  <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1">A Expirar (7 dias)</p>
                   <h3 className="text-3xl font-black text-amber-900">{dashboardData.stats.expiringSoon}</h3>
                 </Card>
                 <Card className="p-6 bg-rose-50 border-rose-100">
@@ -746,14 +1417,13 @@ const AdminPanel = ({ user }: { user: User }) => {
 
               <Card>
                 <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
-                  <h3 className="font-bold">Histórico de Licenciamento</h3>
-                  <button className="text-xs font-bold bg-black text-white px-4 py-2 rounded-lg hover:bg-zinc-800 transition-all">Nova Licença</button>
+                  <h3 className="font-bold">Gestão de Licenciamento</h3>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
                       <tr className="border-b border-zinc-50">
-                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente / Loja</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente / Empresa</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Início</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Expiração</th>
@@ -762,14 +1432,18 @@ const AdminPanel = ({ user }: { user: User }) => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-50">
-                      {licenses.map((license: any) => (
+                      {filteredLicenses.map((license: any) => (
                         <tr key={license.id} className="hover:bg-zinc-50/50 transition-colors">
                           <td className="px-6 py-4">
-                            <p className="text-sm font-bold">{license.client_name}</p>
-                            <p className="text-[10px] text-zinc-400">{license.store_name || 'Todas as Lojas'}</p>
+                            <p className="text-sm font-bold">{license.company_name || license.client_name}</p>
+                            <p className="text-[10px] text-zinc-400">{license.store_name || 'Licença Global'}</p>
                           </td>
                           <td className="px-6 py-4">
-                            <span className="px-2 py-1 bg-zinc-100 text-zinc-600 text-[10px] font-black rounded-full uppercase">
+                            <span className={cn(
+                              "px-2 py-1 text-[10px] font-black rounded-full uppercase",
+                              license.plan_type === 'enterprise' ? "bg-purple-100 text-purple-700" :
+                              license.plan_type === 'pro' ? "bg-blue-100 text-blue-700" : "bg-zinc-100 text-zinc-600"
+                            )}>
                               {license.plan_type}
                             </span>
                           </td>
@@ -778,13 +1452,46 @@ const AdminPanel = ({ user }: { user: User }) => {
                           <td className="px-6 py-4">
                             <span className={cn(
                               "px-2 py-1 rounded-full text-[10px] font-black uppercase",
-                              license.status === 'active' ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                              license.status === 'active' ? "bg-emerald-100 text-emerald-700" : 
+                              license.status === 'suspended' ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"
                             )}>
                               {license.status}
                             </span>
                           </td>
                           <td className="px-6 py-4 text-right">
-                            <button className="text-xs font-bold text-black hover:underline">Renovar</button>
+                            <div className="flex items-center justify-end gap-2">
+                              <button 
+                                onClick={() => fetchLicenseHistory(license.user_id)}
+                                className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-black transition-all"
+                                title="Ver Histórico"
+                              >
+                                <History size={16} />
+                              </button>
+                              <button 
+                                onClick={() => handleRenewLicense(license.id, 1)}
+                                className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-black transition-all"
+                                title="Renovar 1 mês"
+                              >
+                                <Calendar size={16} />
+                              </button>
+                              <button 
+                                onClick={() => handleUpdateLicenseStatus(license.id, license.status === 'active' ? 'suspended' : 'active')}
+                                className={cn(
+                                  "p-2 rounded-lg transition-all",
+                                  license.status === 'active' ? "text-amber-400 hover:bg-amber-50 hover:text-amber-600" : "text-emerald-400 hover:bg-emerald-50 hover:text-emerald-600"
+                                )}
+                                title={license.status === 'active' ? 'Suspender' : 'Reativar'}
+                              >
+                                {license.status === 'active' ? <ShieldAlert size={16} /> : <ShieldCheck size={16} />}
+                              </button>
+                              <button 
+                                onClick={() => handleUpdateLicenseStatus(license.id, 'expired')}
+                                className="p-2 hover:bg-rose-50 rounded-lg text-rose-400 hover:text-rose-600 transition-all"
+                                title="Cancelar / Expirar"
+                              >
+                                <X size={16} />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -796,83 +1503,173 @@ const AdminPanel = ({ user }: { user: User }) => {
           )}
 
           {activeTab === 'support' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 space-y-6">
-                <div className="flex items-center justify-between">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-[calc(100vh-180px)]">
+              <div className="lg:col-span-1 flex flex-col gap-6 overflow-hidden">
+                <div className="flex items-center justify-between shrink-0">
                   <div className="flex gap-2">
-                    <button className="px-4 py-2 bg-black text-white rounded-lg text-xs font-bold">Abertos</button>
-                    <button className="px-4 py-2 bg-white text-zinc-500 border border-zinc-200 rounded-lg text-xs font-bold hover:bg-zinc-50">Pendentes</button>
-                    <button className="px-4 py-2 bg-white text-zinc-500 border border-zinc-200 rounded-lg text-xs font-bold hover:bg-zinc-50">Fechados</button>
+                    {['open', 'pending', 'closed'].map((status) => (
+                      <button 
+                        key={status}
+                        onClick={() => setSupportFilter(status)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                          supportFilter === status 
+                            ? "bg-black text-white shadow-lg shadow-black/20" 
+                            : "bg-white text-zinc-400 border border-zinc-200 hover:bg-zinc-50"
+                        )}
+                      >
+                        {status === 'open' ? 'Abertos' : status === 'pending' ? 'Pendentes' : 'Fechados'}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  {tickets.map((ticket: any) => (
-                    <Card key={ticket.id} className="p-6 hover:border-black transition-all cursor-pointer group">
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-zinc-100 rounded-xl flex items-center justify-center text-zinc-600">
-                            <HelpCircle size={20} />
-                          </div>
-                          <div>
-                            <h4 className="font-bold text-sm group-hover:text-black transition-colors">{ticket.subject}</h4>
-                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">De: {ticket.client_name} • {new Date(ticket.created_at).toLocaleDateString()}</p>
-                          </div>
-                        </div>
+                <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+                  {tickets.filter(t => t.status === supportFilter).map((ticket: any) => (
+                    <Card 
+                      key={ticket.id} 
+                      onClick={() => {
+                        setSelectedTicket(ticket);
+                        fetchTicketMessages(ticket.id);
+                      }}
+                      className={cn(
+                        "p-4 cursor-pointer transition-all border-l-4",
+                        selectedTicket?.id === ticket.id ? "border-black bg-zinc-50" : "border-transparent hover:bg-zinc-50",
+                        ticket.priority === 'high' ? "border-l-rose-500" : ticket.priority === 'medium' ? "border-l-amber-500" : "border-l-emerald-500"
+                      )}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <h4 className="font-bold text-sm truncate flex-1 mr-2">{ticket.subject}</h4>
                         <span className={cn(
-                          "px-2 py-1 rounded-full text-[10px] font-black uppercase",
-                          ticket.status === 'open' ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"
+                          "px-1.5 py-0.5 rounded text-[8px] font-black uppercase",
+                          ticket.priority === 'high' ? "bg-rose-100 text-rose-700" : ticket.priority === 'medium' ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
                         )}>
-                          {ticket.status}
+                          {ticket.priority}
                         </span>
                       </div>
-                      <p className="text-sm text-zinc-600 line-clamp-2">{ticket.description}</p>
-                      <div className="mt-4 pt-4 border-t border-zinc-50 flex justify-end">
-                        <button className="text-xs font-bold text-black flex items-center gap-1 hover:gap-2 transition-all">
-                          Responder <ChevronRight size={14} />
-                        </button>
+                      <p className="text-xs text-zinc-500 line-clamp-1 mb-2">{ticket.description}</p>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold text-zinc-400">{ticket.client_name}</span>
+                        <span className="text-[10px] text-zinc-400">{new Date(ticket.created_at).toLocaleDateString()}</span>
                       </div>
                     </Card>
                   ))}
-                  {tickets.length === 0 && (
-                    <div className="text-center py-20">
-                      <div className="w-16 h-16 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-400 mx-auto mb-4">
-                        <ShieldCheck size={32} />
-                      </div>
-                      <p className="text-zinc-500 font-bold">Nenhuma solicitação pendente</p>
-                      <p className="text-xs text-zinc-400">Bom trabalho! Todos os clientes foram atendidos.</p>
+                  {tickets.filter(t => t.status === supportFilter).length === 0 && (
+                    <div className="text-center py-12">
+                      <LifeBuoy className="mx-auto text-zinc-200 mb-4" size={48} />
+                      <p className="text-zinc-400 font-bold">Sem tickets {supportFilter}</p>
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="space-y-6">
-                <Card className="p-6 bg-black text-white">
-                  <h3 className="font-bold mb-4">Resumo de Atendimento</h3>
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-zinc-400">Tempo médio de resposta</span>
-                      <span className="font-bold">14 min</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-zinc-400">Taxa de resolução</span>
-                      <span className="font-bold">98.2%</span>
-                    </div>
-                    <div className="pt-4 border-t border-white/10">
-                      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Satisfação do Cliente</p>
-                      <div className="flex gap-1">
-                        {[1,2,3,4,5].map(i => <Sparkles key={i} size={14} className="text-amber-400 fill-amber-400" />)}
+              <div className="lg:col-span-2 flex flex-col overflow-hidden">
+                {selectedTicket ? (
+                  <Card className="flex-1 flex flex-col">
+                    <div className="p-6 border-b border-zinc-100 flex items-center justify-between shrink-0">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-600">
+                          <UserIcon size={24} />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-lg leading-tight">{selectedTicket.subject}</h3>
+                          <p className="text-xs text-zinc-400">Cliente: <span className="font-bold text-zinc-900">{selectedTicket.client_name}</span></p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <select 
+                          value={selectedTicket.priority}
+                          onChange={(e) => handleUpdateTicketPriority(selectedTicket.id, e.target.value)}
+                          className="text-[10px] font-black uppercase bg-zinc-50 border-none rounded-lg px-2 py-1 outline-none"
+                        >
+                          <option value="low">Baixa</option>
+                          <option value="medium">Média</option>
+                          <option value="high">Alta</option>
+                        </select>
+                        <select 
+                          value={selectedTicket.status}
+                          onChange={(e) => handleUpdateTicketStatus(selectedTicket.id, e.target.value)}
+                          className="text-[10px] font-black uppercase bg-zinc-50 border-none rounded-lg px-2 py-1 outline-none"
+                        >
+                          <option value="open">Aberto</option>
+                          <option value="pending">Pendente</option>
+                          <option value="closed">Fechado</option>
+                        </select>
                       </div>
                     </div>
+
+                    <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-zinc-50/50 custom-scrollbar">
+                      <div className="flex justify-center">
+                        <span className="px-3 py-1 bg-white border border-zinc-100 rounded-full text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+                          Ticket criado em {new Date(selectedTicket.created_at).toLocaleString()}
+                        </span>
+                      </div>
+
+                      <div className="flex gap-4">
+                        <div className="w-8 h-8 bg-zinc-200 rounded-xl flex items-center justify-center shrink-0">
+                          <UserIcon size={16} />
+                        </div>
+                        <div className="max-w-[80%] bg-white p-4 rounded-2xl rounded-tl-none border border-zinc-100 shadow-sm">
+                          <p className="text-sm text-zinc-800 leading-relaxed">{selectedTicket.description}</p>
+                        </div>
+                      </div>
+
+                      {ticketMessages.map((msg) => (
+                        <div key={msg.id} className={cn("flex gap-4", msg.is_admin ? "flex-row-reverse" : "")}>
+                          <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center shrink-0", msg.is_admin ? "bg-black text-white" : "bg-zinc-200")}>
+                            {msg.is_admin ? <ShieldCheck size={16} /> : <UserIcon size={16} />}
+                          </div>
+                          <div className={cn(
+                            "max-w-[80%] p-4 rounded-2xl shadow-sm border",
+                            msg.is_admin 
+                              ? "bg-black text-white border-black rounded-tr-none" 
+                              : "bg-white text-zinc-800 border-zinc-100 rounded-tl-none"
+                          )}>
+                            <p className="text-sm leading-relaxed">{msg.message}</p>
+                            <p className={cn("text-[8px] mt-2 font-bold uppercase tracking-widest opacity-50", msg.is_admin ? "text-right" : "")}>
+                              {new Date(msg.created_at).toLocaleTimeString()}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="p-6 border-t border-zinc-100 bg-white shrink-0">
+                      <form onSubmit={handleSendMessage} className="flex gap-4">
+                        <input 
+                          type="text" 
+                          value={newMessage}
+                          onChange={(e) => setNewMessage(e.target.value)}
+                          placeholder="Escreva sua resposta aqui..."
+                          className="flex-1 px-4 py-3 bg-zinc-100 border-none rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                        />
+                        <button 
+                          type="submit"
+                          disabled={!newMessage.trim() || isSendingMessage}
+                          className="px-6 py-3 bg-black text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        >
+                          {isSendingMessage ? 'Enviando...' : 'Enviar'}
+                          <ChevronRight size={18} />
+                        </button>
+                      </form>
+                    </div>
+                  </Card>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center bg-white border border-zinc-200 rounded-xl border-dashed">
+                    <div className="w-20 h-20 bg-zinc-50 rounded-full flex items-center justify-center text-zinc-200 mb-6">
+                      <LifeBuoy size={48} />
+                    </div>
+                    <h3 className="text-lg font-bold text-zinc-400">Seleccione um ticket para visualizar</h3>
+                    <p className="text-sm text-zinc-300 mt-2">Escolha uma solicitação na lista à esquerda para iniciar o atendimento.</p>
                   </div>
-                </Card>
+                )}
               </div>
             </div>
           )}
 
           {activeTab === 'monitoring' && (
             <div className="space-y-8">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <Card className="p-6">
                   <div className="flex items-center gap-4 mb-4">
                     <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
@@ -893,6 +1690,7 @@ const AdminPanel = ({ user }: { user: User }) => {
                     </div>
                   </div>
                 </Card>
+
                 <Card className="p-6">
                   <div className="flex items-center gap-4 mb-4">
                     <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
@@ -913,48 +1711,148 @@ const AdminPanel = ({ user }: { user: User }) => {
                     </div>
                   </div>
                 </Card>
+
                 <Card className="p-6">
                   <div className="flex items-center gap-4 mb-4">
                     <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
-                      <History size={24} />
+                      <Zap size={24} />
                     </div>
                     <div>
-                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Transações Hoje</p>
-                      <h4 className="font-bold text-amber-600">{monitoring.stats.todayTransactions}</h4>
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Uso de Memória</p>
+                      <h4 className="font-bold text-amber-600">{monitoring.memory.heapUsed} MB</h4>
                     </div>
                   </div>
                   <div className="space-y-2">
                     <div className="flex justify-between text-xs">
-                      <span className="text-zinc-500">Total Histórico</span>
+                      <span className="text-zinc-500">Heap Total</span>
+                      <span className="font-bold">{monitoring.memory.heapTotal} MB</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-amber-500" style={{ width: `${(monitoring.memory.heapUsed / monitoring.memory.heapTotal) * 100}%` }} />
+                    </div>
+                  </div>
+                </Card>
+
+                <Card className="p-6">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
+                      <Database size={24} />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Base de Dados</p>
+                      <h4 className="font-bold text-rose-600">Saudável</h4>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-zinc-500">Transações</span>
                       <span className="font-bold">{monitoring.stats.totalTransactions}</span>
                     </div>
                     <div className="w-full h-1.5 bg-zinc-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-amber-500 w-[65%]" />
+                      <div className="h-full bg-rose-500 w-[40%]" />
                     </div>
                   </div>
                 </Card>
               </div>
 
-              <Card>
-                <div className="p-6 border-b border-zinc-100">
-                  <h3 className="font-bold">Actividade Recente da Plataforma</h3>
-                </div>
-                <div className="p-6">
-                  <div className="space-y-6">
-                    {monitoring.recentActivity.map((activity: any, idx: number) => (
-                      <div key={idx} className="flex items-start gap-4">
-                        <div className="w-2 h-2 bg-emerald-500 rounded-full mt-2" />
-                        <div className="flex-1">
-                          <p className="text-sm">
-                            <span className="font-bold">Nova {activity.type}</span> processada em <span className="font-bold">{activity.store_name}</span>
-                          </p>
-                          <p className="text-xs text-zinc-400 mt-1">{new Date(activity.timestamp).toLocaleString()} • Valor: Kz {activity.value.toLocaleString()}</p>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <Card className="lg:col-span-2">
+                  <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+                    <h3 className="font-bold">Actividade Recente da Plataforma</h3>
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                      <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Live Updates</span>
+                    </div>
+                  </div>
+                  <div className="p-6">
+                    <div className="space-y-6">
+                      {monitoring.recentActivity.map((activity: any, idx: number) => (
+                        <div key={idx} className="flex items-start gap-4 group">
+                          <div className="w-10 h-10 bg-zinc-50 rounded-xl flex items-center justify-center text-zinc-400 group-hover:bg-black group-hover:text-white transition-all">
+                            <ShoppingCart size={18} />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex justify-between items-start">
+                              <p className="text-sm">
+                                <span className="font-bold">Nova {activity.type}</span> processada em <span className="font-bold">{activity.store_name}</span>
+                              </p>
+                              <span className="text-[10px] font-bold text-zinc-400">{new Date(activity.timestamp).toLocaleTimeString()}</span>
+                            </div>
+                            <p className="text-xs text-zinc-400 mt-1">Valor: <span className="text-zinc-900 font-bold">Kz {activity.value.toLocaleString()}</span></p>
+                          </div>
+                        </div>
+                      ))}
+                      {monitoring.recentActivity.length === 0 && (
+                        <div className="text-center py-12">
+                          <Clock className="mx-auto text-zinc-200 mb-4" size={48} />
+                          <p className="text-zinc-400 font-bold">Nenhuma actividade recente detectada</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+
+                <div className="space-y-8">
+                  <Card>
+                    <div className="p-6 border-b border-zinc-100">
+                      <h3 className="font-bold">Alertas do Sistema</h3>
+                    </div>
+                    <div className="p-6 space-y-4">
+                      {monitoring.systemAlerts.map((alert: any, idx: number) => (
+                        <div key={idx} className={cn(
+                          "p-4 rounded-xl border flex gap-3",
+                          alert.level === 'danger' ? "bg-rose-50 border-rose-100 text-rose-700" : "bg-amber-50 border-amber-100 text-amber-700"
+                        )}>
+                          <AlertTriangle size={20} className="shrink-0" />
+                          <div>
+                            <p className="text-xs font-bold leading-tight">{alert.message}</p>
+                            <p className="text-[10px] opacity-60 mt-1">{new Date(alert.timestamp).toLocaleString()}</p>
+                          </div>
+                        </div>
+                      ))}
+                      {monitoring.systemAlerts.length === 0 && (
+                        <div className="text-center py-8">
+                          <ShieldCheck className="mx-auto text-emerald-100 mb-2" size={32} />
+                          <p className="text-xs text-zinc-400 font-bold">Nenhum alerta crítico</p>
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+
+                  <Card className="p-6 bg-black text-white">
+                    <h4 className="text-xs font-black uppercase tracking-widest opacity-60 mb-4">Recursos Utilizados</h4>
+                    <div className="space-y-4">
+                      <div>
+                        <div className="flex justify-between text-[10px] font-bold uppercase mb-1">
+                          <span>CPU Usage</span>
+                          <span>12%</span>
+                        </div>
+                        <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-white w-[12%]" />
                         </div>
                       </div>
-                    ))}
-                  </div>
+                      <div>
+                        <div className="flex justify-between text-[10px] font-bold uppercase mb-1">
+                          <span>Disk Space</span>
+                          <span>45%</span>
+                        </div>
+                        <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-white w-[45%]" />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-[10px] font-bold uppercase mb-1">
+                          <span>Network In/Out</span>
+                          <span>2.4 MB/s</span>
+                        </div>
+                        <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-white w-[30%]" />
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
                 </div>
-              </Card>
+              </div>
             </div>
           )}
 
@@ -962,49 +1860,107 @@ const AdminPanel = ({ user }: { user: User }) => {
             <div className="space-y-8">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <Card className="p-6">
-                  <h3 className="font-bold mb-6">Crescimento de Clientes</h3>
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="font-bold">Receita Mensal (Kz)</h3>
+                    <div className="flex items-center gap-2 text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg uppercase">
+                      <TrendingUp size={12} />
+                      +14.5% Crescimento
+                    </div>
+                  </div>
                   <div className="h-[300px]">
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={[
-                        { name: 'Jan', value: 4 },
-                        { name: 'Fev', value: 7 },
-                        { name: 'Mar', value: 12 },
-                        { name: 'Abr', value: 18 },
-                        { name: 'Mai', value: 25 },
-                        { name: 'Jun', value: 32 },
-                      ]}>
+                      <AreaChart data={reportsData.revenueByMonth.map((d: any) => ({
+                        name: ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'][parseInt(d.month) - 1],
+                        value: d.total
+                      }))}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#a1a1aa' }} />
                         <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
-                        <Tooltip />
+                        <Tooltip 
+                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                        />
                         <Area type="monotone" dataKey="value" stroke="#000" fill="#000" fillOpacity={0.05} strokeWidth={3} />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
                 </Card>
+
                 <Card className="p-6">
-                  <h3 className="font-bold mb-6">Renovações vs Expirações</h3>
+                  <h3 className="font-bold mb-6">Crescimento de Clientes (Owners)</h3>
                   <div className="h-[300px]">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={[
-                        { name: 'Jan', ren: 2, exp: 0 },
-                        { name: 'Fev', ren: 4, exp: 1 },
-                        { name: 'Mar', ren: 8, exp: 2 },
-                        { name: 'Abr', ren: 12, exp: 1 },
-                        { name: 'Mai', ren: 15, exp: 3 },
-                        { name: 'Jun', ren: 22, exp: 2 },
-                      ]}>
+                      <BarChart data={reportsData.clientGrowth.map((d: any) => ({
+                        name: ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'][parseInt(d.month) - 1],
+                        value: d.count
+                      }))}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#a1a1aa' }} />
                         <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
-                        <Tooltip />
-                        <Legend />
-                        <Bar dataKey="ren" name="Renovações" fill="#10b981" radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="exp" name="Expirações" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                        <Tooltip 
+                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                        />
+                        <Bar dataKey="value" fill="#000" radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
                 </Card>
+
+                <Card className="p-6">
+                  <h3 className="font-bold mb-6">Distribuição de Planos Activos</h3>
+                  <div className="h-[300px] flex items-center">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={reportsData.licensesByPlan}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={80}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          {reportsData.licensesByPlan.map((entry: any, index: number) => (
+                            <Cell key={`cell-${index}`} fill={['#000', '#3b82f6', '#10b981', '#f59e0b'][index % 4]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend verticalAlign="bottom" height={36}/>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                <Card className="p-6">
+                  <h3 className="font-bold mb-6">Estado dos Tickets de Suporte</h3>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart layout="vertical" data={reportsData.ticketsByStatus}>
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f4f4f5" />
+                        <XAxis type="number" axisLine={false} tickLine={false} hide />
+                        <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#a1a1aa' }} />
+                        <Tooltip 
+                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                        />
+                        <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                          {reportsData.ticketsByStatus.map((entry: any, index: number) => (
+                            <Cell key={`cell-${index}`} fill={entry.name === 'open' ? '#ef4444' : entry.name === 'in_progress' ? '#3b82f6' : '#10b981'} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+              </div>
+
+              <div className="flex justify-end gap-4">
+                <button className="flex items-center gap-2 px-6 py-3 border border-zinc-200 rounded-xl font-bold text-sm hover:bg-zinc-50 transition-all">
+                  <FileText size={18} />
+                  Exportar CSV
+                </button>
+                <button className="flex items-center gap-2 px-6 py-3 bg-black text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-black/10">
+                  <FilePieChart size={18} />
+                  Gerar Relatório PDF
+                </button>
               </div>
             </div>
           )}
@@ -1012,21 +1968,53 @@ const AdminPanel = ({ user }: { user: User }) => {
           {activeTab === 'settings' && (
             <div className="max-w-4xl space-y-8">
               <Card>
-                <div className="p-6 border-b border-zinc-100">
+                <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
                   <h3 className="font-bold">Planos de Subscrição</h3>
+                  <button 
+                    onClick={() => {
+                      setSelectedPlan(null);
+                      setPlanFormData({ name: '', price: 0, max_stores: 1, max_products: 100, features: { reports: true, multi_store: false } });
+                      setIsPlanModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition-all flex items-center gap-2"
+                  >
+                    <Plus size={16} />
+                    Novo Plano
+                  </button>
                 </div>
                 <div className="p-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {plans.map((plan: any) => (
-                      <div key={plan.id} className="p-6 border border-zinc-200 rounded-2xl hover:border-black transition-all group">
+                      <div key={plan.id} className="p-6 border border-zinc-200 rounded-2xl hover:border-black transition-all group relative">
                         <div className="flex justify-between items-start mb-4">
                           <div>
                             <h4 className="font-black text-lg">{plan.name}</h4>
                             <p className="text-2xl font-black mt-1">Kz {plan.price.toLocaleString()}<span className="text-xs text-zinc-400 font-bold">/mês</span></p>
                           </div>
-                          <button className="p-2 text-zinc-400 hover:text-black transition-colors">
-                            <Edit2 size={18} />
-                          </button>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => {
+                                setSelectedPlan(plan);
+                                setPlanFormData({ 
+                                  name: plan.name, 
+                                  price: plan.price, 
+                                  max_stores: plan.max_stores, 
+                                  max_products: plan.max_products, 
+                                  features: typeof plan.features === 'string' ? JSON.parse(plan.features) : plan.features 
+                                });
+                                setIsPlanModalOpen(true);
+                              }}
+                              className="p-2 text-zinc-400 hover:text-black transition-colors"
+                            >
+                              <Edit2 size={18} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeletePlan(plan.id)}
+                              className="p-2 text-zinc-400 hover:text-rose-600 transition-colors"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
                         </div>
                         <ul className="space-y-3 mb-6">
                           <li className="flex items-center gap-2 text-sm text-zinc-600">
@@ -1038,12 +2026,32 @@ const AdminPanel = ({ user }: { user: User }) => {
                             Até {plan.max_products} produtos
                           </li>
                         </ul>
-                        <button className="w-full py-3 border border-zinc-200 rounded-xl text-sm font-bold group-hover:bg-black group-hover:text-white transition-all">
+                        <button 
+                          onClick={() => {
+                            setSelectedPlan(plan);
+                            setPlanFormData({ 
+                              name: plan.name, 
+                              price: plan.price, 
+                              max_stores: plan.max_stores, 
+                              max_products: plan.max_products, 
+                              features: typeof plan.features === 'string' ? JSON.parse(plan.features) : plan.features 
+                            });
+                            setIsPlanModalOpen(true);
+                          }}
+                          className="w-full py-3 border border-zinc-200 rounded-xl text-sm font-bold group-hover:bg-black group-hover:text-white transition-all"
+                        >
                           Editar Plano
                         </button>
                       </div>
                     ))}
-                    <button className="p-6 border-2 border-dashed border-zinc-200 rounded-2xl flex flex-col items-center justify-center gap-2 text-zinc-400 hover:text-black hover:border-black transition-all group">
+                    <button 
+                      onClick={() => {
+                        setSelectedPlan(null);
+                        setPlanFormData({ name: '', price: 0, max_stores: 1, max_products: 100, features: { reports: true, multi_store: false } });
+                        setIsPlanModalOpen(true);
+                      }}
+                      className="p-6 border-2 border-dashed border-zinc-200 rounded-2xl flex flex-col items-center justify-center gap-2 text-zinc-400 hover:text-black hover:border-black transition-all group"
+                    >
                       <Plus size={32} className="group-hover:scale-110 transition-transform" />
                       <span className="font-bold">Criar Novo Plano</span>
                     </button>
@@ -1053,25 +2061,60 @@ const AdminPanel = ({ user }: { user: User }) => {
 
               <Card>
                 <div className="p-6 border-b border-zinc-100">
-                  <h3 className="font-bold">Configurações de Notificação</h3>
+                  <h3 className="font-bold">Configurações do Sistema</h3>
                 </div>
                 <div className="p-6 space-y-6">
-                  <div className="flex items-center justify-between">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                      <p className="font-bold text-sm">Avisos de Expiração</p>
-                      <p className="text-xs text-zinc-500">Enviar email automático 7 dias antes da licença expirar.</p>
-                    </div>
-                    <div className="w-12 h-6 bg-emerald-500 rounded-full relative">
-                      <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full" />
+                      <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nome do Sistema</label>
+                      <input 
+                        type="text" 
+                        value={systemSettings.system_name || ''}
+                        onChange={(e) => handleUpdateSetting('system_name', e.target.value)}
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                      />
                     </div>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-bold text-sm">Relatórios Semanais</p>
-                      <p className="text-xs text-zinc-500">Enviar resumo de performance para o administrador.</p>
-                    </div>
-                    <div className="w-12 h-6 bg-zinc-200 rounded-full relative">
-                      <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full" />
+
+                  <div className="pt-6 border-t border-zinc-100">
+                    <h4 className="font-bold text-sm mb-4">Notificações Automáticas</h4>
+                    <div className="space-y-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-sm">Avisos de Expiração</p>
+                          <p className="text-xs text-zinc-500">Enviar email automático 7 dias antes da licença expirar.</p>
+                        </div>
+                        <button 
+                          onClick={() => handleUpdateSetting('expiration_notice', systemSettings.expiration_notice === 'true' ? 'false' : 'true')}
+                          className={cn(
+                            "w-12 h-6 rounded-full relative transition-all",
+                            systemSettings.expiration_notice === 'true' ? "bg-emerald-500" : "bg-zinc-200"
+                          )}
+                        >
+                          <div className={cn(
+                            "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                            systemSettings.expiration_notice === 'true' ? "right-1" : "left-1"
+                          )} />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-sm">Relatórios Semanais</p>
+                          <p className="text-xs text-zinc-500">Enviar resumo de performance para o administrador.</p>
+                        </div>
+                        <button 
+                          onClick={() => handleUpdateSetting('weekly_reports', systemSettings.weekly_reports === 'true' ? 'false' : 'true')}
+                          className={cn(
+                            "w-12 h-6 rounded-full relative transition-all",
+                            systemSettings.weekly_reports === 'true' ? "bg-emerald-500" : "bg-zinc-200"
+                          )}
+                        >
+                          <div className={cn(
+                            "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                            systemSettings.weekly_reports === 'true' ? "right-1" : "left-1"
+                          )} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1080,6 +2123,573 @@ const AdminPanel = ({ user }: { user: User }) => {
           )}
         </div>
       </main>
+
+      {/* Plan Modal */}
+      <Modal 
+        isOpen={isPlanModalOpen} 
+        onClose={() => setIsPlanModalOpen(false)} 
+        title={selectedPlan ? "Editar Plano" : "Novo Plano"}
+      >
+        <form onSubmit={handleSavePlan} className="space-y-6">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nome do Plano</label>
+              <input 
+                type="text" 
+                value={planFormData.name}
+                onChange={(e) => setPlanFormData({ ...planFormData, name: e.target.value })}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                placeholder="Ex: Profissional"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Preço Mensal (Kz)</label>
+              <input 
+                type="number" 
+                value={planFormData.price}
+                onChange={(e) => setPlanFormData({ ...planFormData, price: Number(e.target.value) })}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Máx. Lojas</label>
+              <input 
+                type="number" 
+                value={planFormData.max_stores}
+                onChange={(e) => setPlanFormData({ ...planFormData, max_stores: Number(e.target.value) })}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Máx. Produtos</label>
+              <input 
+                type="number" 
+                value={planFormData.max_products}
+                onChange={(e) => setPlanFormData({ ...planFormData, max_products: Number(e.target.value) })}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-zinc-100">
+            <h4 className="font-bold text-sm mb-4">Funcionalidades</h4>
+            <div className="space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input 
+                  type="checkbox" 
+                  checked={planFormData.features.reports}
+                  onChange={(e) => setPlanFormData({ ...planFormData, features: { ...planFormData.features, reports: e.target.checked } })}
+                  className="w-5 h-5 rounded-lg border-zinc-200 text-black focus:ring-black"
+                />
+                <span className="text-sm font-medium text-zinc-600 group-hover:text-black transition-colors">Relatórios Avançados</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input 
+                  type="checkbox" 
+                  checked={planFormData.features.multi_store}
+                  onChange={(e) => setPlanFormData({ ...planFormData, features: { ...planFormData.features, multi_store: e.target.checked } })}
+                  className="w-5 h-5 rounded-lg border-zinc-200 text-black focus:ring-black"
+                />
+                <span className="text-sm font-medium text-zinc-600 group-hover:text-black transition-colors">Gestão Multi-Loja</span>
+              </label>
+            </div>
+          </div>
+
+          <button 
+            type="submit"
+            className="w-full py-4 bg-black text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all shadow-xl shadow-black/10"
+          >
+            {selectedPlan ? "Actualizar Plano" : "Criar Plano"}
+          </button>
+        </form>
+      </Modal>
+
+      {/* Client Details Modal */}
+      <AnimatePresence>
+        {isClientDetailsOpen && clientDetails && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setIsClientDetailsOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-4xl max-h-[90vh] rounded-3xl shadow-2xl overflow-hidden relative z-10 flex flex-col"
+            >
+              <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-black text-white rounded-2xl flex items-center justify-center text-xl font-black">
+                    {clientDetails.client.company_name ? clientDetails.client.company_name.charAt(0) : clientDetails.client.name.charAt(0)}
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black">{clientDetails.client.company_name || 'Individual'}</h3>
+                    <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">{clientDetails.client.name}</p>
+                  </div>
+                </div>
+                <button onClick={() => setIsClientDetailsOpen(false)} className="p-2 hover:bg-zinc-200 rounded-full transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  <div className="lg:col-span-2 space-y-8">
+                    {/* Stats Summary */}
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Lojas</p>
+                        <p className="text-2xl font-black">{clientDetails.stats.totalStores}</p>
+                      </div>
+                      <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Usuários</p>
+                        <p className="text-2xl font-black">{clientDetails.stats.totalUsers}</p>
+                      </div>
+                      <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Atividade</p>
+                        <p className="text-sm font-bold truncate">{clientDetails.stats.lastActivity ? new Date(clientDetails.stats.lastActivity).toLocaleDateString() : 'Nunca'}</p>
+                      </div>
+                    </div>
+
+                    {/* Stores List */}
+                    <div>
+                      <h4 className="font-black text-sm uppercase tracking-widest text-zinc-400 mb-4">Lojas do Cliente</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {clientDetails.stores.map((store: any) => (
+                          <div key={store.id} className="p-4 border border-zinc-100 rounded-2xl flex items-center gap-4 hover:border-black transition-all">
+                            <div className="w-10 h-10 bg-zinc-100 rounded-xl flex items-center justify-center text-zinc-600">
+                              <Store size={20} />
+                            </div>
+                            <div>
+                              <p className="font-bold text-sm">{store.name}</p>
+                              <p className="text-[10px] text-zinc-400">{store.address}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* History Tabs */}
+                    <div>
+                      <h4 className="font-black text-sm uppercase tracking-widest text-zinc-400 mb-4">Histórico de Licenças</h4>
+                      <div className="space-y-3">
+                        {clientDetails.licenses.map((license: any) => (
+                          <div key={license.id} className="p-4 border border-zinc-100 rounded-2xl flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 bg-zinc-50 rounded-lg flex items-center justify-center text-zinc-400">
+                                <CreditCard size={16} />
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold">Plano {license.plan_type.toUpperCase()}</p>
+                                <p className="text-[10px] text-zinc-400">{license.store_name || 'Global'}</p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-xs font-bold">Expira em {new Date(license.expiry_date).toLocaleDateString()}</p>
+                              <span className={cn(
+                                "text-[10px] font-black uppercase",
+                                license.status === 'active' ? "text-emerald-600" : "text-rose-600"
+                              )}>
+                                {license.status}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    <Card className="p-6 bg-zinc-50 border-zinc-100">
+                      <h4 className="font-black text-sm mb-4">Dados de Contacto</h4>
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-zinc-400 border border-zinc-100">
+                            <UserIcon size={16} />
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Responsável</p>
+                            <p className="text-sm font-bold">{clientDetails.client.name}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-zinc-400 border border-zinc-100">
+                            <Phone size={16} />
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Telefone</p>
+                            <p className="text-sm font-bold">{clientDetails.client.phone || '---'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-zinc-400 border border-zinc-100">
+                            <FileText size={16} />
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">NIF</p>
+                            <p className="text-sm font-bold">{clientDetails.client.nif || '---'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-zinc-400 border border-zinc-100">
+                            <Calendar size={16} />
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Registrado em</p>
+                            <p className="text-sm font-bold">{new Date(clientDetails.client.created_at).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+
+                    <div className="space-y-2">
+                      <button 
+                        onClick={() => {
+                          setSelectedClient(clientDetails.client);
+                          setClientFormData({
+                            name: clientDetails.client.name,
+                            company_name: clientDetails.client.company_name || '',
+                            email: clientDetails.client.email,
+                            password: '',
+                            phone: clientDetails.client.phone || '',
+                            nif: clientDetails.client.nif || '',
+                            address: clientDetails.client.address || ''
+                          });
+                          setIsEditModalOpen(true);
+                        }}
+                        className="w-full py-3 bg-black text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all flex items-center justify-center gap-2"
+                      >
+                        <Edit2 size={16} />
+                        Editar Cliente
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setSelectedClient(clientDetails.client);
+                          setIsLicenseModalOpen(true);
+                        }}
+                        className="w-full py-3 border border-zinc-200 rounded-xl font-bold text-sm hover:bg-zinc-50 transition-all flex items-center justify-center gap-2"
+                      >
+                        <CreditCard size={16} />
+                        Gerenciar Licença
+                      </button>
+                      <button 
+                        onClick={() => handleUpdateStatus(clientDetails.client.id, clientDetails.client.status === 'active' ? 'suspended' : 'active')}
+                        className={cn(
+                          "w-full py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2",
+                          clientDetails.client.status === 'active' ? "bg-rose-50 text-rose-600 hover:bg-rose-100" : "bg-emerald-50 text-emerald-600 hover:bg-emerald-100"
+                        )}
+                      >
+                        {clientDetails.client.status === 'active' ? <ShieldAlert size={16} /> : <ShieldCheck size={16} />}
+                        {clientDetails.client.status === 'active' ? 'Suspender Cliente' : 'Reativar Cliente'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Create Client Modal */}
+      <AnimatePresence>
+        {isCreateModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setIsCreateModalOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden relative z-10"
+            >
+              <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+                <h3 className="text-xl font-black">Registrar Novo Cliente</h3>
+                <button onClick={() => setIsCreateModalOpen(false)} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              <form onSubmit={handleCreateClient} className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Nome da Empresa</label>
+                    <input 
+                      required
+                      type="text" 
+                      value={clientFormData.company_name}
+                      onChange={(e) => setClientFormData({...clientFormData, company_name: e.target.value})}
+                      className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Responsável</label>
+                    <input 
+                      required
+                      type="text" 
+                      value={clientFormData.name}
+                      onChange={(e) => setClientFormData({...clientFormData, name: e.target.value})}
+                      className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Email</label>
+                  <input 
+                    required
+                    type="email" 
+                    value={clientFormData.email}
+                    onChange={(e) => setClientFormData({...clientFormData, email: e.target.value})}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Telefone</label>
+                    <input 
+                      type="text" 
+                      value={clientFormData.phone}
+                      onChange={(e) => setClientFormData({...clientFormData, phone: e.target.value})}
+                      className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">NIF</label>
+                    <input 
+                      type="text" 
+                      value={clientFormData.nif}
+                      onChange={(e) => setClientFormData({...clientFormData, nif: e.target.value})}
+                      className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Palavra-passe Inicial</label>
+                  <input 
+                    required
+                    type="password" 
+                    value={clientFormData.password}
+                    onChange={(e) => setClientFormData({...clientFormData, password: e.target.value})}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                  />
+                </div>
+                <div className="pt-4">
+                  <button type="submit" className="w-full py-3 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all">
+                    Criar Cliente
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Edit Client Modal */}
+      <AnimatePresence>
+        {isEditModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setIsEditModalOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden relative z-10"
+            >
+              <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+                <h3 className="text-xl font-black">Editar Dados do Cliente</h3>
+                <button onClick={() => setIsEditModalOpen(false)} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              <form onSubmit={handleUpdateClient} className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Nome da Empresa</label>
+                    <input 
+                      required
+                      type="text" 
+                      value={clientFormData.company_name}
+                      onChange={(e) => setClientFormData({...clientFormData, company_name: e.target.value})}
+                      className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Responsável</label>
+                    <input 
+                      required
+                      type="text" 
+                      value={clientFormData.name}
+                      onChange={(e) => setClientFormData({...clientFormData, name: e.target.value})}
+                      className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Email</label>
+                  <input 
+                    required
+                    type="email" 
+                    value={clientFormData.email}
+                    onChange={(e) => setClientFormData({...clientFormData, email: e.target.value})}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Telefone</label>
+                    <input 
+                      type="text" 
+                      value={clientFormData.phone}
+                      onChange={(e) => setClientFormData({...clientFormData, phone: e.target.value})}
+                      className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">NIF</label>
+                    <input 
+                      type="text" 
+                      value={clientFormData.nif}
+                      onChange={(e) => setClientFormData({...clientFormData, nif: e.target.value})}
+                      className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                    />
+                  </div>
+                </div>
+                <div className="pt-4">
+                  <button type="submit" className="w-full py-3 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all">
+                    Salvar Alterações
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Manage License Modal */}
+      <AnimatePresence>
+        {isLicenseModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setIsLicenseModalOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden relative z-10"
+            >
+              <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+                <h3 className="text-xl font-black">Gerenciar Licença</h3>
+                <button onClick={() => setIsLicenseModalOpen(false)} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              <form onSubmit={handleManageLicense} className="p-6 space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Selecionar Plano</label>
+                  <select 
+                    value={licenseFormData.plan_type}
+                    onChange={(e) => setLicenseFormData({...licenseFormData, plan_type: e.target.value})}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold"
+                  >
+                    <option value="basic">Basic (Kz 15.000/mês)</option>
+                    <option value="pro">Pro (Kz 35.000/mês)</option>
+                    <option value="enterprise">Enterprise (Kz 75.000/mês)</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Duração (Meses)</label>
+                  <input 
+                    type="number" 
+                    min="1"
+                    max="24"
+                    value={licenseFormData.duration_months}
+                    onChange={(e) => setLicenseFormData({...licenseFormData, duration_months: Number(e.target.value)})}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Atribuir a Loja (Opcional)</label>
+                  <select 
+                    value={licenseFormData.store_id}
+                    onChange={(e) => setLicenseFormData({...licenseFormData, store_id: e.target.value})}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all"
+                  >
+                    <option value="">Licença Global (Todas as Lojas)</option>
+                    {clientDetails?.stores?.map((s: any) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="pt-4">
+                  <button type="submit" className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all">
+                    Ativar / Renovar Licença
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* License History Modal */}
+      <AnimatePresence>
+        {isLicenseHistoryModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setIsLicenseHistoryModalOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden relative z-10"
+            >
+              <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+                <h3 className="text-xl font-black">Histórico de Licenciamento</h3>
+                <button onClick={() => setIsLicenseHistoryModalOpen(false)} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-6 max-h-[60vh] overflow-y-auto">
+                <div className="space-y-4">
+                  {licenseHistory.map((h: any) => (
+                    <div key={h.id} className="p-4 border border-zinc-100 rounded-2xl flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-bold">Plano {h.plan_type.toUpperCase()}</p>
+                        <p className="text-[10px] text-zinc-400">{h.store_name || 'Global'}</p>
+                        <p className="text-[10px] text-zinc-500 mt-1">
+                          {new Date(h.start_date).toLocaleDateString()} - {new Date(h.expiry_date).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className={cn(
+                          "px-2 py-1 rounded-full text-[10px] font-black uppercase",
+                          h.status === 'active' ? "bg-emerald-100 text-emerald-700" : 
+                          h.status === 'suspended' ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"
+                        )}>
+                          {h.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {licenseHistory.length === 0 && (
+                    <div className="text-center py-10 text-zinc-400">
+                      Nenhum histórico encontrado.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -1407,7 +3017,7 @@ const MyStores = ({ user }: { user: User }) => {
 
 const StoreAdmin = ({ user }: { user: User }) => {
   const { storeId } = useParams();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'products' | 'promotions' | 'stock' | 'staff' | 'reports' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'products' | 'promotions' | 'stock' | 'staff' | 'reports' | 'settings' | 'support'>('dashboard');
   const [storeData, setStoreData] = useState<any>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [staff, setStaff] = useState<any[]>([]);
@@ -1417,6 +3027,12 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [stockReport, setStockReport] = useState<any>(null);
   const [reportsData, setReportsData] = useState<any>(null);
   const [stores, setStores] = useState<any[]>([]);
+  const [supportTickets, setSupportTickets] = useState<any[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<any>(null);
+  const [ticketMessages, setTicketMessages] = useState<any[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [isTicketModalOpen, setIsTicketModalOpen] = useState(false);
+  const [ticketForm, setTicketForm] = useState({ subject: '', description: '', priority: 'medium' });
   const [settingsForm, setSettingsForm] = useState({ name: '', nif: '', phone: '', address: '', logo_url: '', status: 'active' });
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
@@ -1470,6 +3086,9 @@ const StoreAdmin = ({ user }: { user: User }) => {
     fetch('/api/admin/stores')
       .then(res => res.json())
       .then(setStores);
+    fetch(`/api/owner/support/${user.id}`)
+      .then(res => res.json())
+      .then(setSupportTickets);
   };
 
   useEffect(fetchData, [storeId]);
@@ -1632,6 +3251,48 @@ const StoreAdmin = ({ user }: { user: User }) => {
     }
   };
 
+  const handleSendMessage = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !selectedTicket) return;
+
+    const res = await fetch(`/api/owner/support/ticket/${selectedTicket.id}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sender_id: user.id, message: newMessage })
+    });
+
+    if (res.ok) {
+      setNewMessage('');
+      fetchMessages(selectedTicket.id);
+    }
+  };
+
+  const fetchMessages = (ticketId: number) => {
+    fetch(`/api/owner/support/ticket/${ticketId}/messages`)
+      .then(res => res.json())
+      .then(setTicketMessages);
+  };
+
+  const handleSelectTicket = (ticket: any) => {
+    setSelectedTicket(ticket);
+    fetchMessages(ticket.id);
+  };
+
+  const handleCreateTicket = async (e: FormEvent) => {
+    e.preventDefault();
+    const res = await fetch('/api/owner/support', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...ticketForm, user_id: user.id })
+    });
+
+    if (res.ok) {
+      setIsTicketModalOpen(false);
+      setTicketForm({ subject: '', description: '', priority: 'medium' });
+      fetchData();
+    }
+  };
+
   if (!storeData) return <div className="p-8 text-center text-zinc-500">Carregando dados da loja...</div>;
 
   const { store, dashboard } = storeData;
@@ -1673,6 +3334,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
             { id: 'staff', icon: Users, label: 'Pessoal' },
             { id: 'reports', icon: BarChart3, label: 'Relatórios' },
             { id: 'settings', icon: Settings2, label: 'Configurações' },
+            { id: 'support', icon: LifeBuoy, label: 'Suporte' },
           ].map(tab => (
             <button
               key={tab.id}
@@ -2387,8 +4049,192 @@ const StoreAdmin = ({ user }: { user: User }) => {
               </div>
             </div>
           )}
+          {activeTab === 'support' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <Card className="lg:col-span-1 flex flex-col h-[600px]">
+                <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
+                  <h3 className="font-bold">Meus Tickets</h3>
+                  <button 
+                    onClick={() => setIsTicketModalOpen(true)}
+                    className="p-2 bg-black text-white rounded-lg hover:bg-zinc-800 transition-colors"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {supportTickets.length === 0 ? (
+                    <p className="text-sm text-zinc-400 text-center py-8">Nenhum ticket aberto.</p>
+                  ) : (
+                    supportTickets.map(ticket => (
+                      <button
+                        key={ticket.id}
+                        onClick={() => handleSelectTicket(ticket)}
+                        className={cn(
+                          "w-full text-left p-4 rounded-2xl border transition-all",
+                          selectedTicket?.id === ticket.id 
+                            ? "bg-black border-black text-white shadow-lg" 
+                            : "bg-white border-zinc-100 hover:border-zinc-300 text-zinc-900"
+                        )}
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <span className={cn(
+                            "px-2 py-0.5 rounded-full text-[10px] font-black uppercase",
+                            selectedTicket?.id === ticket.id ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
+                          )}>
+                            {ticket.status}
+                          </span>
+                          <span className="text-[10px] opacity-60">
+                            {new Date(ticket.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <p className="font-bold text-sm truncate">{ticket.subject}</p>
+                        <p className={cn(
+                          "text-xs mt-1 truncate",
+                          selectedTicket?.id === ticket.id ? "text-white/70" : "text-zinc-500"
+                        )}>
+                          {ticket.description}
+                        </p>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </Card>
+
+              <Card className="lg:col-span-2 flex flex-col h-[600px]">
+                {selectedTicket ? (
+                  <>
+                    <div className="p-6 border-b border-zinc-100">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="font-bold text-lg">{selectedTicket.subject}</h3>
+                          <p className="text-sm text-zinc-500 mt-1">{selectedTicket.description}</p>
+                        </div>
+                        <span className={cn(
+                          "px-3 py-1 rounded-full text-xs font-bold uppercase",
+                          selectedTicket.priority === 'high' ? "bg-rose-100 text-rose-700" :
+                          selectedTicket.priority === 'medium' ? "bg-amber-100 text-amber-700" :
+                          "bg-blue-100 text-blue-700"
+                        )}>
+                          Prioridade {selectedTicket.priority}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-zinc-50/50">
+                      {ticketMessages.map(msg => (
+                        <div key={msg.id} className={cn(
+                          "flex flex-col max-w-[80%]",
+                          msg.is_admin ? "self-start" : "self-end items-end"
+                        )}>
+                          <div className={cn(
+                            "p-4 rounded-2xl text-sm",
+                            msg.is_admin 
+                              ? "bg-white border border-zinc-100 text-zinc-900 rounded-tl-none" 
+                              : "bg-black text-white rounded-tr-none"
+                          )}>
+                            {msg.message}
+                          </div>
+                          <span className="text-[10px] text-zinc-400 mt-1 px-1">
+                            {msg.is_admin ? 'Suporte Factu' : 'Você'} • {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <form onSubmit={handleSendMessage} className="p-4 border-t border-zinc-100 flex gap-3">
+                      <input 
+                        type="text"
+                        value={newMessage}
+                        onChange={e => setNewMessage(e.target.value)}
+                        placeholder="Digite sua mensagem..."
+                        className="flex-1 px-4 py-3 bg-zinc-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-black outline-none transition-all"
+                      />
+                      <button className="bg-black text-white p-3 rounded-xl hover:bg-zinc-800 transition-all">
+                        <ArrowRightLeft size={20} />
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center text-zinc-400 p-12 text-center">
+                    <div className="w-16 h-16 bg-zinc-100 rounded-full flex items-center justify-center mb-4">
+                      <LifeBuoy size={32} />
+                    </div>
+                    <h3 className="font-bold text-zinc-900">Central de Suporte</h3>
+                    <p className="text-sm mt-2 max-w-xs">Selecione um ticket ao lado ou crie um novo para falar com nossa equipa.</p>
+                  </div>
+                )}
+              </Card>
+            </div>
+          )}
         </motion.div>
       </AnimatePresence>
+
+      {/* Modal Novo Ticket */}
+      {isTicketModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+          >
+            <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
+              <h3 className="font-bold text-lg">Novo Pedido de Suporte</h3>
+              <button onClick={() => setIsTicketModalOpen(false)} className="p-2 hover:bg-zinc-100 rounded-xl transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            <form onSubmit={handleCreateTicket} className="p-6 space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Assunto</label>
+                <input 
+                  type="text"
+                  required
+                  value={ticketForm.subject}
+                  onChange={e => setTicketForm({...ticketForm, subject: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none transition-all"
+                  placeholder="Ex: Dúvida sobre faturação"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Prioridade</label>
+                <select 
+                  value={ticketForm.priority}
+                  onChange={e => setTicketForm({...ticketForm, priority: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none transition-all"
+                >
+                  <option value="low">Baixa</option>
+                  <option value="medium">Média</option>
+                  <option value="high">Alta</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Descrição</label>
+                <textarea 
+                  required
+                  rows={4}
+                  value={ticketForm.description}
+                  onChange={e => setTicketForm({...ticketForm, description: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none transition-all resize-none"
+                  placeholder="Descreva detalhadamente o seu problema ou dúvida..."
+                />
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={() => setIsTicketModalOpen(false)}
+                  className="flex-1 py-4 bg-zinc-100 text-zinc-600 rounded-2xl font-bold hover:bg-zinc-200 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-4 bg-black text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all"
+                >
+                  Abrir Ticket
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
 
       <Modal isOpen={isProductModalOpen} onClose={() => { setIsProductModalOpen(false); setEditingProduct(null); }} title={editingProduct ? "Editar Produto" : "Novo Produto"}>
         <form onSubmit={handleAddProduct} className="space-y-4">
@@ -2681,15 +4527,209 @@ const OwnerReports = ({ user }: { user: User }) => (
   </div>
 );
 
-const OwnerSettings = ({ user }: { user: User }) => (
-  <div className="p-12 text-center space-y-4">
-    <div className="w-20 h-20 bg-zinc-100 text-zinc-400 rounded-full flex items-center justify-center mx-auto">
-      <Settings size={40} />
+const OwnerSettings = ({ user }: { user: User }) => {
+  const [formData, setFormData] = useState({
+    name: user.name || '',
+    email: user.email || '',
+    phone: '',
+    nif: '',
+    address: '',
+    company_name: '',
+    password: '',
+    confirmPassword: ''
+  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/admin/clients/${user.id}/details`)
+      .then(res => res.json())
+      .then(data => {
+        setFormData({
+          ...formData,
+          name: data.client.name,
+          email: data.client.email,
+          phone: data.client.phone || '',
+          nif: data.client.nif || '',
+          address: data.client.address || '',
+          company_name: data.client.company_name || ''
+        });
+        setIsLoading(false);
+      });
+  }, [user.id]);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (formData.password && formData.password !== formData.confirmPassword) {
+      alert("As senhas não coincidem");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const res = await fetch(`/api/profile/${user.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+      if (res.ok) {
+        alert("Perfil actualizado com sucesso!");
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (isLoading) return <div className="p-12 text-center text-zinc-500">Carregando configurações...</div>;
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-8">
+      <div>
+        <h2 className="text-2xl font-black tracking-tight">Configurações da Conta</h2>
+        <p className="text-zinc-500">Gerencie seus dados de proprietário e preferências do sistema.</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-6">
+          <Card>
+            <div className="p-6 border-b border-zinc-100">
+              <h3 className="font-bold">Informações Pessoais</h3>
+            </div>
+            <form onSubmit={handleSubmit} className="p-6 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nome Completo</label>
+                  <input 
+                    type="text" 
+                    value={formData.name}
+                    onChange={e => setFormData({...formData, name: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Email</label>
+                  <input 
+                    type="email" 
+                    value={formData.email}
+                    onChange={e => setFormData({...formData, email: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Telefone</label>
+                  <input 
+                    type="text" 
+                    value={formData.phone}
+                    onChange={e => setFormData({...formData, phone: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">NIF</label>
+                  <input 
+                    type="text" 
+                    value={formData.nif}
+                    onChange={e => setFormData({...formData, nif: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                  />
+                </div>
+                <div className="col-span-full">
+                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nome da Empresa</label>
+                  <input 
+                    type="text" 
+                    value={formData.company_name}
+                    onChange={e => setFormData({...formData, company_name: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                  />
+                </div>
+                <div className="col-span-full">
+                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Endereço Fiscal</label>
+                  <textarea 
+                    value={formData.address}
+                    onChange={e => setFormData({...formData, address: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all h-24 resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-6 border-t border-zinc-100">
+                <h4 className="font-bold text-sm mb-4">Alterar Palavra-passe</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nova Palavra-passe</label>
+                    <input 
+                      type="password" 
+                      value={formData.password}
+                      onChange={e => setFormData({...formData, password: e.target.value})}
+                      className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                      placeholder="Deixe em branco para manter"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Confirmar Palavra-passe</label>
+                    <input 
+                      type="password" 
+                      value={formData.confirmPassword}
+                      onChange={e => setFormData({...formData, confirmPassword: e.target.value})}
+                      className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                      placeholder="Confirme a nova senha"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-6 border-t border-zinc-100 flex justify-end">
+                <button 
+                  type="submit" 
+                  disabled={isSaving}
+                  className="px-8 py-3 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all disabled:opacity-50"
+                >
+                  {isSaving ? 'Guardando...' : 'Guardar Alterações'}
+                </button>
+              </div>
+            </form>
+          </Card>
+        </div>
+
+        <div className="space-y-6">
+          <Card className="p-6 bg-black text-white">
+            <h3 className="font-bold mb-4">Estado da Subscrição</h3>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-zinc-400">Plano Actual</span>
+                <span className="font-bold bg-white/10 px-2 py-1 rounded text-xs uppercase">Profissional</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-zinc-400">Expira em</span>
+                <span className="font-bold">31/12/2026</span>
+              </div>
+              <div className="pt-4 border-t border-white/10">
+                <button className="w-full py-3 bg-white text-black rounded-xl font-bold text-sm hover:bg-zinc-100 transition-all">
+                  Renovar Subscrição
+                </button>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <h3 className="font-bold mb-4">Segurança</h3>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 text-sm text-zinc-600">
+                <ShieldCheck size={18} className="text-emerald-500" />
+                Autenticação de dois factores activa
+              </div>
+              <div className="flex items-center gap-3 text-sm text-zinc-600">
+                <Clock size={18} className="text-zinc-400" />
+                Último acesso: Hoje às 14:20
+              </div>
+            </div>
+          </Card>
+        </div>
+      </div>
     </div>
-    <h3 className="text-xl font-bold">Configurações da Conta</h3>
-    <p className="text-zinc-500">Gerencie seus dados de proprietário e preferências do sistema.</p>
-  </div>
-);
+  );
+};
 
 // --- Seller Module ---
 
@@ -3500,21 +5540,54 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
 };
 
 const SellerSettings = ({ user }: { user: User }) => {
+  const [formData, setFormData] = useState({
+    name: user.name || '',
+    email: user.email || '',
+    password: '',
+    confirmPassword: ''
+  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (formData.password && formData.password !== formData.confirmPassword) {
+      alert("As senhas não coincidem");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const res = await fetch(`/api/profile/${user.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+      if (res.ok) {
+        alert("Perfil actualizado com sucesso!");
+        setIsPasswordModalOpen(false);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight">Configurações</h2>
-        <p className="text-zinc-500">Gerencie sua conta e preferências.</p>
+        <h2 className="text-2xl font-black tracking-tight">Configurações</h2>
+        <p className="text-zinc-500">Gerencie sua conta e preferências de vendedor.</p>
       </div>
 
       <div className="space-y-4">
-        <Card className="p-6 border-zinc-100 shadow-sm rounded-2xl hover:border-orange-200 transition-colors cursor-pointer group">
+        <Card className="p-6 border-zinc-100 shadow-sm rounded-2xl hover:border-orange-200 transition-colors cursor-pointer group" onClick={() => setIsPasswordModalOpen(true)}>
           <div className="flex items-center gap-4">
             <div className="p-3 bg-orange-50 text-orange-600 rounded-xl group-hover:bg-orange-500 group-hover:text-white transition-colors">
-              <UserIcon size={24} />
+              <LockIcon size={24} />
             </div>
             <div className="flex-1">
-              <h4 className="font-bold text-zinc-800">Alterar Senha</h4>
+              <h4 className="font-bold text-zinc-800">Alterar Palavra-passe</h4>
               <p className="text-xs text-zinc-500">Mantenha sua conta segura trocando sua senha regularmente.</p>
             </div>
             <ChevronRight size={20} className="text-zinc-300" />
@@ -3546,6 +5619,44 @@ const SellerSettings = ({ user }: { user: User }) => {
           </div>
         </Card>
       </div>
+
+      <Modal 
+        isOpen={isPasswordModalOpen} 
+        onClose={() => setIsPasswordModalOpen(false)} 
+        title="Alterar Palavra-passe"
+      >
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nova Palavra-passe</label>
+              <input 
+                type="password" 
+                required
+                value={formData.password}
+                onChange={e => setFormData({...formData, password: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Confirmar Palavra-passe</label>
+              <input 
+                type="password" 
+                required
+                value={formData.confirmPassword}
+                onChange={e => setFormData({...formData, confirmPassword: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+              />
+            </div>
+          </div>
+          <button 
+            type="submit" 
+            disabled={isSaving}
+            className="w-full py-4 bg-orange-500 text-white rounded-2xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20 disabled:opacity-50"
+          >
+            {isSaving ? 'Guardando...' : 'Actualizar Palavra-passe'}
+          </button>
+        </form>
+      </Modal>
     </div>
   );
 };
@@ -3622,38 +5733,39 @@ export default function App() {
 
   return (
     <Router>
-      <DashboardLayout user={user} onLogout={handleLogout}>
+      {user.role === 'admin' ? (
         <Routes>
-          {user.role === 'admin' && (
-            <>
-              <Route path="/admin" element={<AdminPanel user={user} />} />
-              <Route path="*" element={<Navigate to="/admin" replace />} />
-            </>
-          )}
-          {user.role === 'owner' && (
-            <>
-              <Route path="/owner" element={<OwnerOverview user={user} />} />
-              <Route path="/owner/stores" element={<MyStores user={user} />} />
-              <Route path="/owner/stores/:storeId" element={<StoreAdmin user={user} />} />
-              <Route path="/owner/reports" element={<OwnerReports user={user} />} />
-              <Route path="/owner/settings" element={<OwnerSettings user={user} />} />
-              <Route path="*" element={<Navigate to="/owner" replace />} />
-            </>
-          )}
-          {user.role === 'seller' && (
-            <>
-              <Route path="/seller" element={<SellerPOS user={user} />} />
-              <Route path="/seller/dashboard" element={<SellerDashboard user={user} />} />
-              <Route path="/seller/movements" element={<SellerCashMovements user={user} />} />
-              <Route path="/seller/close" element={<SellerCloseCashier user={user} />} />
-              <Route path="/seller/history" element={<SellerHistory user={user} />} />
-              <Route path="/seller/settings" element={<SellerSettings user={user} />} />
-              <Route path="*" element={<Navigate to="/seller" replace />} />
-            </>
-          )}
-          <Route path="/" element={<Navigate to={`/${user.role}`} replace />} />
+          <Route path="/admin" element={<AdminPanel user={user} onLogout={handleLogout} />} />
+          <Route path="*" element={<Navigate to="/admin" replace />} />
         </Routes>
-      </DashboardLayout>
+      ) : (
+        <DashboardLayout user={user} onLogout={handleLogout}>
+          <Routes>
+            {user.role === 'owner' && (
+              <>
+                <Route path="/owner" element={<OwnerOverview user={user} />} />
+                <Route path="/owner/stores" element={<MyStores user={user} />} />
+                <Route path="/owner/stores/:storeId" element={<StoreAdmin user={user} />} />
+                <Route path="/owner/reports" element={<OwnerReports user={user} />} />
+                <Route path="/owner/settings" element={<OwnerSettings user={user} />} />
+                <Route path="*" element={<Navigate to="/owner" replace />} />
+              </>
+            )}
+            {user.role === 'seller' && (
+              <>
+                <Route path="/seller" element={<SellerPOS user={user} />} />
+                <Route path="/seller/dashboard" element={<SellerDashboard user={user} />} />
+                <Route path="/seller/movements" element={<SellerCashMovements user={user} />} />
+                <Route path="/seller/close" element={<SellerCloseCashier user={user} />} />
+                <Route path="/seller/history" element={<SellerHistory user={user} />} />
+                <Route path="/seller/settings" element={<SellerSettings user={user} />} />
+                <Route path="*" element={<Navigate to="/seller" replace />} />
+              </>
+            )}
+            <Route path="/" element={<Navigate to={`/${user.role}`} replace />} />
+          </Routes>
+        </DashboardLayout>
+      )}
     </Router>
   );
 }

@@ -33,6 +33,7 @@ db.exec(`
     expiry_date TEXT,
     status TEXT DEFAULT 'active', -- 'active', 'suspended', 'expired'
     features TEXT, -- JSON string of limits
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id),
     FOREIGN KEY(store_id) REFERENCES stores(id)
   );
@@ -42,10 +43,22 @@ db.exec(`
     user_id INTEGER,
     subject TEXT,
     description TEXT,
+    priority TEXT DEFAULT 'medium', -- 'low', 'medium', 'high'
     status TEXT DEFAULT 'open', -- 'open', 'pending', 'closed'
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS ticket_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id INTEGER,
+    sender_id INTEGER,
+    message TEXT,
+    is_admin INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(ticket_id) REFERENCES support_tickets(id),
+    FOREIGN KEY(sender_id) REFERENCES users(id)
   );
 
   CREATE TABLE IF NOT EXISTS system_plans (
@@ -55,6 +68,23 @@ db.exec(`
     max_stores INTEGER,
     max_products INTEGER,
     features TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS system_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    amount REAL,
+    plan_id INTEGER,
+    payment_method TEXT, -- 'Dinheiro', 'Transferência', 'Multicaixa', 'Outros'
+    status TEXT DEFAULT 'paid', -- 'paid', 'pending'
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id),
+    FOREIGN KEY(plan_id) REFERENCES system_plans(id)
   );
 
   CREATE TABLE IF NOT EXISTS stores (
@@ -85,20 +115,21 @@ db.exec(`
   );
 `);
 
-// Migration: Add missing columns to users
-try {
-  const columns = db.prepare("PRAGMA table_info(users)").all() as any[];
-  if (!columns.some(col => col.name === 'phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT");
-  if (!columns.some(col => col.name === 'nif')) db.exec("ALTER TABLE users ADD COLUMN nif TEXT");
-  if (!columns.some(col => col.name === 'address')) db.exec("ALTER TABLE users ADD COLUMN address TEXT");
-  if (!columns.some(col => col.name === 'status')) db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
-  if (!columns.some(col => col.name === 'created_at')) {
-    db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME");
-    db.exec("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
+  // Migration: Add missing columns to users
+  try {
+    const columns = db.prepare("PRAGMA table_info(users)").all() as any[];
+    if (!columns.some(col => col.name === 'phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT");
+    if (!columns.some(col => col.name === 'nif')) db.exec("ALTER TABLE users ADD COLUMN nif TEXT");
+    if (!columns.some(col => col.name === 'address')) db.exec("ALTER TABLE users ADD COLUMN address TEXT");
+    if (!columns.some(col => col.name === 'company_name')) db.exec("ALTER TABLE users ADD COLUMN company_name TEXT");
+    if (!columns.some(col => col.name === 'status')) db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
+    if (!columns.some(col => col.name === 'created_at')) {
+      db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME");
+      db.exec("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
+    }
+  } catch (e) {
+    console.error("Migration error (users):", e);
   }
-} catch (e) {
-  console.error("Migration error (users):", e);
-}
 
 try {
   const columns = db.prepare("PRAGMA table_info(support_tickets)").all() as any[];
@@ -110,8 +141,20 @@ try {
     db.exec("ALTER TABLE support_tickets ADD COLUMN updated_at DATETIME");
     db.exec("UPDATE support_tickets SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL");
   }
+  if (!columns.some(col => col.name === 'priority')) {
+    db.exec("ALTER TABLE support_tickets ADD COLUMN priority TEXT DEFAULT 'medium'");
+  }
 } catch (e) {
   console.error("Migration error (support_tickets):", e);
+}
+
+try {
+  const columns = db.prepare("PRAGMA table_info(licenses)").all() as any[];
+  if (!columns.some(col => col.name === 'created_at')) {
+    db.exec("ALTER TABLE licenses ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP");
+  }
+} catch (e) {
+  console.error("Migration error (licenses):", e);
 }
 
 try {
@@ -240,8 +283,18 @@ if (userCount.count === 0) {
   db.prepare("INSERT INTO system_plans (name, price, max_stores, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Básico", 5000, 1, 100, '{"reports": false, "multi_store": false}');
   db.prepare("INSERT INTO system_plans (name, price, max_stores, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Profissional", 15000, 5, 1000, '{"reports": true, "multi_store": true}');
   
+  db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("expiration_notice", "true");
+  db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("weekly_reports", "false");
+  db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("system_name", "FactuModern");
+  
   db.prepare("INSERT INTO support_tickets (user_id, subject, description, status) VALUES (?, ?, ?, ?)").run(2, "Dúvida sobre faturação", "Como posso emitir uma fatura pro-forma?", "open");
   
+  // Seed Payments
+  db.prepare("INSERT INTO system_payments (user_id, amount, plan_id, payment_method, timestamp) VALUES (?, ?, ?, ?, ?)").run(2, 15000, 2, "Multicaixa", "2026-03-01 10:00:00");
+  db.prepare("INSERT INTO system_payments (user_id, amount, plan_id, payment_method, timestamp) VALUES (?, ?, ?, ?, ?)").run(2, 5000, 1, "Transferência", "2026-03-08 14:30:00");
+  db.prepare("INSERT INTO system_payments (user_id, amount, plan_id, payment_method, timestamp) VALUES (?, ?, ?, ?, ?)").run(2, 15000, 2, "Dinheiro", "2026-02-15 09:00:00");
+  db.prepare("INSERT INTO system_payments (user_id, amount, plan_id, payment_method, timestamp) VALUES (?, ?, ?, ?, ?)").run(2, 15000, 2, "Outros", "2025-12-20 16:00:00");
+
   // Seed Staff
   db.prepare("INSERT INTO staff (store_id, user_id, salary, shift_info) VALUES (?, ?, ?, ?)").run(1, 3, 50000, "Manhã");
 }
@@ -297,14 +350,63 @@ async function startServer() {
   });
 
   app.get("/api/admin/clients", (req, res) => {
-    const clients = db.prepare("SELECT * FROM users WHERE role = 'owner' ORDER BY created_at DESC").all();
+    const clients = db.prepare(`
+      SELECT u.*, 
+        (SELECT count(*) FROM stores s WHERE s.owner_id = u.id) as store_count,
+        (SELECT plan_type FROM licenses l WHERE l.user_id = u.id AND l.status = 'active' ORDER BY expiry_date DESC LIMIT 1) as current_plan
+      FROM users u 
+      WHERE u.role = 'owner' 
+      ORDER BY u.created_at DESC
+    `).all();
     res.json(clients);
   });
 
+  app.get("/api/admin/clients/:id/details", (req, res) => {
+    const clientId = req.params.id;
+    const client = db.prepare("SELECT * FROM users WHERE id = ?").get(clientId);
+    if (!client) return res.status(404).json({ error: "Client not found" });
+
+    const stores = db.prepare("SELECT * FROM stores WHERE owner_id = ?").all(clientId);
+    const licenses = db.prepare(`
+      SELECT l.*, s.name as store_name 
+      FROM licenses l 
+      LEFT JOIN stores s ON l.store_id = s.id 
+      WHERE l.user_id = ? 
+      ORDER BY l.expiry_date DESC
+    `).all(clientId);
+    const tickets = db.prepare("SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC").all(clientId);
+    
+    // Stats
+    const totalUsers = db.prepare(`
+      SELECT count(*) as count 
+      FROM staff 
+      WHERE store_id IN (SELECT id FROM stores WHERE owner_id = ?)
+    `).get(clientId) as any;
+
+    const lastActivity = db.prepare(`
+      SELECT timestamp 
+      FROM transactions 
+      WHERE store_id IN (SELECT id FROM stores WHERE owner_id = ?) 
+      ORDER BY timestamp DESC LIMIT 1
+    `).get(clientId) as any;
+
+    res.json({
+      client,
+      stores,
+      licenses,
+      tickets,
+      stats: {
+        totalStores: stores.length,
+        totalUsers: totalUsers?.count || 0,
+        lastActivity: lastActivity?.timestamp || null
+      }
+    });
+  });
+
   app.post("/api/admin/clients", (req, res) => {
-    const { name, email, password, phone, nif, address } = req.body;
+    const { name, company_name, email, password, phone, nif, address } = req.body;
     try {
-      db.prepare("INSERT INTO users (name, email, password, role, phone, nif, address) VALUES (?, ?, ?, 'owner', ?, ?, ?)").run(name, email, password, phone, nif, address);
+      db.prepare("INSERT INTO users (name, company_name, email, password, role, phone, nif, address) VALUES (?, ?, ?, ?, 'owner', ?, ?, ?)").run(name, company_name, email, password, phone, nif, address);
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -312,8 +414,8 @@ async function startServer() {
   });
 
   app.put("/api/admin/clients/:id", (req, res) => {
-    const { name, email, phone, nif, address, status } = req.body;
-    db.prepare("UPDATE users SET name = ?, email = ?, phone = ?, nif = ?, address = ?, status = ? WHERE id = ?").run(name, email, phone, nif, address, status, req.params.id);
+    const { name, company_name, email, phone, nif, address, status } = req.body;
+    db.prepare("UPDATE users SET name = ?, company_name = ?, email = ?, phone = ?, nif = ?, address = ?, status = ? WHERE id = ?").run(name, company_name, email, phone, nif, address, status, req.params.id);
     res.json({ success: true });
   });
 
@@ -329,13 +431,43 @@ async function startServer() {
 
   app.get("/api/admin/licenses", (req, res) => {
     const licenses = db.prepare(`
-      SELECT l.*, u.name as client_name, s.name as store_name
+      SELECT l.*, u.name as client_name, u.company_name, s.name as store_name
       FROM licenses l
       JOIN users u ON l.user_id = u.id
       LEFT JOIN stores s ON l.store_id = s.id
       ORDER BY l.expiry_date DESC
     `).all();
     res.json(licenses);
+  });
+
+  app.put("/api/admin/licenses/:id/status", (req, res) => {
+    const { status } = req.body;
+    db.prepare("UPDATE licenses SET status = ? WHERE id = ?").run(status, req.params.id);
+    res.json({ success: true });
+  });
+
+  app.put("/api/admin/licenses/:id/renew", (req, res) => {
+    const { expiry_date } = req.body;
+    db.prepare("UPDATE licenses SET expiry_date = ?, status = 'active' WHERE id = ?").run(expiry_date, req.params.id);
+    
+    // Also update store if linked
+    const license = db.prepare("SELECT store_id FROM licenses WHERE id = ?").get(req.params.id) as any;
+    if (license?.store_id) {
+      db.prepare("UPDATE stores SET license_expiry = ?, license_status = 'active' WHERE id = ?").run(expiry_date, license.store_id);
+    }
+    
+    res.json({ success: true });
+  });
+
+  app.get("/api/admin/licenses/history/:userId", (req, res) => {
+    const history = db.prepare(`
+      SELECT l.*, s.name as store_name
+      FROM licenses l
+      LEFT JOIN stores s ON l.store_id = s.id
+      WHERE l.user_id = ?
+      ORDER BY l.created_at DESC
+    `).all(req.params.userId);
+    res.json(history);
   });
 
   app.post("/api/admin/licenses", (req, res) => {
@@ -364,29 +496,135 @@ async function startServer() {
   });
 
   app.put("/api/admin/support/:id", (req, res) => {
-    const { status } = req.body;
-    db.prepare("UPDATE support_tickets SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, req.params.id);
+    const { status, priority } = req.body;
+    if (status && priority) {
+      db.prepare("UPDATE support_tickets SET status = ?, priority = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, priority, req.params.id);
+    } else if (status) {
+      db.prepare("UPDATE support_tickets SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, req.params.id);
+    } else if (priority) {
+      db.prepare("UPDATE support_tickets SET priority = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(priority, req.params.id);
+    }
+    res.json({ success: true });
+  });
+
+  app.get("/api/admin/support/:id/messages", (req, res) => {
+    const messages = db.prepare(`
+      SELECT m.*, u.name as sender_name
+      FROM ticket_messages m
+      JOIN users u ON m.sender_id = u.id
+      WHERE m.ticket_id = ?
+      ORDER BY m.created_at ASC
+    `).all(req.params.id);
+    res.json(messages);
+  });
+
+  app.post("/api/admin/support/:id/messages", (req, res) => {
+    const { sender_id, message, is_admin } = req.body;
+    db.prepare(`
+      INSERT INTO ticket_messages (ticket_id, sender_id, message, is_admin)
+      VALUES (?, ?, ?, ?)
+    `).run(req.params.id, sender_id, message, is_admin ? 1 : 0);
+    
+    db.prepare("UPDATE support_tickets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+    
     res.json({ success: true });
   });
 
   app.get("/api/admin/monitoring", (req, res) => {
     const totalTransactions = db.prepare("SELECT count(*) as count FROM transactions").get() as any;
     const todayTransactions = db.prepare("SELECT count(*) as count FROM transactions WHERE date(timestamp) = date('now')").get() as any;
+    const activeUsers = db.prepare("SELECT count(*) as count FROM users WHERE status = 'active'").get() as any;
+    const totalStores = db.prepare("SELECT count(*) as count FROM stores").get() as any;
+    
     const recentActivity = db.prepare(`
       SELECT 'venda' as type, total_amount as value, timestamp, s.name as store_name
       FROM transactions t
       JOIN stores s ON t.store_id = s.id
-      ORDER BY timestamp DESC LIMIT 10
+      ORDER BY timestamp DESC LIMIT 15
     `).all();
+
+    const systemAlerts = [];
+    
+    // Check for low stock products across all stores
+    const lowStockCount = db.prepare("SELECT count(*) as count FROM products WHERE stock <= min_stock").get() as any;
+    if (lowStockCount.count > 0) {
+      systemAlerts.push({
+        level: 'warning',
+        message: `${lowStockCount.count} produtos com stock baixo detectados no sistema.`,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Check for expired licenses
+    const expiredCount = db.prepare("SELECT count(*) as count FROM licenses WHERE status = 'active' AND date(expiry_date) < date('now')").get() as any;
+    if (expiredCount.count > 0) {
+      systemAlerts.push({
+        level: 'danger',
+        message: `${expiredCount.count} licenças expiradas ainda marcadas como activas.`,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const memoryUsage = process.memoryUsage();
 
     res.json({
       health: "ok",
       uptime: process.uptime(),
+      memory: {
+        rss: Math.round(memoryUsage.rss / 1024 / 1024),
+        heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024),
+        heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024)
+      },
       stats: {
         totalTransactions: totalTransactions.count,
-        todayTransactions: todayTransactions.count
+        todayTransactions: todayTransactions.count,
+        activeUsers: activeUsers.count,
+        totalStores: totalStores.count
       },
-      recentActivity
+      recentActivity,
+      systemAlerts
+    });
+  });
+
+  app.get("/api/admin/reports", (req, res) => {
+    // Revenue by month (last 6 months)
+    const revenueByMonth = db.prepare(`
+      SELECT strftime('%m', timestamp) as month, SUM(total_amount) as total
+      FROM transactions
+      WHERE timestamp >= date('now', '-6 months')
+      GROUP BY month
+      ORDER BY month ASC
+    `).all();
+
+    // Client growth (last 6 months)
+    const clientGrowth = db.prepare(`
+      SELECT strftime('%m', created_at) as month, COUNT(*) as count
+      FROM users
+      WHERE role = 'owner' AND created_at >= date('now', '-6 months')
+      GROUP BY month
+      ORDER BY month ASC
+    `).all();
+
+    // Licenses by plan
+    const licensesByPlan = db.prepare(`
+      SELECT plan_type as name, COUNT(*) as value
+      FROM licenses
+      WHERE status = 'active'
+      GROUP BY plan_type
+    `).all();
+
+    // Support tickets by status
+    const ticketsByStatus = db.prepare(`
+      SELECT status as name, COUNT(*) as value
+      FROM support_tickets
+      GROUP BY status
+    `).all();
+
+    res.json({
+      revenueByMonth,
+      clientGrowth,
+      licensesByPlan,
+      ticketsByStatus
     });
   });
 
@@ -398,6 +636,105 @@ async function startServer() {
   app.post("/api/admin/plans", (req, res) => {
     const { name, price, max_stores, max_products, features } = req.body;
     db.prepare("INSERT INTO system_plans (name, price, max_stores, max_products, features) VALUES (?, ?, ?, ?, ?)").run(name, price, max_stores, max_products, JSON.stringify(features));
+    res.json({ success: true });
+  });
+
+  app.put("/api/admin/plans/:id", (req, res) => {
+    const { name, price, max_stores, max_products, features } = req.body;
+    db.prepare("UPDATE system_plans SET name = ?, price = ?, max_stores = ?, max_products = ?, features = ? WHERE id = ?").run(name, price, max_stores, max_products, JSON.stringify(features), req.params.id);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/admin/plans/:id", (req, res) => {
+    db.prepare("DELETE FROM system_plans WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/admin/settings", (req, res) => {
+    const settings = db.prepare("SELECT * FROM system_settings").all();
+    const settingsObj = settings.reduce((acc: any, curr: any) => {
+      acc[curr.key] = curr.value;
+      return acc;
+    }, {});
+    res.json(settingsObj);
+  });
+
+  app.get("/api/admin/finance", (req, res) => {
+    const payments = db.prepare(`
+      SELECT p.*, u.name as client_name, pl.name as plan_name 
+      FROM system_payments p
+      JOIN users u ON p.user_id = u.id
+      JOIN system_plans pl ON p.plan_id = pl.id
+      ORDER BY p.timestamp DESC
+    `).all() as any[];
+
+    const today = new Date().toISOString().split('T')[0];
+    const thisMonth = today.substring(0, 7);
+    const thisYear = today.substring(0, 4);
+
+    const stats = {
+      totalToday: payments.filter(p => p.timestamp.startsWith(today)).reduce((sum, p) => sum + p.amount, 0),
+      totalMonth: payments.filter(p => p.timestamp.startsWith(thisMonth)).reduce((sum, p) => sum + p.amount, 0),
+      totalYear: payments.filter(p => p.timestamp.startsWith(thisYear)).reduce((sum, p) => sum + p.amount, 0),
+      count: payments.length
+    };
+
+    const pendingPayments = db.prepare(`
+      SELECT u.name as client_name, s.name as store_name, s.license_expiry
+      FROM users u
+      JOIN stores s ON u.id = s.owner_id
+      WHERE s.license_status = 'expired' OR s.license_expiry < date('now', '+7 days')
+    `).all();
+
+    const revenueByMonth = db.prepare(`
+      SELECT strftime('%Y-%m', timestamp) as month, SUM(amount) as total
+      FROM system_payments
+      GROUP BY month
+      ORDER BY month DESC
+    `).all();
+
+    const revenueByPlan = db.prepare(`
+      SELECT pl.name as plan_name, SUM(p.amount) as total
+      FROM system_payments p
+      JOIN system_plans pl ON p.plan_id = pl.id
+      GROUP BY plan_name
+    `).all();
+
+    const revenueByClient = db.prepare(`
+      SELECT u.name as client_name, SUM(p.amount) as total
+      FROM system_payments p
+      JOIN users u ON p.user_id = u.id
+      GROUP BY client_name
+    `).all();
+
+    const methods = db.prepare(`
+      SELECT payment_method, SUM(amount) as total, COUNT(*) as count
+      FROM system_payments
+      GROUP BY payment_method
+    `).all();
+
+    res.json({
+      payments,
+      stats,
+      pendingPayments,
+      reports: {
+        byMonth: revenueByMonth,
+        byPlan: revenueByPlan,
+        byClient: revenueByClient
+      },
+      methods
+    });
+  });
+
+  app.post("/api/admin/settings", (req, res) => {
+    const settings = req.body;
+    const insert = db.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)");
+    const transaction = db.transaction((settings) => {
+      for (const [key, value] of Object.entries(settings)) {
+        insert.run(key, String(value));
+      }
+    });
+    transaction(settings);
     res.json({ success: true });
   });
 
@@ -419,6 +756,16 @@ async function startServer() {
       ORDER BY t.timestamp DESC
     `).all();
     res.json(transactions);
+  });
+
+  app.put("/api/profile/:id", (req, res) => {
+    const { name, email, phone, nif, address, company_name, password } = req.body;
+    if (password) {
+      db.prepare("UPDATE users SET name = ?, email = ?, phone = ?, nif = ?, address = ?, company_name = ?, password = ? WHERE id = ?").run(name, email, phone, nif, address, company_name, password, req.params.id);
+    } else {
+      db.prepare("UPDATE users SET name = ?, email = ?, phone = ?, nif = ?, address = ?, company_name = ? WHERE id = ?").run(name, email, phone, nif, address, company_name, req.params.id);
+    }
+    res.json({ success: true });
   });
 
   // Owner Routes
@@ -449,6 +796,50 @@ async function startServer() {
       SET name = ?, address = ?, phone = ?, nif = ?, logo_url = ?, status = ? 
       WHERE id = ?
     `).run(name, address, phone, nif, logo_url, status, req.params.storeId);
+    res.json({ success: true });
+  });
+
+  // --- Owner Support Endpoints ---
+  app.get("/api/owner/support/:userId", (req, res) => {
+    const tickets = db.prepare(`
+      SELECT t.*, u.name as client_name
+      FROM support_tickets t
+      JOIN users u ON t.user_id = u.id
+      WHERE t.user_id = ?
+      ORDER BY t.created_at DESC
+    `).all(req.params.userId);
+    res.json(tickets);
+  });
+
+  app.post("/api/owner/support", (req, res) => {
+    const { user_id, subject, description, priority } = req.body;
+    const result = db.prepare(`
+      INSERT INTO support_tickets (user_id, subject, description, priority, status)
+      VALUES (?, ?, ?, ?, 'open')
+    `).run(user_id, subject, description, priority || 'medium');
+    res.json({ success: true, ticketId: result.lastInsertRowid });
+  });
+
+  app.get("/api/owner/support/ticket/:id/messages", (req, res) => {
+    const messages = db.prepare(`
+      SELECT m.*, u.name as sender_name
+      FROM ticket_messages m
+      JOIN users u ON m.sender_id = u.id
+      WHERE m.ticket_id = ?
+      ORDER BY m.created_at ASC
+    `).all(req.params.id);
+    res.json(messages);
+  });
+
+  app.post("/api/owner/support/ticket/:id/messages", (req, res) => {
+    const { sender_id, message } = req.body;
+    db.prepare(`
+      INSERT INTO ticket_messages (ticket_id, sender_id, message, is_admin)
+      VALUES (?, ?, ?, 0)
+    `).run(req.params.id, sender_id, message);
+    
+    db.prepare("UPDATE support_tickets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+    
     res.json({ success: true });
   });
 
