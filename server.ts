@@ -268,7 +268,31 @@ db.exec(`
     FOREIGN KEY(promotion_id) REFERENCES promotions(id),
     FOREIGN KEY(product_id) REFERENCES products(id)
   );
+
+  CREATE TABLE IF NOT EXISTS proforma_invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    owner_id INTEGER,
+    client_name TEXT,
+    client_nif TEXT,
+    client_address TEXT,
+    total_amount REAL,
+    items TEXT, -- JSON string
+    status TEXT DEFAULT 'draft', -- 'draft', 'sent', 'converted'
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(owner_id) REFERENCES users(id)
+  );
 `);
+
+try {
+  const columns = db.prepare("PRAGMA table_info(transactions)").all() as any[];
+  if (!columns.some(col => col.name === 'split_details')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN split_details TEXT");
+  }
+} catch (e) {
+  console.error("Migration error (transactions):", e);
+}
 
 // Seed Data (if empty)
 const userCount = db.prepare("SELECT count(*) as count FROM users").get() as { count: number };
@@ -308,6 +332,9 @@ async function startServer() {
   const PORT = 3000;
 
   // --- API Routes ---
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok" });
+  });
 
   // Auth (Mock for now)
   app.post("/api/login", (req, res) => {
@@ -1171,14 +1198,15 @@ async function startServer() {
   });
 
   app.post("/api/seller/sale", (req, res) => {
-    const { store_id, seller_id, total_amount, items, payment_method, cash_received } = req.body;
-    const info = db.prepare("INSERT INTO transactions (store_id, seller_id, total_amount, items, payment_method, cash_received) VALUES (?, ?, ?, ?, ?, ?)").run(
+    const { store_id, seller_id, total_amount, items, payment_method, cash_received, split_details } = req.body;
+    const info = db.prepare("INSERT INTO transactions (store_id, seller_id, total_amount, items, payment_method, cash_received, split_details) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
       store_id, 
       seller_id, 
       total_amount, 
       JSON.stringify(items),
       payment_method || 'cash',
-      cash_received || total_amount
+      cash_received || total_amount,
+      split_details ? JSON.stringify(split_details) : null
     );
     
     // Update stock
@@ -1373,6 +1401,24 @@ async function startServer() {
     `).all(req.params.storeId);
 
     res.json({ stats, lowStock });
+  });
+
+  app.post("/api/owner/proforma", (req, res) => {
+    const { store_id, owner_id, client_name, client_nif, client_address, total_amount, items } = req.body;
+    try {
+      const result = db.prepare(`
+        INSERT INTO proforma_invoices (store_id, owner_id, client_name, client_nif, client_address, total_amount, items)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(store_id, owner_id, client_name, client_nif, client_address, total_amount, JSON.stringify(items));
+      res.json({ id: result.lastInsertRowid });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/owner/proforma/:storeId", (req, res) => {
+    const proformas = db.prepare("SELECT * FROM proforma_invoices WHERE store_id = ? ORDER BY created_at DESC").all(req.params.storeId);
+    res.json(proformas);
   });
 
   // Vite middleware for development

@@ -51,6 +51,9 @@ import {
   Edit2,
   Power,
   Minus,
+  Box,
+  Layers,
+  Split,
   ArrowRightLeft,
   ShieldCheck,
   LifeBuoy,
@@ -3040,10 +3043,27 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [isPromoModalOpen, setIsPromoModalOpen] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
+  const [isProformaModalOpen, setIsProformaModalOpen] = useState(false);
   const [productForm, setProductForm] = useState({ name: '', price: '', stock: '', category: '', image_url: '', min_stock: '5' });
   const [staffForm, setStaffForm] = useState({ name: '', email: '', password: '', salary: '', shift_info: '' });
   const [promoForm, setPromoForm] = useState({ name: '', start_date: '', end_date: '', discount_percent: '', product_ids: [] as number[] });
-  const [stockForm, setStockForm] = useState({ product_id: '', type: 'in', quantity: '', reason: '', to_store_id: '' });
+  const [stockForm, setStockForm] = useState({ 
+    product_id: '', 
+    type: 'in', 
+    quantity: '', 
+    reason: '', 
+    to_store_id: '',
+    isBulk: false,
+    bulkType: 'grade',
+    bulkQuantity: '',
+    unitsPerBulk: '24'
+  });
+  const [proformaForm, setProformaForm] = useState({ 
+    client_name: '', 
+    client_nif: '', 
+    client_address: '', 
+    items: [] as { product_id: number, quantity: number, price: number, name: string }[] 
+  });
   const navigate = useNavigate();
 
   const fetchData = () => {
@@ -3206,19 +3226,24 @@ const StoreAdmin = ({ user }: { user: User }) => {
     const isTransfer = stockForm.type === 'transfer';
     const endpoint = isTransfer ? '/api/owner/stock/transfer' : '/api/owner/stock/movement';
     
+    let finalQuantity = Number(stockForm.quantity);
+    if (stockForm.isBulk) {
+      finalQuantity = Number(stockForm.bulkQuantity) * Number(stockForm.unitsPerBulk);
+    }
+
     const body = isTransfer ? {
       from_store_id: Number(storeId),
       to_store_id: Number(stockForm.to_store_id),
       product_id: Number(stockForm.product_id),
       user_id: user.id,
-      quantity: Number(stockForm.quantity),
+      quantity: finalQuantity,
       reason: stockForm.reason
     } : {
       store_id: Number(storeId),
       product_id: Number(stockForm.product_id),
       user_id: user.id,
       type: stockForm.type,
-      quantity: stockForm.type === 'in' ? Number(stockForm.quantity) : -Number(stockForm.quantity),
+      quantity: stockForm.type === 'in' ? finalQuantity : -finalQuantity,
       reason: stockForm.reason
     };
 
@@ -3230,7 +3255,17 @@ const StoreAdmin = ({ user }: { user: User }) => {
 
     if (res.ok) {
       setIsStockModalOpen(false);
-      setStockForm({ product_id: '', type: 'in', quantity: '', reason: '', to_store_id: '' });
+      setStockForm({ 
+        product_id: '', 
+        type: 'in', 
+        quantity: '', 
+        reason: '', 
+        to_store_id: '',
+        isBulk: false,
+        bulkType: 'grade',
+        bulkQuantity: '',
+        unitsPerBulk: '24'
+      });
       fetchData();
     } else {
       const data = await res.json();
@@ -3291,6 +3326,72 @@ const StoreAdmin = ({ user }: { user: User }) => {
       setTicketForm({ subject: '', description: '', priority: 'medium' });
       fetchData();
     }
+  };
+
+  const handleCreateProforma = async (e: FormEvent) => {
+    e.preventDefault();
+    if (proformaForm.items.length === 0) {
+      alert("Adicione pelo menos um produto à fatura proforma.");
+      return;
+    }
+
+    const total_amount = proformaForm.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+    try {
+      const res = await fetch('/api/owner/proforma', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...proformaForm,
+          store_id: storeId,
+          owner_id: user.id,
+          total_amount
+        })
+      });
+
+      if (res.ok) {
+        setIsProformaModalOpen(false);
+        setProformaForm({ client_name: '', client_nif: '', client_address: '', items: [] });
+        alert("Fatura Proforma criada com sucesso!");
+        fetchData();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const addProductToProforma = (product: Product) => {
+    const existing = proformaForm.items.find(item => item.product_id === product.id);
+    if (existing) {
+      setProformaForm({
+        ...proformaForm,
+        items: proformaForm.items.map(item => 
+          item.product_id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+        )
+      });
+    } else {
+      setProformaForm({
+        ...proformaForm,
+        items: [...proformaForm.items, { product_id: product.id, name: product.name, price: product.price, quantity: 1 }]
+      });
+    }
+  };
+
+  const removeProductFromProforma = (productId: number) => {
+    setProformaForm({
+      ...proformaForm,
+      items: proformaForm.items.filter(item => item.product_id !== productId)
+    });
+  };
+
+  const updateProformaItemQuantity = (productId: number, quantity: number) => {
+    if (quantity <= 0) return;
+    setProformaForm({
+      ...proformaForm,
+      items: proformaForm.items.map(item => 
+        item.product_id === productId ? { ...item, quantity } : item
+      )
+    });
   };
 
   if (!storeData) return <div className="p-8 text-center text-zinc-500">Carregando dados da loja...</div>;
@@ -3436,6 +3537,12 @@ const StoreAdmin = ({ user }: { user: User }) => {
                     className="bg-amber-100 text-amber-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-amber-200 transition-colors"
                   >
                     <Tag size={16} /> Criar Promoção
+                  </button>
+                  <button 
+                    onClick={() => setIsProformaModalOpen(true)}
+                    className="bg-blue-100 text-blue-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-200 transition-colors"
+                  >
+                    <FileText size={16} /> Fatura Proforma
                   </button>
                   <button 
                     onClick={() => setIsProductModalOpen(true)}
@@ -4167,6 +4274,154 @@ const StoreAdmin = ({ user }: { user: User }) => {
         </motion.div>
       </AnimatePresence>
 
+      {/* Modal Fatura Proforma */}
+      {isProformaModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+          >
+            <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
+              <div>
+                <h3 className="font-bold text-lg">Criar Fatura Proforma</h3>
+                <p className="text-xs text-zinc-500">Gere um orçamento formal para o seu cliente.</p>
+              </div>
+              <button onClick={() => setIsProformaModalOpen(false)} className="p-2 hover:bg-zinc-100 rounded-xl transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Client Info & Product Selection */}
+              <div className="space-y-6">
+                <div className="space-y-4">
+                  <h4 className="font-bold text-sm uppercase tracking-widest text-zinc-400">Dados do Cliente</h4>
+                  <div className="grid grid-cols-1 gap-4">
+                    <input 
+                      type="text"
+                      placeholder="Nome do Cliente"
+                      value={proformaForm.client_name}
+                      onChange={e => setProformaForm({...proformaForm, client_name: e.target.value})}
+                      className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                    />
+                    <div className="grid grid-cols-2 gap-4">
+                      <input 
+                        type="text"
+                        placeholder="NIF"
+                        value={proformaForm.client_nif}
+                        onChange={e => setProformaForm({...proformaForm, client_nif: e.target.value})}
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                      />
+                      <input 
+                        type="text"
+                        placeholder="Telefone (Opcional)"
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                      />
+                    </div>
+                    <textarea 
+                      placeholder="Endereço do Cliente"
+                      value={proformaForm.client_address}
+                      onChange={e => setProformaForm({...proformaForm, client_address: e.target.value})}
+                      className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all h-20 resize-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="font-bold text-sm uppercase tracking-widest text-zinc-400">Selecionar Produtos</h4>
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                    {products.map(product => (
+                      <div key={product.id} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl border border-zinc-100 hover:border-zinc-300 transition-all">
+                        <div className="flex items-center gap-3">
+                          <img src={product.image_url} alt="" className="w-8 h-8 rounded object-cover" referrerPolicy="no-referrer" />
+                          <div>
+                            <p className="text-xs font-bold">{product.name}</p>
+                            <p className="text-[10px] text-zinc-500">Kz {product.price.toLocaleString()}</p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => addProductToProforma(product)}
+                          className="p-2 bg-black text-white rounded-lg hover:bg-zinc-800 transition-all"
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Items List & Summary */}
+              <div className="flex flex-col h-full">
+                <h4 className="font-bold text-sm uppercase tracking-widest text-zinc-400 mb-4">Itens da Fatura</h4>
+                <div className="flex-1 bg-zinc-50 rounded-2xl border border-zinc-100 p-4 overflow-y-auto space-y-3">
+                  {proformaForm.items.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-zinc-400">
+                      <ShoppingCart size={32} className="mb-2 opacity-20" />
+                      <p className="text-xs">Nenhum item adicionado</p>
+                    </div>
+                  ) : (
+                    proformaForm.items.map(item => (
+                      <div key={item.product_id} className="flex items-center justify-between bg-white p-3 rounded-xl shadow-sm border border-zinc-100">
+                        <div className="flex-1 min-w-0 mr-4">
+                          <p className="text-xs font-bold truncate">{item.name}</p>
+                          <p className="text-[10px] text-zinc-500">Kz {item.price.toLocaleString()} un</p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center bg-zinc-100 rounded-lg overflow-hidden">
+                            <button 
+                              onClick={() => updateProformaItemQuantity(item.product_id, item.quantity - 1)}
+                              className="p-1 hover:bg-zinc-200 transition-all"
+                            >
+                              <Minus size={12} />
+                            </button>
+                            <span className="w-8 text-center text-xs font-bold">{item.quantity}</span>
+                            <button 
+                              onClick={() => updateProformaItemQuantity(item.product_id, item.quantity + 1)}
+                              className="p-1 hover:bg-zinc-200 transition-all"
+                            >
+                              <Plus size={12} />
+                            </button>
+                          </div>
+                          <button 
+                            onClick={() => removeProductFromProforma(item.product_id)}
+                            className="text-rose-500 hover:bg-rose-50 p-1 rounded transition-all"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="mt-6 p-6 bg-black text-white rounded-2xl space-y-4">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="opacity-60">Subtotal</span>
+                    <span>Kz {proformaForm.items.reduce((sum, item) => sum + (item.price * item.quantity), 0).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="opacity-60">Imposto (0%)</span>
+                    <span>Kz 0</span>
+                  </div>
+                  <div className="pt-4 border-t border-white/10 flex justify-between items-center">
+                    <span className="font-bold">Total</span>
+                    <span className="text-xl font-black">Kz {proformaForm.items.reduce((sum, item) => sum + (item.price * item.quantity), 0).toLocaleString()}</span>
+                  </div>
+                  <button 
+                    onClick={handleCreateProforma}
+                    className="w-full py-4 bg-white text-black rounded-xl font-bold hover:bg-zinc-100 transition-all active:scale-95"
+                  >
+                    Gerar Fatura Proforma
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {/* Modal Novo Ticket */}
       {isTicketModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -4438,77 +4693,171 @@ const StoreAdmin = ({ user }: { user: User }) => {
       </Modal>
 
       <Modal isOpen={isStockModalOpen} onClose={() => setIsStockModalOpen(false)} title="Movimentar Stock">
-        <form onSubmit={handleStockMovement} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Tipo de Movimento</label>
-            <select 
-              required
-              value={stockForm.type}
-              onChange={e => setStockForm({...stockForm, type: e.target.value})}
-              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none"
-            >
-              <option value="in">Entrada de Stock</option>
-              <option value="out">Saída de Stock</option>
-              <option value="transfer">Transferência entre Lojas</option>
-              <option value="adjustment">Ajuste Manual</option>
-            </select>
-          </div>
+        <form onSubmit={handleStockMovement} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Tipo de Movimento</label>
+              <select 
+                required
+                value={stockForm.type}
+                onChange={e => setStockForm({...stockForm, type: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+              >
+                <option value="in">Entrada de Stock</option>
+                <option value="out">Saída de Stock</option>
+                <option value="transfer">Transferência entre Lojas</option>
+                <option value="adjustment">Ajuste Manual</option>
+              </select>
+            </div>
 
-          <div>
-            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Produto</label>
-            <select 
-              required
-              value={stockForm.product_id}
-              onChange={e => setStockForm({...stockForm, product_id: e.target.value})}
-              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none"
-            >
-              <option value="">Selecionar Produto</option>
-              {products.map(p => (
-                <option key={p.id} value={p.id}>{p.name} (Stock: {p.stock})</option>
-              ))}
-            </select>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Produto</label>
+              <select 
+                required
+                value={stockForm.product_id}
+                onChange={e => setStockForm({...stockForm, product_id: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+              >
+                <option value="">Selecionar Produto</option>
+                {products.map(p => (
+                  <option key={p.id} value={p.id}>{p.name} (Stock: {p.stock})</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {stockForm.type === 'transfer' && (
-            <div>
+            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Loja de Destino</label>
               <select 
                 required
                 value={stockForm.to_store_id}
                 onChange={e => setStockForm({...stockForm, to_store_id: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none"
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
               >
                 <option value="">Selecionar Loja</option>
                 {stores.filter(s => s.id !== Number(storeId)).map(s => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
-            </div>
+            </motion.div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Quantidade</label>
-              <input 
-                type="number" required min="1"
-                value={stockForm.quantity}
-                onChange={e => setStockForm({...stockForm, quantity: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-              />
+          <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100 space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Modo de Lançamento</h4>
+              <div className="flex bg-white p-1 rounded-lg border border-zinc-200">
+                <button 
+                  type="button"
+                  onClick={() => setStockForm({...stockForm, isBulk: false})}
+                  className={cn(
+                    "px-3 py-1.5 text-[10px] font-bold rounded-md transition-all",
+                    !stockForm.isBulk ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-50"
+                  )}
+                >
+                  Individual
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setStockForm({...stockForm, isBulk: true})}
+                  className={cn(
+                    "px-3 py-1.5 text-[10px] font-bold rounded-md transition-all",
+                    stockForm.isBulk ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-50"
+                  )}
+                >
+                  Em Massa
+                </button>
+              </div>
             </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Motivo / Obs</label>
-              <input 
-                type="text" required
-                placeholder="Ex: Perda, Dano, Reposição"
-                value={stockForm.reason}
-                onChange={e => setStockForm({...stockForm, reason: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-              />
-            </div>
+
+            {!stockForm.isBulk ? (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Quantidade Individual</label>
+                  <input 
+                    type="number" required min="1"
+                    placeholder="Ex: 50"
+                    value={stockForm.quantity}
+                    onChange={e => setStockForm({...stockForm, quantity: e.target.value})}
+                    className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Tipo de Embalagem</label>
+                    <select 
+                      value={stockForm.bulkType}
+                      onChange={e => {
+                        const type = e.target.value;
+                        let units = '24';
+                        if (type === 'caixa') units = '12';
+                        if (type === 'embalagem') units = '6';
+                        setStockForm({...stockForm, bulkType: type as any, unitsPerBulk: units});
+                      }}
+                      className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                    >
+                      <option value="grade">Grade (Crate)</option>
+                      <option value="caixa">Caixa (Box)</option>
+                      <option value="embalagem">Embalagem (Pack)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Qtd. de {stockForm.bulkType}s</label>
+                    <input 
+                      type="number" required min="1"
+                      placeholder="Ex: 5"
+                      value={stockForm.bulkQuantity}
+                      onChange={e => setStockForm({...stockForm, bulkQuantity: e.target.value})}
+                      className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Unidades por {stockForm.bulkType}</label>
+                  <div className="relative">
+                    <input 
+                      type="number" required min="1"
+                      value={stockForm.unitsPerBulk}
+                      onChange={e => setStockForm({...stockForm, unitsPerBulk: e.target.value})}
+                      className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
+                    />
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-zinc-400">
+                      UNIDADES
+                    </div>
+                  </div>
+                </div>
+                {stockForm.bulkQuantity && stockForm.unitsPerBulk && (
+                  <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center gap-3">
+                    <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center text-amber-600">
+                      <Layers size={16} />
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-amber-700 font-bold uppercase tracking-wider">Total a Lançar</p>
+                      <p className="text-sm font-black text-amber-900">
+                        {Number(stockForm.bulkQuantity) * Number(stockForm.unitsPerBulk)} Unidades Individuais
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2">
+          <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Motivo / Observação</label>
+            <input 
+              type="text" required
+              placeholder="Ex: Reposição de stock, Compra a fornecedor..."
+              value={stockForm.reason}
+              onChange={e => setStockForm({...stockForm, reason: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
+            />
+          </div>
+
+          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all active:scale-[0.98]">
             <ArrowRightLeft size={20} /> Processar Movimento
           </button>
         </form>
@@ -4741,7 +5090,14 @@ const SellerPOS = ({ user }: { user: User }) => {
   
   // Payment states
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'transfer'>('cash');
+  const [isProformaModalOpen, setIsProformaModalOpen] = useState(false);
+  const [proformaForm, setProformaForm] = useState({ 
+    client_name: '', 
+    client_nif: '', 
+    client_address: '' 
+  });
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'transfer' | 'split'>('cash');
+  const [splitAmounts, setSplitAmounts] = useState({ cash: '', card: '' });
   const [cashReceived, setCashReceived] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -4788,11 +5144,55 @@ const SellerPOS = ({ user }: { user: User }) => {
     setIsPaymentModalOpen(true);
   };
 
+  const handleCreateProforma = async (e: FormEvent) => {
+    e.preventDefault();
+    if (cart.length === 0) return;
+
+    try {
+      const storeId = user.store_id || 1;
+      const res = await fetch('/api/owner/proforma', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...proformaForm,
+          store_id: storeId,
+          owner_id: user.id,
+          total_amount: total,
+          items: cart.map(item => ({
+            product_id: item.product.id,
+            name: item.product.name,
+            price: item.product.discount_percent 
+              ? item.product.price * (1 - item.product.discount_percent / 100) 
+              : item.product.price,
+            quantity: item.quantity
+          }))
+        })
+      });
+
+      if (res.ok) {
+        setIsProformaModalOpen(false);
+        setProformaForm({ client_name: '', client_nif: '', client_address: '' });
+        alert("Fatura Proforma criada com sucesso!");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const finalizeSale = async () => {
     if (paymentMethod === 'cash') {
       const received = parseFloat(cashReceived);
       if (isNaN(received) || received < total) {
         alert('Dinheiro insuficiente ou valor inválido!');
+        return;
+      }
+    }
+
+    if (paymentMethod === 'split') {
+      const cash = parseFloat(splitAmounts.cash) || 0;
+      const card = parseFloat(splitAmounts.card) || 0;
+      if (Math.abs((cash + card) - total) > 0.01) {
+        alert('A soma dos valores (Dinheiro + Cartão) deve ser igual ao total da venda!');
         return;
       }
     }
@@ -4808,7 +5208,8 @@ const SellerPOS = ({ user }: { user: User }) => {
           seller_id: user.id,
           total_amount: total,
           payment_method: paymentMethod,
-          cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : total,
+          cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : (paymentMethod === 'split' ? parseFloat(splitAmounts.cash) : total),
+          split_details: paymentMethod === 'split' ? { cash: parseFloat(splitAmounts.cash), card: parseFloat(splitAmounts.card) } : null,
           items: cart.map(item => ({ 
             id: item.product.id, 
             quantity: item.quantity,
@@ -4823,6 +5224,7 @@ const SellerPOS = ({ user }: { user: User }) => {
         setCart([]);
         setIsPaymentModalOpen(false);
         setCashReceived('');
+        setSplitAmounts({ cash: '', card: '' });
         fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
       }
     } catch (error) {
@@ -5045,17 +5447,99 @@ const SellerPOS = ({ user }: { user: User }) => {
                 <span className="text-orange-600">Kz {total.toLocaleString()}</span>
               </div>
             </div>
-            <button 
-              onClick={handleCheckout}
-              disabled={cart.length === 0}
-              className="w-full bg-orange-500 text-white py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 hover:bg-orange-600 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed transition-all shadow-lg shadow-orange-500/20 active:scale-[0.98]"
-            >
-              Finalizar Venda
-              <ChevronRight size={20} />
-            </button>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setIsProformaModalOpen(true)}
+                disabled={cart.length === 0}
+                className="flex-1 bg-zinc-100 text-zinc-600 py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 hover:bg-zinc-200 disabled:opacity-50 transition-all active:scale-[0.98]"
+              >
+                <FileText size={18} />
+                Proforma
+              </button>
+              <button 
+                onClick={handleCheckout}
+                disabled={cart.length === 0}
+                className="flex-[2] bg-orange-500 text-white py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 hover:bg-orange-600 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed transition-all shadow-lg shadow-orange-500/20 active:scale-[0.98]"
+              >
+                Finalizar Venda
+                <ChevronRight size={20} />
+              </button>
+            </div>
           </div>
         </Card>
       </div>
+
+      {/* Proforma Modal */}
+      <Modal isOpen={isProformaModalOpen} onClose={() => setIsProformaModalOpen(false)} title="Gerar Fatura Proforma">
+        <form onSubmit={handleCreateProforma} className="space-y-4">
+          <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100 mb-4">
+            <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3">Resumo dos Itens</h4>
+            <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
+              {cart.map(item => (
+                <div key={item.product.id} className="flex justify-between text-xs">
+                  <span className="text-zinc-600">{item.quantity}x {item.product.name}</span>
+                  <span className="font-bold">Kz {((item.product.discount_percent 
+                    ? item.product.price * (1 - item.product.discount_percent / 100) 
+                    : item.product.price) * item.quantity).toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 pt-3 border-t border-zinc-200 flex justify-between font-bold text-sm">
+              <span>Total Proforma</span>
+              <span className="text-orange-600">Kz {total.toLocaleString()}</span>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Cliente</label>
+              <input 
+                type="text" required
+                value={proformaForm.client_name}
+                onChange={e => setProformaForm({...proformaForm, client_name: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                placeholder="Ex: João Silva"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF</label>
+                <input 
+                  type="text"
+                  value={proformaForm.client_nif}
+                  onChange={e => setProformaForm({...proformaForm, client_nif: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                  placeholder="Opcional"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Telefone</label>
+                <input 
+                  type="text"
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                  placeholder="Opcional"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
+              <textarea 
+                value={proformaForm.client_address}
+                onChange={e => setProformaForm({...proformaForm, client_address: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all h-20 resize-none"
+                placeholder="Opcional"
+              />
+            </div>
+          </div>
+
+          <button 
+            type="submit"
+            className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95 mt-4"
+          >
+            Gerar Fatura Proforma
+          </button>
+        </form>
+      </Modal>
 
       {/* Payment Modal */}
       <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Finalizar Pagamento">
@@ -5067,24 +5551,25 @@ const SellerPOS = ({ user }: { user: User }) => {
 
           <div className="space-y-3">
             <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Método de Pagamento</label>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 { id: 'cash', label: 'Dinheiro', icon: Wallet },
                 { id: 'card', label: 'Cartão', icon: CreditCard },
                 { id: 'transfer', label: 'Transferência', icon: ArrowUpCircle },
+                { id: 'split', label: 'Dividido', icon: Split },
               ].map((m) => (
                 <button
                   key={m.id}
                   onClick={() => setPaymentMethod(m.id as any)}
                   className={cn(
-                    "flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all",
+                    "flex flex-col items-center gap-2 p-3 rounded-2xl border-2 transition-all",
                     paymentMethod === m.id 
                       ? "border-orange-500 bg-orange-50 text-orange-600" 
                       : "border-zinc-100 bg-white text-zinc-500 hover:border-orange-200"
                   )}
                 >
-                  <m.icon size={24} />
-                  <span className="text-[10px] font-black uppercase">{m.label}</span>
+                  <m.icon size={20} />
+                  <span className="text-[9px] font-black uppercase">{m.label}</span>
                 </button>
               ))}
             </div>
@@ -5124,9 +5609,56 @@ const SellerPOS = ({ user }: { user: User }) => {
             </motion.div>
           )}
 
+          {paymentMethod === 'split' && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-4 bg-zinc-50 p-4 rounded-2xl border border-zinc-100"
+            >
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1 flex items-center gap-1">
+                    <Wallet size={12} /> Dinheiro
+                  </label>
+                  <input
+                    type="number"
+                    value={splitAmounts.cash}
+                    onChange={e => setSplitAmounts({...splitAmounts, cash: e.target.value})}
+                    placeholder="0.00"
+                    className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-lg"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1 flex items-center gap-1">
+                    <CreditCard size={12} /> Cartão
+                  </label>
+                  <input
+                    type="number"
+                    value={splitAmounts.card}
+                    onChange={e => setSplitAmounts({...splitAmounts, card: e.target.value})}
+                    placeholder="0.00"
+                    className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-lg"
+                  />
+                </div>
+              </div>
+              
+              <div className="pt-2 flex justify-between items-center text-xs">
+                <span className="text-zinc-500 font-medium">Total Lançado:</span>
+                <span className={cn(
+                  "font-black",
+                  Math.abs((parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')) - total) < 0.01 
+                    ? "text-emerald-600" 
+                    : "text-rose-600"
+                )}>
+                  Kz {(parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')).toLocaleString()} / {total.toLocaleString()}
+                </span>
+              </div>
+            </motion.div>
+          )}
+
           <button
             onClick={finalizeSale}
-            disabled={isProcessing || (paymentMethod === 'cash' && (!cashReceived || change < 0))}
+            disabled={isProcessing || (paymentMethod === 'cash' && (!cashReceived || change < 0)) || (paymentMethod === 'split' && Math.abs((parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')) - total) > 0.01)}
             className="w-full bg-orange-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed"
           >
             {isProcessing ? 'Processando...' : 'Confirmar Pagamento'}
