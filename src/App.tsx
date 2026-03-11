@@ -5301,9 +5301,6 @@ const SellerPOS = ({ user }: { user: User }) => {
                   className="w-full pl-12 pr-4 py-4 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 shadow-sm text-lg"
                 />
               </div>
-              <button className="p-4 bg-white border border-zinc-200 rounded-2xl text-zinc-600 hover:bg-zinc-50 shadow-sm">
-                <Barcode size={24} />
-              </button>
             </div>
 
             <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
