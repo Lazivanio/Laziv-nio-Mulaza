@@ -111,6 +111,7 @@ db.exec(`
     image_url TEXT,
     is_promo INTEGER DEFAULT 0,
     min_stock INTEGER DEFAULT 5,
+    barcode TEXT UNIQUE,
     FOREIGN KEY(store_id) REFERENCES stores(id)
   );
 `);
@@ -180,6 +181,23 @@ try {
   const hasIsPromo = columns.some(col => col.name === 'is_promo');
   if (!hasIsPromo) {
     db.exec("ALTER TABLE products ADD COLUMN is_promo INTEGER DEFAULT 0");
+  }
+
+  const hasBarcode = columns.some(col => col.name === 'barcode');
+  if (!hasBarcode) {
+    db.exec("ALTER TABLE products ADD COLUMN barcode TEXT");
+    // Generate barcodes for existing products
+    const products = db.prepare("SELECT id FROM products WHERE barcode IS NULL").all() as any[];
+    for (const p of products) {
+      const barcode = Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
+      db.prepare("UPDATE products SET barcode = ? WHERE id = ?").run(barcode, p.id);
+    }
+    // Add unique index after populating data
+    try {
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)");
+    } catch (e) {
+      console.error("Error creating barcode index:", e);
+    }
   }
 } catch (e) {
   console.error("Migration error:", e);
@@ -1029,7 +1047,8 @@ async function startServer() {
 
   app.post("/api/owner/products", (req, res) => {
     const { store_id, name, price, stock, category, image_url, min_stock } = req.body;
-    db.prepare("INSERT INTO products (store_id, name, price, stock, category, image_url, min_stock) VALUES (?, ?, ?, ?, ?, ?, ?)").run(store_id, name, price, stock, category, image_url, min_stock || 5);
+    const barcode = Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
+    db.prepare("INSERT INTO products (store_id, name, price, stock, category, image_url, min_stock, barcode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(store_id, name, price, stock, category, image_url, min_stock || 5, barcode);
     res.json({ success: true });
   });
 
@@ -1359,10 +1378,11 @@ async function startServer() {
         let destProduct = db.prepare("SELECT * FROM products WHERE store_id = ? AND name = ?").get(to_store_id, sourceProduct.name) as any;
         
         if (!destProduct) {
+          const barcode = sourceProduct.barcode || Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
           const result = db.prepare(`
-            INSERT INTO products (store_id, name, price, stock, category, image_url, min_stock)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).run(to_store_id, sourceProduct.name, sourceProduct.price, 0, sourceProduct.category, sourceProduct.image_url, sourceProduct.min_stock || 5);
+            INSERT INTO products (store_id, name, price, stock, category, image_url, min_stock, barcode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(to_store_id, sourceProduct.name, sourceProduct.price, 0, sourceProduct.category, sourceProduct.image_url, sourceProduct.min_stock || 5, barcode);
           destProduct = { id: result.lastInsertRowid };
         }
 

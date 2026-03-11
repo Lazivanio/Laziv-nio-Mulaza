@@ -3550,6 +3550,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   <thead>
                     <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
                       <th className="px-6 py-4 font-semibold">Produto</th>
+                      <th className="px-6 py-4 font-semibold">Código de Barra</th>
                       <th className="px-6 py-4 font-semibold">Categoria</th>
                       <th className="px-6 py-4 font-semibold">Preço</th>
                       <th className="px-6 py-4 font-semibold">Stock</th>
@@ -3564,6 +3565,9 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             <img src={product.image_url} alt="" className="w-10 h-10 rounded-lg object-cover" referrerPolicy="no-referrer" />
                             <span className="font-medium text-sm">{product.name}</span>
                           </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="font-mono text-xs bg-zinc-100 px-2 py-1 rounded border border-zinc-200">{product.barcode}</span>
                         </td>
                         <td className="px-6 py-4 text-sm text-zinc-500">{product.category}</td>
                         <td className="px-6 py-4 text-sm font-bold">
@@ -4495,6 +4499,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
               className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
             />
           </div>
+          <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Código de Barra</label>
+            <input 
+              type="text"
+              readOnly
+              value={editingProduct ? editingProduct.barcode : "Gerado automaticamente"}
+              className="w-full px-4 py-3 bg-zinc-100 border border-zinc-200 rounded-xl outline-none text-zinc-500 font-mono" 
+            />
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Preço (Kz)</label>
@@ -5232,7 +5245,7 @@ const SellerPOS = ({ user }: { user: User }) => {
   const filteredProducts = products
     .filter(p => 
       (category === 'Geral' || p.category === category || (category === 'Promoções' && p.discount_percent)) &&
-      (p.name.toLowerCase().includes(search.toLowerCase()))
+      (p.name.toLowerCase().includes(search.toLowerCase()) || (p.barcode && p.barcode.toLowerCase().includes(search.toLowerCase())))
     )
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -5295,7 +5308,7 @@ const SellerPOS = ({ user }: { user: User }) => {
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={20} />
                 <input 
                   type="text" 
-                  placeholder="Pesquisar produto, S..." 
+                  placeholder="Pesquisar por nome ou código de barra..." 
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="w-full pl-12 pr-4 py-4 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 shadow-sm text-lg"

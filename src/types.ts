@@ -34,6 +34,7 @@ export interface Product {
   is_promo: boolean;
   discount_percent?: number;
   promo_name?: string;
+  barcode: string;
 }
 
 export interface Transaction {
