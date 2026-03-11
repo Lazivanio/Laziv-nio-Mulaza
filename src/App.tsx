@@ -330,14 +330,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             <Menu size={24} />
           </button>
           <div className="flex-1 px-4">
-            <div className="relative max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-              <input 
-                type="text" 
-                placeholder="Pesquisar..." 
-                className="w-full pl-10 pr-4 py-2 bg-zinc-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-black outline-none transition-all"
-              />
-            </div>
+            {/* Search bar removed as requested */}
           </div>
           <div className="flex items-center gap-4">
             <div className="w-8 h-8 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600">
@@ -5236,18 +5229,35 @@ const SellerPOS = ({ user }: { user: User }) => {
 
   const change = paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - total : 0;
 
-  const filteredProducts = products.filter(p => 
-    (category === 'Geral' || p.category === category || (category === 'Promoções' && p.discount_percent)) &&
-    (p.name.toLowerCase().includes(search.toLowerCase()))
-  );
+  const filteredProducts = products
+    .filter(p => 
+      (category === 'Geral' || p.category === category || (category === 'Promoções' && p.discount_percent)) &&
+      (p.name.toLowerCase().includes(search.toLowerCase()))
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const dynamicCategories: string[] = Array.from(new Set(products.map(p => p.category)))
+    .filter((cat): cat is string => !!cat && cat !== 'Geral' && cat !== 'Promoções')
+    .sort();
+
+  const categoryIcons: Record<string, any> = {
+    'Bebidas': Beer,
+    'Alimentos': Apple,
+    'Cosméticos': Sparkles,
+    'Café': Coffee,
+    'Outros': Layers,
+    'Limpeza': Zap,
+    'Talho': Box,
+    'Padaria': Coffee,
+  };
 
   const categories = [
     { name: 'Geral', icon: LayoutGrid },
     { name: 'Promoções', icon: Tag },
-    { name: 'Bebidas', icon: Beer },
-    { name: 'Alimentos', icon: Apple },
-    { name: 'Cosméticos', icon: Sparkles },
-    { name: 'Café', icon: Coffee },
+    ...dynamicCategories.map(cat => ({
+      name: cat,
+      icon: categoryIcons[cat] || Package
+    }))
   ];
 
   return (
@@ -5790,7 +5800,7 @@ const SellerCashMovements = ({ user }: { user: User }) => {
                 onClick={() => setType('in')}
                 className={cn(
                   "flex-1 py-2 rounded-lg text-sm font-bold transition-all",
-                  type === 'in' ? "bg-emerald-500 text-white shadow-md" : "text-zinc-500"
+                  type === 'in' ? "bg-orange-500 text-white shadow-md" : "bg-white text-zinc-500"
                 )}
               >
                 Entrada
@@ -5800,7 +5810,7 @@ const SellerCashMovements = ({ user }: { user: User }) => {
                 onClick={() => setType('out')}
                 className={cn(
                   "flex-1 py-2 rounded-lg text-sm font-bold transition-all",
-                  type === 'out' ? "bg-rose-500 text-white shadow-md" : "text-zinc-500"
+                  type === 'out' ? "bg-orange-500 text-white shadow-md" : "bg-white text-zinc-500"
                 )}
               >
                 Saída
@@ -5833,8 +5843,7 @@ const SellerCashMovements = ({ user }: { user: User }) => {
             <button
               type="submit"
               className={cn(
-                "w-full py-4 rounded-xl font-black text-white shadow-lg transition-all active:scale-95",
-                type === 'in' ? "bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20" : "bg-rose-500 hover:bg-rose-600 shadow-rose-500/20"
+                "w-full py-4 rounded-xl font-black text-white shadow-lg transition-all active:scale-95 bg-orange-500 hover:bg-orange-600 shadow-orange-500/20"
               )}
             >
               Registar {type === 'in' ? 'Entrada' : 'Saída'}
