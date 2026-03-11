@@ -3436,8 +3436,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
               className={cn(
                 "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap",
                 activeTab === tab.id 
-                  ? "bg-white text-black shadow-sm" 
-                  : "text-zinc-500 hover:text-black"
+                  ? "bg-orange-500 text-white shadow-sm" 
+                  : "bg-white text-zinc-500 hover:text-orange-500"
               )}
             >
               <tab.icon size={16} />
