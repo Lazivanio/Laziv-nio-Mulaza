@@ -1,5 +1,7 @@
-import { useState, useEffect, ReactNode, FormEvent } from 'react';
+import { useState, useEffect, ReactNode, FormEvent, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useLocation, useParams } from 'react-router-dom';
+import { jsPDF } from "jspdf";
+import html2canvas from "html2canvas";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, PieChart, Pie, Legend
@@ -26,6 +28,7 @@ import {
   Sparkles,
   Search,
   Plus,
+  Printer,
   Filter,
   ChevronRight,
   Menu,
@@ -41,6 +44,8 @@ import {
   Wallet,
   Phone,
   FileText,
+  PieChart as PieChartIcon,
+  Download,
   Image as ImageIcon,
   Activity,
   BarChart3,
@@ -54,6 +59,8 @@ import {
   Box,
   Layers,
   Split,
+  UserPlus,
+  Check,
   ArrowRightLeft,
   ShieldCheck,
   LifeBuoy,
@@ -199,9 +206,9 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
       >
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-black text-white rounded-2xl mb-4">
-            <CreditCard size={32} />
+            <Zap size={32} />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">FactuModern</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Fatu-r</h1>
           <p className="text-zinc-500 mt-2">Sistema de Faturação Eletrônica</p>
         </div>
 
@@ -267,9 +274,9 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
         <div className="h-full flex flex-col p-4">
           <div className="flex items-center gap-3 px-4 py-6 mb-4">
             <div className="w-10 h-10 bg-black text-white rounded-xl flex items-center justify-center">
-              <CreditCard size={20} />
+              <Zap size={20} />
             </div>
-            <span className="text-xl font-bold tracking-tight">FactuModern</span>
+            <span className="text-xl font-bold tracking-tight">Fatu-r</span>
           </div>
 
           <nav className="flex-1 space-y-1">
@@ -286,6 +293,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Visão Geral" to="/owner" />
                 <SidebarItem icon={Store} label="Minhas Lojas" to="/owner/stores" />
+                <SidebarItem icon={Users} label="Clientes" to="/owner/clients" />
                 <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" />
                 <SidebarItem icon={Settings} label="Configurações" to="/owner/settings" />
               </>
@@ -451,16 +459,17 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   });
 
   const [licenseFormData, setLicenseFormData] = useState({
-    plan_type: 'basic',
+    plan_type: '',
     duration_months: 1,
-    store_id: ''
+    store_id: '',
+    user_id: ''
   });
 
   // Settings States
   const [systemSettings, setSystemSettings] = useState<any>({
     expiration_notice: 'true',
     weekly_reports: 'false',
-    system_name: 'FactuModern'
+    system_name: 'Fatu-r'
   });
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
@@ -581,7 +590,16 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
 
   const handleManageLicense = async (e: FormEvent) => {
     e.preventDefault();
-    if (!selectedClient) return;
+    const userId = licenseFormData.user_id || selectedClient?.id;
+    if (!userId) {
+      alert("Por favor, selecione um cliente.");
+      return;
+    }
+    if (!licenseFormData.plan_type) {
+      alert("Por favor, selecione um plano.");
+      return;
+    }
+
     try {
       const expiry = new Date();
       expiry.setMonth(expiry.getMonth() + Number(licenseFormData.duration_months));
@@ -590,7 +608,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: selectedClient.id,
+          user_id: userId,
           store_id: licenseFormData.store_id || null,
           plan_type: licenseFormData.plan_type,
           start_date: new Date().toISOString().split('T')[0],
@@ -600,8 +618,9 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       });
       if (!res.ok) throw new Error("Failed to manage license");
       setIsLicenseModalOpen(false);
+      setLicenseFormData({ plan_type: '', duration_months: 1, store_id: '', user_id: '' });
       fetchData();
-      if (isClientDetailsOpen) fetchClientDetails(selectedClient.id);
+      if (isClientDetailsOpen && userId === selectedClient?.id) fetchClientDetails(userId);
     } catch (e) {
       console.error(e);
     }
@@ -2588,43 +2607,53 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               </div>
               <form onSubmit={handleManageLicense} className="p-6 space-y-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Selecionar Plano</label>
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">1. Selecionar Plano</label>
                   <select 
                     value={licenseFormData.plan_type}
                     onChange={(e) => setLicenseFormData({...licenseFormData, plan_type: e.target.value})}
                     className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold"
                   >
-                    <option value="basic">Basic (Kz 15.000/mês)</option>
-                    <option value="pro">Pro (Kz 35.000/mês)</option>
-                    <option value="enterprise">Enterprise (Kz 75.000/mês)</option>
+                    <option value="">Selecione um plano</option>
+                    {plans.map((plan: any) => (
+                      <option key={plan.id} value={plan.type}>{plan.name} (Kz {plan.price.toLocaleString()}/mês)</option>
+                    ))}
                   </select>
                 </div>
+
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Duração (Meses)</label>
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">2. Duração (Meses)</label>
                   <input 
                     type="number" 
                     min="1"
                     max="24"
                     value={licenseFormData.duration_months}
                     onChange={(e) => setLicenseFormData({...licenseFormData, duration_months: Number(e.target.value)})}
-                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold" 
                   />
                 </div>
+
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Atribuir a Loja (Opcional)</label>
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">3. Selecionar Cliente</label>
                   <select 
-                    value={licenseFormData.store_id}
-                    onChange={(e) => setLicenseFormData({...licenseFormData, store_id: e.target.value})}
-                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all"
+                    value={licenseFormData.user_id || selectedClient?.id || ''}
+                    onChange={(e) => setLicenseFormData({...licenseFormData, user_id: e.target.value})}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold"
                   >
-                    <option value="">Licença Global (Todas as Lojas)</option>
-                    {clientDetails?.stores?.map((s: any) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
+                    <option value="">Selecione um cliente</option>
+                    {clients.map((client: any) => (
+                      <option key={client.id} value={client.id}>
+                        {client.company_name || client.name} ({client.email})
+                      </option>
                     ))}
                   </select>
                 </div>
+
                 <div className="pt-4">
-                  <button type="submit" className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all">
+                  <button 
+                    type="submit" 
+                    disabled={!licenseFormData.plan_type || !(licenseFormData.user_id || selectedClient?.id)}
+                    className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
                     Ativar / Renovar Licença
                   </button>
                 </div>
@@ -3004,6 +3033,242 @@ const MyStores = ({ user }: { user: User }) => {
           </div>
           <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95 mt-4">
             {editingStore ? "Guardar Alterações" : "Criar Loja"}
+          </button>
+        </form>
+      </Modal>
+    </div>
+  );
+};
+
+const OwnerClients = ({ user }: { user: User }) => {
+  const [clients, setClients] = useState<any[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingClient, setEditingClient] = useState<any>(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    nif: '',
+    email: '',
+    phone: '',
+    address: '',
+    type: 'individual'
+  });
+
+  useEffect(() => {
+    fetchClients();
+  }, [user.store_id]);
+
+  const fetchClients = async () => {
+    const storeId = user.store_id || 1;
+    const res = await fetch(`/api/owner/clients/${storeId}`);
+    const data = await res.json();
+    setClients(data);
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const storeId = user.store_id || 1;
+    const url = editingClient ? `/api/owner/clients/${editingClient.id}` : '/api/owner/clients';
+    const method = editingClient ? 'PUT' : 'POST';
+
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...formData, store_id: storeId })
+      });
+
+      if (res.ok) {
+        setIsModalOpen(false);
+        setEditingClient(null);
+        setFormData({ name: '', nif: '', email: '', phone: '', address: '', type: 'individual' });
+        fetchClients();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Tem certeza que deseja excluir este cliente?")) return;
+    try {
+      const res = await fetch(`/api/owner/clients/${id}`, { method: 'DELETE' });
+      if (res.ok) fetchClients();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black tracking-tight">Gestão de Clientes</h2>
+          <p className="text-zinc-500">Registe e gira os seus clientes para faturação.</p>
+        </div>
+        <button 
+          onClick={() => {
+            setEditingClient(null);
+            setFormData({ name: '', nif: '', email: '', phone: '', address: '', type: 'individual' });
+            setIsModalOpen(true);
+          }}
+          className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
+        >
+          <Plus size={20} />
+          Novo Cliente
+        </button>
+      </div>
+
+      <Card className="overflow-hidden border-zinc-100 shadow-sm rounded-2xl">
+        <table className="w-full text-left">
+          <thead className="bg-zinc-50 border-b border-zinc-100">
+            <tr>
+              <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Nome</th>
+              <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Tipo</th>
+              <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">NIF</th>
+              <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Contacto</th>
+              <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest text-right">Ações</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100">
+            {clients.map(client => (
+              <tr key={client.id} className="hover:bg-zinc-50/50 transition-colors">
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center font-bold">
+                      {client.name.charAt(0)}
+                    </div>
+                    <div>
+                      <p className="font-bold text-zinc-800">{client.name}</p>
+                      <p className="text-xs text-zinc-500">{client.email}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-6 py-4">
+                  <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                    client.type === 'company' ? 'bg-blue-100 text-blue-600' : 'bg-zinc-100 text-zinc-600'
+                  }`}>
+                    {client.type === 'company' ? 'Empresa' : 'Pessoa'}
+                  </span>
+                </td>
+                <td className="px-6 py-4 text-sm font-medium text-zinc-600">{client.nif}</td>
+                <td className="px-6 py-4 text-sm text-zinc-500">{client.phone}</td>
+                <td className="px-6 py-4 text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    <button 
+                      onClick={() => {
+                        setEditingClient(client);
+                        setFormData({
+                          name: client.name,
+                          nif: client.nif,
+                          email: client.email,
+                          phone: client.phone,
+                          address: client.address,
+                          type: client.type || 'individual'
+                        });
+                        setIsModalOpen(true);
+                      }}
+                      className="p-2 text-zinc-400 hover:text-orange-500 transition-colors"
+                    >
+                      <Edit2 size={18} />
+                    </button>
+                    <button 
+                      onClick={() => handleDelete(client.id)}
+                      className="p-2 text-zinc-400 hover:text-rose-500 transition-colors"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      <Modal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+        title={editingClient ? "Editar Cliente" : "Novo Cliente"}
+      >
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="flex gap-4 p-1 bg-zinc-100 rounded-xl mb-4">
+            <button
+              type="button"
+              onClick={() => setFormData({ ...formData, type: 'individual' })}
+              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+                formData.type === 'individual' ? 'bg-white shadow-sm text-black' : 'text-zinc-500'
+              }`}
+            >
+              Pessoa Física
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormData({ ...formData, type: 'company' })}
+              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+                formData.type === 'company' ? 'bg-white shadow-sm text-black' : 'text-zinc-500'
+              }`}
+            >
+              Empresa
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">
+                {formData.type === 'company' ? 'Nome da Empresa' : 'Nome Completo'}
+              </label>
+              <input 
+                type="text" required
+                value={formData.name}
+                onChange={e => setFormData({...formData, name: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                placeholder={formData.type === 'company' ? "Ex: Empresa LDA" : "Ex: João Silva"}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF</label>
+              <input 
+                type="text" required
+                value={formData.nif}
+                onChange={e => setFormData({...formData, nif: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                placeholder="Ex: 500123456"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Telefone</label>
+              <input 
+                type="text"
+                value={formData.phone}
+                onChange={e => setFormData({...formData, phone: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                placeholder="Ex: 923 000 000"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email</label>
+              <input 
+                type="email"
+                value={formData.email}
+                onChange={e => setFormData({...formData, email: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                placeholder="Ex: joao@email.com"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
+              <textarea 
+                value={formData.address}
+                onChange={e => setFormData({...formData, address: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all h-20 resize-none"
+                placeholder="Endereço completo..."
+              />
+            </div>
+          </div>
+          <button 
+            type="submit"
+            className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95 mt-4"
+          >
+            {editingClient ? "Guardar Alterações" : "Registar Cliente"}
           </button>
         </form>
       </Modal>
@@ -4238,7 +4503,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             {msg.message}
                           </div>
                           <span className="text-[10px] text-zinc-400 mt-1 px-1">
-                            {msg.is_admin ? 'Suporte Factu' : 'Você'} • {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {msg.is_admin ? 'Suporte Fatu-r' : 'Você'} • {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
                       ))}
@@ -4872,15 +5137,230 @@ const StoreAdmin = ({ user }: { user: User }) => {
   );
 };
 
-const OwnerReports = ({ user }: { user: User }) => (
-  <div className="p-12 text-center space-y-4">
-    <div className="w-20 h-20 bg-zinc-100 text-zinc-400 rounded-full flex items-center justify-center mx-auto">
-      <TrendingUp size={40} />
+import * as XLSX from 'xlsx';
+
+const OwnerReports = ({ user }: { user: User }) => {
+  const [data, setData] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const reportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch(`/api/owner/global-reports/${user.id}`)
+      .then(res => res.json())
+      .then(data => {
+        setData(data);
+        setIsLoading(false);
+      });
+  }, [user.id]);
+
+  const exportToPDF = async () => {
+    if (!reportRef.current) return;
+    const canvas = await html2canvas(reportRef.current, { scale: 2 });
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save('Relatorio_Global.pdf');
+  };
+
+  const exportToExcel = () => {
+    if (!data) return;
+    
+    // Create a workbook
+    const wb = XLSX.utils.book_new();
+    
+    // Summary Sheet
+    const summaryData = [
+      ['Relatório Global de Vendas'],
+      ['Data de Extração', new Date().toLocaleString()],
+      [''],
+      ['Métrica', 'Valor'],
+      ['Receita Total', `Kz ${data.totalRevenue.toLocaleString()}`],
+      ['Total de Vendas', data.totalSales],
+    ];
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumo');
+    
+    // Store Revenue Sheet
+    const wsStore = XLSX.utils.json_to_sheet(data.revenueByStore);
+    XLSX.utils.book_append_sheet(wb, wsStore, 'Receita por Loja');
+    
+    // Top Products Sheet
+    const wsProducts = XLSX.utils.json_to_sheet(data.topProducts);
+    XLSX.utils.book_append_sheet(wb, wsProducts, 'Produtos Mais Vendidos');
+    
+    // Write file
+    XLSX.writeFile(wb, 'Relatorio_Global.xlsx');
+  };
+
+  if (isLoading) return <div className="p-12 text-center">Carregando relatórios...</div>;
+
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black tracking-tight">Relatórios Globais</h2>
+          <p className="text-zinc-500">Desempenho consolidado de todas as suas lojas.</p>
+        </div>
+        <div className="flex gap-2">
+          <button 
+            onClick={exportToExcel}
+            className="bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all active:scale-95"
+          >
+            <FileText size={20} /> Exportar Excel
+          </button>
+          <button 
+            onClick={exportToPDF}
+            className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
+          >
+            <Download size={20} /> Exportar PDF
+          </button>
+        </div>
+      </div>
+
+      <div ref={reportRef} className="space-y-8 bg-white p-8 rounded-3xl border border-zinc-100">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <Card className="p-6 bg-zinc-900 text-white border-none rounded-2xl">
+            <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Receita Total</p>
+            <h3 className="text-3xl font-black">Kz {data.totalRevenue.toLocaleString()}</h3>
+            <div className="mt-4 flex items-center gap-2 text-emerald-400 text-xs font-bold">
+              <TrendingUp size={14} /> +12% vs mês anterior
+            </div>
+          </Card>
+          
+          <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Total de Vendas</p>
+            <h3 className="text-3xl font-black">{data.totalSales.toLocaleString()}</h3>
+            <p className="text-xs text-zinc-400 mt-4 font-medium">Consolidado de todas as lojas</p>
+          </Card>
+
+          <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Ticket Médio</p>
+            <h3 className="text-3xl font-black">Kz {(data.totalRevenue / (data.totalSales || 1)).toLocaleString()}</h3>
+            <p className="text-xs text-zinc-400 mt-4 font-medium">Valor médio por venda</p>
+          </Card>
+
+          <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Lojas Ativas</p>
+            <h3 className="text-3xl font-black">{data.revenueByStore.length}</h3>
+            <p className="text-xs text-zinc-400 mt-4 font-medium">Contribuindo para os resultados</p>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
+            <h4 className="text-lg font-black mb-6 flex items-center gap-2">
+              <TrendingUp size={20} className="text-orange-500" />
+              Evolução de Vendas (30 dias)
+            </h4>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={data.salesByDay}>
+                  <defs>
+                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f97316" stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis 
+                    dataKey="date" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{fontSize: 10, fill: '#94a3b8'}}
+                    tickFormatter={(val) => new Date(val).toLocaleDateString('pt-AO', { day: '2-digit', month: 'short' })}
+                  />
+                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
+                  <Tooltip 
+                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                    formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Receita']}
+                  />
+                  <Area type="monotone" dataKey="revenue" stroke="#f97316" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
+          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
+            <h4 className="text-lg font-black mb-6 flex items-center gap-2">
+              <PieChartIcon size={20} className="text-blue-500" />
+              Receita por Loja
+            </h4>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data.revenueByStore} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                  <XAxis type="number" hide />
+                  <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 600}} width={100} />
+                  <Tooltip 
+                    cursor={{fill: '#f8fafc'}}
+                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                    formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Receita']}
+                  />
+                  <Bar dataKey="revenue" fill="#3b82f6" radius={[0, 8, 8, 0]} barSize={24} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <Card className="lg:col-span-2 p-8 border-zinc-100 rounded-3xl shadow-sm">
+            <h4 className="text-lg font-black mb-6">Top 10 Produtos (Global)</h4>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">
+                    <th className="pb-4">Produto</th>
+                    <th className="pb-4 text-center">Qtd Vendida</th>
+                    <th className="pb-4 text-right">Receita Gerada</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-50">
+                  {data.topProducts.map((p: any, i: number) => (
+                    <tr key={i} className="group hover:bg-zinc-50/50 transition-colors">
+                      <td className="py-4 font-bold text-zinc-800">{p.name}</td>
+                      <td className="py-4 text-center font-medium text-zinc-600">{p.quantity}</td>
+                      <td className="py-4 text-right font-black text-zinc-900">Kz {p.revenue.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
+            <h4 className="text-lg font-black mb-6">Métodos de Pagamento</h4>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={data.paymentMethods}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {data.paymentMethods.map((entry: any, index: number) => (
+                      <Cell key={`cell-${index}`} fill={['#f97316', '#3b82f6', '#10b981', '#6366f1'][index % 4]} />
+                    ))}
+                  </Pie>
+                  <Tooltip 
+                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                  />
+                  <Legend verticalAlign="bottom" height={36}/>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </div>
+      </div>
     </div>
-    <h3 className="text-xl font-bold">Relatórios Globais</h3>
-    <p className="text-zinc-500">Visualize o desempenho consolidado de todas as suas lojas.</p>
-  </div>
-);
+  );
+};
 
 const OwnerSettings = ({ user }: { user: User }) => {
   const [formData, setFormData] = useState({
@@ -5088,11 +5568,165 @@ const OwnerSettings = ({ user }: { user: User }) => {
 
 // --- Seller Module ---
 
+const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) => {
+  const invoiceRef = useRef<HTMLDivElement>(null);
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleDownload = async () => {
+    if (!invoiceRef.current) return;
+    
+    const canvas = await html2canvas(invoiceRef.current, {
+      scale: 2,
+      useCORS: true,
+      logging: false
+    });
+    
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: [80, 200] // Typical thermal printer width
+    });
+    
+    const imgProps = pdf.getImageProperties(imgData);
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+    
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save(`FATURA_${sale.invoice_number.replace('/', '_')}.pdf`);
+    
+    // Note: Direct saving to C:/ is not possible in browser, 
+    // but this triggers the system download dialog.
+  };
+
+  if (!sale || !store) return null;
+
+  return (
+    <div className="space-y-4">
+      <div ref={invoiceRef} className="bg-white p-8 max-w-md mx-auto shadow-lg border border-zinc-100 rounded-xl invoice-print">
+        <div className="text-center mb-6">
+          {store.logo_url && (
+            <img src={store.logo_url} alt="" className="w-16 h-16 mx-auto mb-2 object-contain" referrerPolicy="no-referrer" />
+          )}
+          <h2 className="text-xl font-black uppercase tracking-tighter">{store.name}</h2>
+          <p className="text-[10px] text-zinc-500">{store.address}</p>
+          <p className="text-[10px] text-zinc-500">NIF: {store.nif} | Tel: {store.phone}</p>
+        </div>
+
+        <div className="border-y border-dashed border-zinc-200 py-3 mb-4 flex justify-between text-[10px] font-medium">
+          <div>
+            <p className="font-black">FATURA Nº: {sale.invoice_number || sale.id.toString().padStart(6, '0')}</p>
+            <p>DATA: {new Date(sale.timestamp).toLocaleString()}</p>
+          </div>
+          <div className="text-right">
+            <p>OPERADOR: {user.name}</p>
+            <p>CLIENTE: {sale.client_name}</p>
+            <p>NIF: {sale.client_nif}</p>
+          </div>
+        </div>
+
+        <table className="w-full text-[10px] mb-4">
+          <thead>
+            <tr className="border-b border-zinc-100 text-left">
+              <th className="py-1">DESCRIÇÃO</th>
+              <th className="py-1 text-center">QTD</th>
+              <th className="py-1 text-right">PREÇO</th>
+              <th className="py-1 text-right">TOTAL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sale.items.map((item: any, idx: number) => (
+              <tr key={idx} className="border-b border-zinc-50">
+                <td className="py-1 uppercase">{item.name}</td>
+                <td className="py-1 text-center">{item.quantity}</td>
+                <td className="py-1 text-right">{item.price.toLocaleString()}</td>
+                <td className="py-1 text-right">{(item.price * item.quantity).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <div className="space-y-1 text-[10px] border-t border-zinc-100 pt-3">
+          <div className="flex justify-between">
+            <span>SUBTOTAL</span>
+            <span>Kz {(sale.total_amount - sale.tax_amount + sale.discount_amount).toLocaleString()}</span>
+          </div>
+          {sale.discount_amount > 0 && (
+            <div className="flex justify-between text-rose-600">
+              <span>DESCONTO</span>
+              <span>- Kz {sale.discount_amount.toLocaleString()}</span>
+            </div>
+          )}
+          <div className="flex justify-between">
+            <span>IMPOSTO (14%)</span>
+            <span>Kz {sale.tax_amount.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between text-sm font-black pt-2 border-t border-zinc-200">
+            <span>TOTAL</span>
+            <span>Kz {sale.total_amount.toLocaleString()}</span>
+          </div>
+        </div>
+
+        <div className="mt-6 text-center space-y-2">
+          <p className="text-[8px] text-zinc-400 uppercase tracking-widest font-bold">Obrigado pela preferência!</p>
+          <div className="pt-2 border-t border-zinc-50">
+            <p className="text-[7px] text-zinc-400 uppercase">Processado por Fatu-r (Experimental AGT)</p>
+            <p className="text-[7px] text-emerald-600 font-bold uppercase">Estado AGT: {sale.agt_status === 'sent' ? 'Submetido com Sucesso' : 'Pendente'}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-2 no-print max-w-md mx-auto">
+        <button 
+          onClick={handlePrint}
+          className="flex-1 bg-zinc-100 text-zinc-900 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-zinc-200 transition-all"
+        >
+          <Printer size={16} /> Imprimir
+        </button>
+        <button 
+          onClick={handleDownload}
+          className="flex-1 bg-black text-white py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all"
+        >
+          <FileText size={16} /> Descarregar PDF
+        </button>
+      </div>
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media print {
+          body * { visibility: hidden; }
+          .invoice-print, .invoice-print * { visibility: visible; }
+          .invoice-print { 
+            position: absolute; 
+            left: 0; 
+            top: 0; 
+            width: 100%; 
+            box-shadow: none; 
+            border: none;
+            padding: 0;
+          }
+          .no-print { display: none !important; }
+        }
+      `}} />
+    </div>
+  );
+};
+
 const SellerPOS = ({ user }: { user: User }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<{ product: Product, quantity: number }[]>([]);
   const [category, setCategory] = useState('Geral');
   const [search, setSearch] = useState('');
+  const [discount, setDiscount] = useState(0);
+  const [client, setClient] = useState({ name: 'Consumidor Final', nif: '999999999' });
+  const [clients, setClients] = useState<any[]>([]);
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [clientSearch, setClientSearch] = useState('');
+  const [lastSale, setLastSale] = useState<any>(null);
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [storeInfo, setStoreInfo] = useState<any>(null);
   
   // Payment states
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -5110,6 +5744,11 @@ const SellerPOS = ({ user }: { user: User }) => {
   useEffect(() => {
     const storeId = user.store_id || 1;
     fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
+    fetch(`/api/seller/clients/${storeId}`).then(res => res.json()).then(setClients);
+    fetch(`/api/admin/stores`).then(res => res.json()).then(stores => {
+      const currentStore = stores.find((s: any) => s.id === storeId);
+      setStoreInfo(currentStore);
+    });
   }, [user.store_id]);
 
   const addToCart = (product: Product) => {
@@ -5142,8 +5781,11 @@ const SellerPOS = ({ user }: { user: User }) => {
       : item.product.price;
     return acc + (price * item.quantity);
   }, 0);
-  const tax = subtotal * 0.14;
-  const total = subtotal + tax;
+  
+  const discountAmount = discount;
+  const taxableAmount = Math.max(0, subtotal - discountAmount);
+  const tax = taxableAmount * 0.14;
+  const total = taxableAmount + tax;
 
   const handleCheckout = () => {
     if (cart.length === 0) return;
@@ -5214,10 +5856,16 @@ const SellerPOS = ({ user }: { user: User }) => {
           seller_id: user.id,
           total_amount: total,
           payment_method: paymentMethod,
+          client_name: client.name || 'Consumidor Final',
+          client_nif: client.nif || '999999999',
+          discount_percent: 0,
+          discount_amount: discountAmount,
+          tax_amount: tax,
           cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : (paymentMethod === 'split' ? parseFloat(splitAmounts.cash) : total),
           split_details: paymentMethod === 'split' ? { cash: parseFloat(splitAmounts.cash), card: parseFloat(splitAmounts.card) } : null,
           items: cart.map(item => ({ 
             id: item.product.id, 
+            name: item.product.name,
             quantity: item.quantity,
             price: item.product.discount_percent 
               ? item.product.price * (1 - item.product.discount_percent / 100) 
@@ -5226,11 +5874,15 @@ const SellerPOS = ({ user }: { user: User }) => {
         })
       });
       if (res.ok) {
-        alert('Venda realizada com sucesso!');
+        const saleData = await res.json();
+        setLastSale(saleData.sale);
+        setIsInvoiceModalOpen(true);
         setCart([]);
         setIsPaymentModalOpen(false);
         setCashReceived('');
         setSplitAmounts({ cash: '', card: '' });
+        setDiscount(0);
+        setClient({ name: 'Consumidor Final', nif: '999999999' });
         fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
       }
     } catch (error) {
@@ -5406,49 +6058,82 @@ const SellerPOS = ({ user }: { user: User }) => {
                 <p className="text-xs font-medium">Seu carrinho está vazio</p>
               </div>
             ) : (
-              cart.map(item => (
-                <div key={item.product.id} className="flex items-center gap-3 group">
-                  <div className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-100 flex-shrink-0">
-                    <img src={item.product.image_url} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-zinc-800 truncate">{item.product.name}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <button 
-                        onClick={() => updateQuantity(item.product.id, -1)}
-                        className="w-5 h-5 flex items-center justify-center bg-zinc-100 rounded text-zinc-600 hover:bg-zinc-200"
-                      >
-                        -
-                      </button>
-                      <span className="text-[10px] font-bold w-4 text-center">{item.quantity}</span>
-                      <button 
-                        onClick={() => updateQuantity(item.product.id, 1)}
-                        className="w-5 h-5 flex items-center justify-center bg-zinc-100 rounded text-zinc-600 hover:bg-zinc-200"
-                      >
-                        +
-                      </button>
-                      <span className="text-[10px] text-zinc-400 ml-1">
-                        x Kz {(item.product.discount_percent 
+              <div className="space-y-4">
+                {cart.map(item => (
+                  <div key={item.product.id} className="flex items-center gap-3 group">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-100 flex-shrink-0">
+                      <img src={item.product.image_url} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-zinc-800 truncate">{item.product.name}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <button 
+                          onClick={() => updateQuantity(item.product.id, -1)}
+                          className="w-5 h-5 flex items-center justify-center bg-zinc-100 rounded text-zinc-600 hover:bg-zinc-200"
+                        >
+                          -
+                        </button>
+                        <span className="text-[10px] font-bold w-4 text-center">{item.quantity}</span>
+                        <button 
+                          onClick={() => updateQuantity(item.product.id, 1)}
+                          className="w-5 h-5 flex items-center justify-center bg-zinc-100 rounded text-zinc-600 hover:bg-zinc-200"
+                        >
+                          +
+                        </button>
+                        <span className="text-[10px] text-zinc-400 ml-1">
+                          x Kz {(item.product.discount_percent 
+                            ? item.product.price * (1 - item.product.discount_percent / 100) 
+                            : item.product.price).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-black text-zinc-900">
+                        Kz {((item.product.discount_percent 
                           ? item.product.price * (1 - item.product.discount_percent / 100) 
-                          : item.product.price).toLocaleString()}
-                      </span>
+                          : item.product.price) * item.quantity).toLocaleString()}
+                      </p>
+                      <button 
+                        onClick={() => removeFromCart(item.product.id)}
+                        className="text-rose-400 hover:text-rose-600 p-1 transition-colors"
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-xs font-black text-zinc-900">
-                      Kz {((item.product.discount_percent 
-                        ? item.product.price * (1 - item.product.discount_percent / 100) 
-                        : item.product.price) * item.quantity).toLocaleString()}
-                    </p>
+                ))}
+
+                <div className="pt-4 border-t border-zinc-100 space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</label>
                     <button 
-                      onClick={() => removeFromCart(item.product.id)}
-                      className="text-rose-400 hover:text-rose-600 p-1 transition-colors"
+                      onClick={() => setIsClientModalOpen(true)}
+                      className="w-full flex items-center justify-between px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl hover:border-orange-500 transition-all group"
                     >
-                      <X size={14} />
+                      <div className="text-left">
+                        <p className="text-[10px] font-black text-zinc-800">{client.name}</p>
+                        <p className="text-[8px] text-zinc-400">NIF: {client.nif}</p>
+                      </div>
+                      <UserPlus size={16} className="text-zinc-400 group-hover:text-orange-500" />
                     </button>
                   </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Desconto Global (Kz)</label>
+                    <div className="relative">
+                      <input 
+                        type="number"
+                        min="0"
+                        value={discount}
+                        onChange={e => setDiscount(Number(e.target.value))}
+                        className="w-full pl-8 pr-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-orange-500 text-xs font-bold"
+                        placeholder="0.00"
+                      />
+                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px] font-bold">Kz</div>
+                    </div>
+                  </div>
                 </div>
-              ))
+              </div>
             )}
           </div>
 
@@ -5458,6 +6143,12 @@ const SellerPOS = ({ user }: { user: User }) => {
                 <span>Subtotal</span>
                 <span className="font-bold text-zinc-700">Kz {subtotal.toLocaleString()}</span>
               </div>
+              {discount > 0 && (
+                <div className="flex justify-between text-xs text-rose-500">
+                  <span>Desconto</span>
+                  <span className="font-bold">- Kz {discountAmount.toLocaleString()}</span>
+                </div>
+              )}
               <div className="flex justify-between text-xs text-zinc-500">
                 <span>Imposto (14%)</span>
                 <span className="font-bold text-zinc-700">Kz {tax.toLocaleString()}</span>
@@ -5684,6 +6375,178 @@ const SellerPOS = ({ user }: { user: User }) => {
             {isProcessing ? 'Processando...' : 'Confirmar Pagamento'}
           </button>
         </div>
+      </Modal>
+
+      {/* Client Selection Modal */}
+      <Modal isOpen={isClientModalOpen} onClose={() => setIsClientModalOpen(false)} title="Vincular Cliente">
+        <div className="space-y-6">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={20} />
+            <input 
+              type="text" 
+              placeholder="Pesquisar cliente por nome ou NIF..." 
+              value={clientSearch}
+              onChange={(e) => setClientSearch(e.target.value)}
+              className="w-full pl-12 pr-4 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 shadow-sm"
+            />
+          </div>
+
+          <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
+            <button
+              onClick={() => {
+                setClient({ name: 'Consumidor Final', nif: '999999999' });
+                setIsClientModalOpen(false);
+              }}
+              className={cn(
+                "w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all text-left",
+                client.name === 'Consumidor Final' ? "border-orange-500 bg-orange-50" : "border-zinc-100 hover:border-orange-200"
+              )}
+            >
+              <div>
+                <p className="font-black text-zinc-800">Consumidor Final</p>
+                <p className="text-xs text-zinc-400">NIF: 999999999</p>
+              </div>
+              {client.name === 'Consumidor Final' && <Check size={20} className="text-orange-500" />}
+            </button>
+
+            {clients.filter(c => 
+              c.name.toLowerCase().includes(clientSearch.toLowerCase()) || 
+              c.nif.toLowerCase().includes(clientSearch.toLowerCase())
+            ).map(c => (
+              <button
+                key={c.id}
+                onClick={() => {
+                  setClient({ name: c.name, nif: c.nif });
+                  setIsClientModalOpen(false);
+                }}
+                className={cn(
+                  "w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all text-left",
+                  client.name === c.name ? "border-orange-500 bg-orange-50" : "border-zinc-100 hover:border-orange-200"
+                )}
+              >
+                <div>
+                  <p className="font-black text-zinc-800">{c.name}</p>
+                  <p className="text-xs text-zinc-400">NIF: {c.nif} | Tel: {c.phone}</p>
+                </div>
+                {client.name === c.name && <Check size={20} className="text-orange-500" />}
+              </button>
+            ))}
+          </div>
+
+          <div className="pt-4 border-t border-zinc-100">
+            <p className="text-xs font-bold text-zinc-500 uppercase mb-3">Ou inserir manualmente</p>
+            <div className="grid grid-cols-2 gap-3">
+              <input 
+                type="text"
+                placeholder="Nome do Cliente"
+                value={client.name === 'Consumidor Final' ? '' : client.name}
+                onChange={e => setClient({...client, name: e.target.value})}
+                className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 text-sm font-bold"
+              />
+              <input 
+                type="text"
+                placeholder="NIF"
+                value={client.nif === '999999999' ? '' : client.nif}
+                onChange={e => setClient({...client, nif: e.target.value})}
+                className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 text-sm font-bold"
+              />
+            </div>
+            <button 
+              onClick={() => setIsClientModalOpen(false)}
+              className="w-full mt-4 bg-zinc-900 text-white py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all"
+            >
+              Confirmar Cliente
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Invoice Modal */}
+      <Modal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} title="Fatura Gerada">
+        <Invoice sale={lastSale} store={storeInfo} user={user} />
+      </Modal>
+    </div>
+  );
+};
+
+const SellerHistory = ({ user }: { user: User }) => {
+  const [sales, setSales] = useState<any[]>([]);
+  const [selectedSale, setSelectedSale] = useState<any>(null);
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [storeInfo, setStoreInfo] = useState<any>(null);
+
+  useEffect(() => {
+    fetch(`/api/seller/sales/${user.id}`).then(res => res.json()).then(setSales);
+    fetch(`/api/admin/stores`).then(res => res.json()).then(stores => {
+      const currentStore = stores.find((s: any) => s.id === (user.store_id || 1));
+      setStoreInfo(currentStore);
+    });
+  }, [user.id, user.store_id]);
+
+  const openInvoice = (sale: any) => {
+    setSelectedSale(sale);
+    setIsInvoiceModalOpen(true);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Histórico de Vendas</h2>
+          <p className="text-zinc-500">Visualize e reimprima faturas de vendas passadas.</p>
+        </div>
+      </div>
+
+      <Card className="overflow-hidden border-zinc-100 shadow-sm rounded-[2rem]">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-zinc-50 border-b border-zinc-100">
+                <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">ID</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Data</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Método</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-widest text-right">Total</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-widest text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {sales.map((sale) => (
+                <tr key={sale.id} className="hover:bg-zinc-50/50 transition-colors">
+                  <td className="px-6 py-4 font-mono text-xs">#{sale.id.toString().padStart(6, '0')}</td>
+                  <td className="px-6 py-4 text-sm text-zinc-600">{new Date(sale.timestamp).toLocaleString()}</td>
+                  <td className="px-6 py-4">
+                    <div className="text-sm font-bold">{sale.client_name}</div>
+                    <div className="text-[10px] text-zinc-400">NIF: {sale.client_nif}</div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="px-2 py-1 bg-zinc-100 text-zinc-600 rounded-full text-[10px] font-bold uppercase">
+                      {sale.payment_method}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right font-black text-sm">Kz {sale.total_amount.toLocaleString()}</td>
+                  <td className="px-6 py-4 text-right">
+                    <button 
+                      onClick={() => openInvoice(sale)}
+                      className="p-2 text-zinc-400 hover:text-orange-500 transition-colors"
+                    >
+                      <Printer size={18} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {sales.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic">Nenhuma venda encontrada.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Modal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} title="Reimprimir Fatura">
+        <Invoice sale={selectedSale} store={storeInfo} user={user} />
       </Modal>
     </div>
   );
@@ -6151,7 +7014,7 @@ const SellerSettings = ({ user }: { user: User }) => {
               <Info size={24} />
             </div>
             <div className="flex-1">
-              <h4 className="font-bold text-zinc-800">Sobre o FactuModern</h4>
+              <h4 className="font-bold text-zinc-800">Sobre o Fatu-r</h4>
               <p className="text-xs text-zinc-500">Versão 1.0.4 - Sistema de Faturação Inteligente.</p>
             </div>
             <ChevronRight size={20} className="text-zinc-300" />
@@ -6212,52 +7075,6 @@ const SellerSettings = ({ user }: { user: User }) => {
   );
 };
 
-const SellerHistory = ({ user }: { user: User }) => {
-  const [transactions, setTransactions] = useState<any[]>([]);
-
-  useEffect(() => {
-    fetch('/api/admin/transactions') // For demo, using admin route but filtering
-      .then(res => res.json())
-      .then(data => setTransactions(data.filter((t: any) => t.seller_id === user.id)));
-  }, [user.id]);
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Histórico de Vendas</h2>
-        <p className="text-zinc-500">Visualize todas as suas vendas realizadas.</p>
-      </div>
-
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
-                <th className="px-6 py-4 font-semibold">Data</th>
-                <th className="px-6 py-4 font-semibold">Loja</th>
-                <th className="px-6 py-4 font-semibold">Total</th>
-                <th className="px-6 py-4 font-semibold">Itens</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {transactions.map(t => (
-                <tr key={t.id} className="hover:bg-zinc-50 transition-colors">
-                  <td className="px-6 py-4 text-sm">{new Date(t.timestamp).toLocaleString()}</td>
-                  <td className="px-6 py-4 text-sm font-medium">{t.store_name}</td>
-                  <td className="px-6 py-4 text-sm font-bold">Kz {t.total_amount.toLocaleString()}</td>
-                  <td className="px-6 py-4 text-sm text-zinc-500">
-                    {JSON.parse(t.items).length} produtos
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
-  );
-};
-
 // --- Main App ---
 
 export default function App() {
@@ -6297,6 +7114,7 @@ export default function App() {
                 <Route path="/owner" element={<OwnerOverview user={user} />} />
                 <Route path="/owner/stores" element={<MyStores user={user} />} />
                 <Route path="/owner/stores/:storeId" element={<StoreAdmin user={user} />} />
+                <Route path="/owner/clients" element={<OwnerClients user={user} />} />
                 <Route path="/owner/reports" element={<OwnerReports user={user} />} />
                 <Route path="/owner/settings" element={<OwnerSettings user={user} />} />
                 <Route path="*" element={<Navigate to="/owner" replace />} />

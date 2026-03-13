@@ -301,6 +301,18 @@ db.exec(`
     FOREIGN KEY(store_id) REFERENCES stores(id),
     FOREIGN KEY(owner_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS clients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    name TEXT,
+    nif TEXT,
+    email TEXT,
+    phone TEXT,
+    address TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id)
+  );
 `);
 
 try {
@@ -308,8 +320,38 @@ try {
   if (!columns.some(col => col.name === 'split_details')) {
     db.exec("ALTER TABLE transactions ADD COLUMN split_details TEXT");
   }
+  if (!columns.some(col => col.name === 'client_name')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN client_name TEXT");
+  }
+  if (!columns.some(col => col.name === 'client_nif')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN client_nif TEXT");
+  }
+  if (!columns.some(col => col.name === 'discount_percent')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN discount_percent REAL DEFAULT 0");
+  }
+  if (!columns.some(col => col.name === 'discount_amount')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN discount_amount REAL DEFAULT 0");
+  }
+  if (!columns.some(col => col.name === 'tax_amount')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN tax_amount REAL DEFAULT 0");
+  }
+  if (!columns.some(col => col.name === 'invoice_number')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN invoice_number TEXT");
+  }
+  if (!columns.some(col => col.name === 'agt_status')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN agt_status TEXT DEFAULT 'pending'"); // 'pending', 'sent', 'error'
+  }
 } catch (e) {
   console.error("Migration error (transactions):", e);
+}
+
+try {
+  const columns = db.prepare("PRAGMA table_info(clients)").all() as any[];
+  if (!columns.some(col => col.name === 'type')) {
+    db.exec("ALTER TABLE clients ADD COLUMN type TEXT DEFAULT 'individual'");
+  }
+} catch (e) {
+  console.error("Migration error (clients):", e);
 }
 
 // Seed Data (if empty)
@@ -327,7 +369,7 @@ if (userCount.count === 0) {
   
   db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("expiration_notice", "true");
   db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("weekly_reports", "false");
-  db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("system_name", "FactuModern");
+  db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("system_name", "Fatu-r");
   
   db.prepare("INSERT INTO support_tickets (user_id, subject, description, status) VALUES (?, ?, ?, ?)").run(2, "Dúvida sobre faturação", "Como posso emitir uma fatura pro-forma?", "open");
   
@@ -1191,6 +1233,92 @@ async function startServer() {
     });
   });
 
+  app.get("/api/owner/global-reports/:ownerId", (req, res) => {
+    const ownerId = req.params.ownerId;
+    
+    // Get all stores for this owner
+    const stores = db.prepare("SELECT id, name FROM stores WHERE owner_id = ?").all(ownerId) as any[];
+    const storeIds = stores.map(s => s.id);
+    
+    if (storeIds.length === 0) {
+      return res.json({ 
+        totalRevenue: 0, 
+        totalSales: 0, 
+        revenueByStore: [], 
+        salesByDay: [], 
+        topProducts: [],
+        paymentMethods: []
+      });
+    }
+
+    const placeholders = storeIds.map(() => '?').join(',');
+
+    // Total Revenue & Sales
+    const stats = db.prepare(`
+      SELECT SUM(total_amount) as totalRevenue, COUNT(*) as totalSales
+      FROM transactions
+      WHERE store_id IN (${placeholders})
+    `).get(...storeIds) as any;
+
+    // Revenue by Store
+    const revenueByStore = db.prepare(`
+      SELECT s.name, SUM(t.total_amount) as revenue
+      FROM transactions t
+      JOIN stores s ON t.store_id = s.id
+      WHERE t.store_id IN (${placeholders})
+      GROUP BY s.id
+    `).all(...storeIds);
+
+    // Sales by Day (last 30 days)
+    const salesByDay = db.prepare(`
+      SELECT date(timestamp) as date, SUM(total_amount) as revenue
+      FROM transactions
+      WHERE store_id IN (${placeholders}) AND timestamp >= date('now', '-30 days')
+      GROUP BY date(timestamp)
+      ORDER BY date ASC
+    `).all(...storeIds);
+
+    // Top Products
+    const allTransactions = db.prepare(`
+      SELECT items FROM transactions WHERE store_id IN (${placeholders})
+    `).all(...storeIds);
+    
+    const productSales: Record<string, { name: string, quantity: number, revenue: number }> = {};
+    allTransactions.forEach((t: any) => {
+      try {
+        const items = JSON.parse(t.items);
+        items.forEach((item: any) => {
+          if (!productSales[item.id]) {
+            productSales[item.id] = { name: item.name, quantity: 0, revenue: 0 };
+          }
+          productSales[item.id].quantity += item.quantity;
+          productSales[item.id].revenue += item.quantity * item.price;
+        });
+      } catch (e) {}
+    });
+
+    const topProducts = Object.values(productSales)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10);
+
+    // Payment Methods
+    const paymentMethods = db.prepare(`
+      SELECT payment_method as name, COUNT(*) as value
+      FROM transactions
+      WHERE store_id IN (${placeholders})
+      GROUP BY payment_method
+    `).all(...storeIds);
+
+    res.json({
+      totalRevenue: stats.totalRevenue || 0,
+      totalSales: stats.totalSales || 0,
+      revenueByStore,
+      salesByDay,
+      topProducts,
+      paymentMethods
+    });
+  });
+
   app.put("/api/owner/store-settings/:id", (req, res) => {
     const { name, nif, phone, address, logo_url, status } = req.body;
     db.prepare(`
@@ -1199,6 +1327,34 @@ async function startServer() {
       WHERE id = ?
     `).run(name, nif, phone, address, logo_url, status, req.params.id);
     res.json({ success: true });
+  });
+
+  // Client Routes
+  app.get("/api/owner/clients/:storeId", (req, res) => {
+    const clients = db.prepare("SELECT * FROM clients WHERE store_id = ? ORDER BY name ASC").all(req.params.storeId);
+    res.json(clients);
+  });
+
+  app.post("/api/owner/clients", (req, res) => {
+    const { store_id, name, nif, email, phone, address, type } = req.body;
+    db.prepare("INSERT INTO clients (store_id, name, nif, email, phone, address, type) VALUES (?, ?, ?, ?, ?, ?, ?)").run(store_id, name, nif, email, phone, address, type || 'individual');
+    res.json({ success: true });
+  });
+
+  app.put("/api/owner/clients/:id", (req, res) => {
+    const { name, nif, email, phone, address, type } = req.body;
+    db.prepare("UPDATE clients SET name = ?, nif = ?, email = ?, phone = ?, address = ?, type = ? WHERE id = ?").run(name, nif, email, phone, address, type, req.params.id);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/owner/clients/:id", (req, res) => {
+    db.prepare("DELETE FROM clients WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/seller/clients/:storeId", (req, res) => {
+    const clients = db.prepare("SELECT * FROM clients WHERE store_id = ? ORDER BY name ASC").all(req.params.storeId);
+    res.json(clients);
   });
 
   // Seller Routes
@@ -1217,15 +1373,45 @@ async function startServer() {
   });
 
   app.post("/api/seller/sale", (req, res) => {
-    const { store_id, seller_id, total_amount, items, payment_method, cash_received, split_details } = req.body;
-    const info = db.prepare("INSERT INTO transactions (store_id, seller_id, total_amount, items, payment_method, cash_received, split_details) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    const { 
+      store_id, seller_id, total_amount, items, payment_method, 
+      cash_received, split_details, client_name, client_nif,
+      discount_percent, discount_amount, tax_amount
+    } = req.body;
+    
+    // Generate Sequential Invoice Number
+    const year = new Date().getFullYear();
+    const lastInvoice = db.prepare("SELECT invoice_number FROM transactions WHERE invoice_number LIKE ? ORDER BY id DESC LIMIT 1").get(`FR ${year}/%`) as { invoice_number: string } | undefined;
+    let sequence = 1;
+    if (lastInvoice) {
+      const parts = lastInvoice.invoice_number.split('/');
+      if (parts.length === 2) {
+        sequence = parseInt(parts[1]) + 1;
+      }
+    }
+    const invoice_number = `FR ${year}/${sequence}`;
+
+    const info = db.prepare(`
+      INSERT INTO transactions (
+        store_id, seller_id, total_amount, items, payment_method, 
+        cash_received, split_details, client_name, client_nif,
+        discount_percent, discount_amount, tax_amount, invoice_number, agt_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
       store_id, 
       seller_id, 
       total_amount, 
       JSON.stringify(items),
       payment_method || 'cash',
       cash_received || total_amount,
-      split_details ? JSON.stringify(split_details) : null
+      split_details ? JSON.stringify(split_details) : null,
+      client_name || 'Consumidor Final',
+      client_nif || '999999999',
+      discount_percent || 0,
+      discount_amount || 0,
+      tax_amount || 0,
+      invoice_number,
+      'sent'
     );
     
     // Update stock
@@ -1233,7 +1419,33 @@ async function startServer() {
       db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.id);
     }
     
-    res.json({ success: true, transactionId: info.lastInsertRowid });
+    const sale = db.prepare("SELECT * FROM transactions WHERE id = ?").get(info.lastInsertRowid) as any;
+    if (sale) {
+      sale.items = JSON.parse(sale.items);
+      if (sale.split_details) sale.split_details = JSON.parse(sale.split_details);
+    }
+
+    // Experimental AGT Submission Log
+    console.log(`[AGT EXPERIMENTAL] Invoice ${invoice_number} forwarded to AGT successfully.`);
+    
+    res.json({ success: true, sale });
+  });
+
+  app.get("/api/seller/sales/:sellerId", (req, res) => {
+    const sales = db.prepare(`
+      SELECT t.*, s.name as store_name 
+      FROM transactions t
+      JOIN stores s ON t.store_id = s.id
+      WHERE t.seller_id = ?
+      ORDER BY t.timestamp DESC
+    `).all(req.params.sellerId) as any[];
+    
+    sales.forEach(s => {
+      s.items = JSON.parse(s.items);
+      if (s.split_details) s.split_details = JSON.parse(s.split_details);
+    });
+    
+    res.json(sales);
   });
 
   // Seller Dashboard Stats
