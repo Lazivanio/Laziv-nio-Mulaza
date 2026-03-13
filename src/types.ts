@@ -3,6 +3,7 @@ export type UserRole = 'admin' | 'owner' | 'seller';
 export interface User {
   id: number;
   email: string;
+  username?: string;
   name: string;
   role: UserRole;
   store_id?: number | null;

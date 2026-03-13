@@ -14,16 +14,43 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE,
+    username TEXT UNIQUE,
     password TEXT,
     name TEXT,
     role TEXT,
     phone TEXT,
     nif TEXT,
     address TEXT,
+    company_name TEXT,
     status TEXT DEFAULT 'active', -- 'active', 'suspended'
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+`);
 
+// Migration: Add missing columns to users
+try {
+  const columns = db.prepare("PRAGMA table_info(users)").all() as any[];
+  console.log("Current users columns:", columns.map(c => c.name));
+  if (!columns.some(col => col.name === 'phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT");
+  if (!columns.some(col => col.name === 'nif')) db.exec("ALTER TABLE users ADD COLUMN nif TEXT");
+  if (!columns.some(col => col.name === 'address')) db.exec("ALTER TABLE users ADD COLUMN address TEXT");
+  if (!columns.some(col => col.name === 'company_name')) db.exec("ALTER TABLE users ADD COLUMN company_name TEXT");
+  if (!columns.some(col => col.name === 'status')) db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
+  if (!columns.some(col => col.name === 'username')) {
+    console.log("Adding username column...");
+    db.exec("ALTER TABLE users ADD COLUMN username TEXT");
+    db.exec("UPDATE users SET username = email WHERE username IS NULL");
+    console.log("Username column added and populated.");
+  }
+  if (!columns.some(col => col.name === 'created_at')) {
+    db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME");
+    db.exec("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
+  }
+} catch (e) {
+  console.error("Migration error (users):", e);
+}
+
+db.exec(`
   CREATE TABLE IF NOT EXISTS licenses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -115,22 +142,6 @@ db.exec(`
     FOREIGN KEY(store_id) REFERENCES stores(id)
   );
 `);
-
-  // Migration: Add missing columns to users
-  try {
-    const columns = db.prepare("PRAGMA table_info(users)").all() as any[];
-    if (!columns.some(col => col.name === 'phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT");
-    if (!columns.some(col => col.name === 'nif')) db.exec("ALTER TABLE users ADD COLUMN nif TEXT");
-    if (!columns.some(col => col.name === 'address')) db.exec("ALTER TABLE users ADD COLUMN address TEXT");
-    if (!columns.some(col => col.name === 'company_name')) db.exec("ALTER TABLE users ADD COLUMN company_name TEXT");
-    if (!columns.some(col => col.name === 'status')) db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
-    if (!columns.some(col => col.name === 'created_at')) {
-      db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME");
-      db.exec("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
-    }
-  } catch (e) {
-    console.error("Migration error (users):", e);
-  }
 
 try {
   const columns = db.prepare("PRAGMA table_info(support_tickets)").all() as any[];
@@ -369,7 +380,7 @@ if (userCount.count === 0) {
   
   db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("expiration_notice", "true");
   db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("weekly_reports", "false");
-  db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("system_name", "Fatu-r");
+  db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("system_name", "Fatu-R");
   
   db.prepare("INSERT INTO support_tickets (user_id, subject, description, status) VALUES (?, ?, ?, ?)").run(2, "Dúvida sobre faturação", "Como posso emitir uma fatura pro-forma?", "open");
   
@@ -399,18 +410,116 @@ async function startServer() {
   // Auth (Mock for now)
   app.post("/api/login", (req, res) => {
     const { email, password } = req.body;
-    const user = db.prepare("SELECT * FROM users WHERE email = ? AND password = ?").get(email, password) as any;
+    const identifier = email?.trim();
+    const pass = password;
+    
+    // Try to find user by email or username
+    const user = db.prepare("SELECT * FROM users WHERE (email = ? OR username = ?) AND password = ?").get(identifier, identifier, pass) as any;
+    
     if (user) {
+      // Check if client is suspended
+      if (user.role === 'owner' && user.status === 'suspended') {
+        return res.status(403).json({ error: "A sua conta está suspensa. Contacte o administrador." });
+      }
+
       let storeId = null;
       if (user.role === 'seller') {
         const staff = db.prepare("SELECT store_id FROM staff WHERE user_id = ?").get(user.id) as any;
-        storeId = staff?.store_id;
+        if (staff) {
+          storeId = staff.store_id;
+          // Check if the store owner is suspended
+          const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(storeId) as any;
+          if (store) {
+            const owner = db.prepare("SELECT status FROM users WHERE id = ?").get(store.owner_id) as any;
+            if (owner && owner.status === 'suspended') {
+              return res.status(403).json({ error: "O acesso à loja está suspenso. Contacte o proprietário." });
+            }
+          }
+        }
       }
-      res.json({ id: user.id, email: user.email, name: user.name, role: user.role, store_id: storeId });
+      
+      res.json({ id: user.id, email: user.email, username: user.username, name: user.name, role: user.role, store_id: storeId });
     } else {
       res.status(401).json({ error: "Credenciais inválidas" });
     }
   });
+
+  // Middleware to check if client is suspended
+  const checkSuspended = (req: any, res: any, next: any) => {
+    // Skip check for admin routes or login
+    if (req.path.startsWith('/api/admin') || req.path === '/api/login') {
+      return next();
+    }
+
+    const userId = req.headers['x-user-id'] || req.query.userId || req.body.user_id || req.body.owner_id || req.body.seller_id;
+    const storeId = req.headers['x-store-id'] || req.query.storeId || req.body.store_id;
+
+    let ownerId = null;
+
+    // Try to extract ID from path if not found in headers/body
+    let idFromPath = null;
+    const pathParts = req.path.split('/');
+    const lastPart = pathParts[pathParts.length - 1];
+    if (lastPart && !isNaN(parseInt(lastPart))) {
+      idFromPath = parseInt(lastPart);
+    }
+
+    const effectiveUserId = userId || (req.path.includes('user') || req.path.includes('owner') || req.path.includes('seller') ? idFromPath : null);
+    const effectiveStoreId = storeId || (req.path.includes('store') ? idFromPath : null);
+
+    if (effectiveUserId) {
+      const user = db.prepare("SELECT id, role, status FROM users WHERE id = ?").get(effectiveUserId) as any;
+      if (user) {
+        if (user.role === 'owner') {
+          ownerId = user.id;
+        } else if (user.role === 'seller') {
+          const staff = db.prepare("SELECT store_id FROM staff WHERE user_id = ?").get(user.id) as any;
+          if (staff) {
+            const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(staff.store_id) as any;
+            if (store) ownerId = store.owner_id;
+          }
+        }
+      }
+    } 
+    
+    if (!ownerId && effectiveStoreId) {
+      const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(effectiveStoreId) as any;
+      if (store) ownerId = store.owner_id;
+    }
+
+    if (ownerId) {
+      const owner = db.prepare("SELECT status FROM users WHERE id = ?").get(ownerId) as any;
+      if (owner && owner.status === 'suspended') {
+        return res.status(403).json({ error: "Acesso suspenso. Contacte o administrador." });
+      }
+    }
+
+    next();
+  };
+
+  app.get("/api/user-status/:id", (req, res) => {
+    const user = db.prepare("SELECT id, role, status FROM users WHERE id = ?").get(req.params.id) as any;
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    let ownerId = user.id;
+    if (user.role === 'seller') {
+      const staff = db.prepare("SELECT store_id FROM staff WHERE user_id = ?").get(user.id) as any;
+      if (staff) {
+        const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(staff.store_id) as any;
+        if (store) ownerId = store.owner_id;
+      }
+    }
+
+    const owner = db.prepare("SELECT status FROM users WHERE id = ?").get(ownerId) as any;
+    if (owner && owner.status === 'suspended') {
+      return res.status(403).json({ error: "Acesso suspenso" });
+    }
+
+    res.json({ status: user.status });
+  });
+
+  app.use("/api/owner", checkSuspended);
+  app.use("/api/seller", checkSuspended);
 
   // Admin Routes
   app.get("/api/admin/dashboard", (req, res) => {
@@ -846,13 +955,20 @@ async function startServer() {
   });
 
   app.put("/api/profile/:id", (req, res) => {
-    const { name, email, phone, nif, address, company_name, password } = req.body;
-    if (password) {
-      db.prepare("UPDATE users SET name = ?, email = ?, phone = ?, nif = ?, address = ?, company_name = ?, password = ? WHERE id = ?").run(name, email, phone, nif, address, company_name, password, req.params.id);
-    } else {
-      db.prepare("UPDATE users SET name = ?, email = ?, phone = ?, nif = ?, address = ?, company_name = ? WHERE id = ?").run(name, email, phone, nif, address, company_name, req.params.id);
+    const { name, email, username, phone, nif, address, company_name, password } = req.body;
+    const trimmedUsername = username?.trim();
+    const trimmedEmail = email?.trim();
+    
+    try {
+      if (password) {
+        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, phone = ?, nif = ?, address = ?, company_name = ?, password = ? WHERE id = ?").run(name, trimmedEmail || null, trimmedUsername || null, phone, nif, address, company_name, password, req.params.id);
+      } else {
+        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, phone = ?, nif = ?, address = ?, company_name = ? WHERE id = ?").run(name, trimmedEmail || null, trimmedUsername || null, phone, nif, address, company_name, req.params.id);
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
     }
-    res.json({ success: true });
   });
 
   // Owner Routes
@@ -961,7 +1077,7 @@ async function startServer() {
 
   app.get("/api/owner/staff/:storeId", (req, res) => {
     const staff = db.prepare(`
-      SELECT s.*, u.name, u.email 
+      SELECT s.*, u.name, u.email, u.username 
       FROM staff s 
       JOIN users u ON s.user_id = u.id 
       WHERE s.store_id = ?
@@ -969,13 +1085,36 @@ async function startServer() {
     res.json(staff);
   });
 
+  app.post("/api/owner/staff", (req, res) => {
+    const { store_id, name, email, username, password, salary, shift_info } = req.body;
+    const trimmedUsername = username?.trim();
+    const trimmedEmail = email?.trim();
+    
+    try {
+      db.transaction(() => {
+        const userResult = db.prepare("INSERT INTO users (email, username, password, name, role) VALUES (?, ?, ?, ?, 'seller')").run(trimmedEmail || null, trimmedUsername || null, password, name);
+        db.prepare("INSERT INTO staff (store_id, user_id, salary, shift_info) VALUES (?, ?, ?, ?)").run(store_id, userResult.lastInsertRowid, salary, shift_info);
+      })();
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   app.put("/api/owner/staff/:staffId", (req, res) => {
-    const { salary, shift_info, name, email } = req.body;
+    const { salary, shift_info, name, email, username, password } = req.body;
+    const trimmedUsername = username?.trim();
+    const trimmedEmail = email?.trim();
+    
     try {
       db.transaction(() => {
         const staff = db.prepare("SELECT user_id FROM staff WHERE id = ?").get(req.params.staffId) as any;
         if (staff) {
-          db.prepare("UPDATE users SET name = ?, email = ? WHERE id = ?").run(name, email, staff.user_id);
+          if (password) {
+            db.prepare("UPDATE users SET name = ?, email = ?, username = ?, password = ? WHERE id = ?").run(name, trimmedEmail || null, trimmedUsername || null, password, staff.user_id);
+          } else {
+            db.prepare("UPDATE users SET name = ?, email = ?, username = ? WHERE id = ?").run(name, trimmedEmail || null, trimmedUsername || null, staff.user_id);
+          }
           db.prepare("UPDATE staff SET salary = ?, shift_info = ? WHERE id = ?").run(salary, shift_info, req.params.staffId);
         }
       })();
@@ -1378,6 +1517,12 @@ async function startServer() {
       cash_received, split_details, client_name, client_nif,
       discount_percent, discount_amount, tax_amount
     } = req.body;
+
+    // Check for active cashier session
+    const activeSession = db.prepare("SELECT id FROM cashier_sessions WHERE store_id = ? AND status = 'open'").get(store_id);
+    if (!activeSession) {
+      return res.status(403).json({ error: "O caixa deve estar aberto para realizar vendas." });
+    }
     
     // Generate Sequential Invoice Number
     const year = new Date().getFullYear();
@@ -1482,38 +1627,45 @@ async function startServer() {
 
   app.post("/api/seller/cash-movements", (req, res) => {
     const { store_id, seller_id, type, amount, description } = req.body;
+    
+    // Check for active cashier session
+    const activeSession = db.prepare("SELECT id FROM cashier_sessions WHERE store_id = ? AND status = 'open'").get(store_id);
+    if (!activeSession) {
+      return res.status(403).json({ error: "O caixa deve estar aberto para registar movimentos." });
+    }
+
     db.prepare("INSERT INTO cash_movements (store_id, seller_id, type, amount, description) VALUES (?, ?, ?, ?, ?)").run(store_id, seller_id, type, amount, description);
     res.json({ success: true });
   });
 
   // Cashier Sessions
-  app.get("/api/seller/active-session/:sellerId", (req, res) => {
+  app.get("/api/seller/active-session/:storeId", (req, res) => {
     const session = db.prepare(`
       SELECT * FROM cashier_sessions 
-      WHERE seller_id = ? AND status = 'open'
+      WHERE store_id = ? AND status = 'open'
       ORDER BY opening_time DESC LIMIT 1
-    `).get(req.params.sellerId) as any;
+    `).get(req.params.storeId) as any;
 
     if (!session) return res.json(null);
 
-    // Calculate current totals for this session
+    // Calculate current totals for this session across the store
     const sales = db.prepare(`
       SELECT SUM(total_amount) as total 
       FROM transactions 
-      WHERE seller_id = ? AND timestamp >= ?
-    `).get(session.seller_id, session.opening_time) as any;
+      WHERE store_id = ? AND timestamp >= ?
+    `).get(session.store_id, session.opening_time) as any;
 
     const cashIn = db.prepare(`
       SELECT SUM(amount) as total 
       FROM cash_movements 
-      WHERE seller_id = ? AND type = 'in' AND timestamp >= ?
-    `).get(session.seller_id, session.opening_time) as any;
+      WHERE store_id = ? AND type = 'in' AND timestamp >= ?
+    `).get(session.store_id, session.opening_time) as any;
 
     const cashOut = db.prepare(`
       SELECT SUM(amount) as total 
       FROM cash_movements 
-      WHERE seller_id = ? AND type = 'out' AND timestamp >= ?
-    `).get(session.seller_id, session.opening_time) as any;
+      WHERE store_id = ? AND type = 'out' AND timestamp >= ?
+    `).get(session.store_id, session.opening_time) as any;
 
     res.json({
       ...session,

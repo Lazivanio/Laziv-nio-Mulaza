@@ -174,7 +174,7 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
 // --- Admin Panel ---
 
 const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
-  const [email, setEmail] = useState('owner@factu.com');
+  const [identifier, setIdentifier] = useState('owner@factu.com');
   const [password, setPassword] = useState('owner');
   const [error, setError] = useState('');
 
@@ -184,13 +184,14 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email: identifier, password })
       });
       if (res.ok) {
         const user = await res.json();
         onLogin(user);
       } else {
-        setError('Credenciais inválidas');
+        const data = await res.json();
+        setError(data.error || 'Credenciais inválidas');
       }
     } catch (err) {
       setError('Erro ao conectar ao servidor');
@@ -208,20 +209,20 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-black text-white rounded-2xl mb-4">
             <Zap size={32} />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">Fatu-r</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Fatu-R</h1>
           <p className="text-zinc-500 mt-2">Sistema de Faturação Eletrônica</p>
         </div>
 
         <Card className="p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">Email</label>
+              <label className="block text-sm font-medium text-zinc-700 mb-1">Utilizador ou Email</label>
               <input 
-                type="email" 
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                type="text" 
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 className="w-full px-4 py-2 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-black outline-none transition-all"
-                placeholder="exemplo@factu.com"
+                placeholder="Nome de utilizador ou email"
                 required
               />
             </div>
@@ -245,7 +246,7 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
             </button>
           </form>
           <div className="mt-6 pt-6 border-t border-zinc-100 text-center">
-            <p className="text-xs text-zinc-400">Dica: Use admin@factu.com / admin, owner@factu.com / owner ou seller@factu.com / seller</p>
+            <p className="text-xs text-zinc-400">Dica: Use o seu nome de utilizador ou email e a palavra-passe definida pelo administrador.</p>
           </div>
         </Card>
       </motion.div>
@@ -276,7 +277,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             <div className="w-10 h-10 bg-black text-white rounded-xl flex items-center justify-center">
               <Zap size={20} />
             </div>
-            <span className="text-xl font-bold tracking-tight">Fatu-r</span>
+            <span className="text-xl font-bold tracking-tight">Fatu-R</span>
           </div>
 
           <nav className="flex-1 space-y-1">
@@ -469,7 +470,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [systemSettings, setSystemSettings] = useState<any>({
     expiration_notice: 'true',
     weekly_reports: 'false',
-    system_name: 'Fatu-r'
+    system_name: 'Fatu-R'
   });
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
@@ -2399,7 +2400,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                         )}
                       >
                         {clientDetails.client.status === 'active' ? <ShieldAlert size={16} /> : <ShieldCheck size={16} />}
-                        {clientDetails.client.status === 'active' ? 'Suspender Cliente' : 'Reativar Cliente'}
+                        {clientDetails.client.status === 'active' ? 'Desativar Cliente' : 'Ativar Cliente'}
                       </button>
                     </div>
                   </div>
@@ -3303,7 +3304,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isProformaModalOpen, setIsProformaModalOpen] = useState(false);
   const [productForm, setProductForm] = useState({ name: '', price: '', stock: '', category: '', image_url: '', min_stock: '5' });
-  const [staffForm, setStaffForm] = useState({ name: '', email: '', password: '', salary: '', shift_info: '' });
+  const [staffForm, setStaffForm] = useState({ name: '', email: '', username: '', password: '', salary: '', shift_info: '' });
   const [promoForm, setPromoForm] = useState({ name: '', start_date: '', end_date: '', discount_percent: '', product_ids: [] as number[] });
   const [stockForm, setStockForm] = useState({ 
     product_id: '', 
@@ -3421,7 +3422,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
     if (res.ok) {
       setIsStaffModalOpen(false);
       setEditingStaff(null);
-      setStaffForm({ name: '', email: '', password: '', salary: '', shift_info: '' });
+      setStaffForm({ name: '', email: '', username: '', password: '', salary: '', shift_info: '' });
       fetchData();
     }
   };
@@ -3437,7 +3438,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
     setEditingStaff(member);
     setStaffForm({
       name: member.name,
-      email: member.email,
+      email: member.email || '',
+      username: member.username || '',
       password: '', // Don't show password
       salary: member.salary.toString(),
       shift_info: member.shift_info
@@ -3946,7 +3948,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                     <button 
                       onClick={() => {
                         setEditingStaff(null);
-                        setStaffForm({ name: '', email: '', password: '', salary: '', shift_info: '' });
+                        setStaffForm({ name: '', email: '', username: '', password: '', salary: '', shift_info: '' });
                         setIsStaffModalOpen(true);
                       }}
                       className="bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
@@ -4503,7 +4505,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             {msg.message}
                           </div>
                           <span className="text-[10px] text-zinc-400 mt-1 px-1">
-                            {msg.is_admin ? 'Suporte Fatu-r' : 'Você'} • {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {msg.is_admin ? 'Suporte Fatu-R' : 'Você'} • {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
                       ))}
@@ -4848,25 +4850,32 @@ const StoreAdmin = ({ user }: { user: User }) => {
             />
           </div>
           <div>
-            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email</label>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email (Opcional)</label>
             <input 
-              type="email" required
+              type="email"
               value={staffForm.email}
               onChange={e => setStaffForm({...staffForm, email: e.target.value})}
               className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
             />
           </div>
-          {!editingStaff && (
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Senha Inicial</label>
-              <input 
-                type="password" required
-                value={staffForm.password}
-                onChange={e => setStaffForm({...staffForm, password: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-              />
-            </div>
-          )}
+          <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome de Utilizador (Para Login)</label>
+            <input 
+              type="text" required
+              value={staffForm.username}
+              onChange={e => setStaffForm({...staffForm, username: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Palavra-passe {editingStaff && "(Deixe em branco para manter)"}</label>
+            <input 
+              type="password"
+              value={staffForm.password}
+              onChange={e => setStaffForm({...staffForm, password: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+            />
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Salário (Kz)</label>
@@ -5673,7 +5682,7 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
         <div className="mt-6 text-center space-y-2">
           <p className="text-[8px] text-zinc-400 uppercase tracking-widest font-bold">Obrigado pela preferência!</p>
           <div className="pt-2 border-t border-zinc-50">
-            <p className="text-[7px] text-zinc-400 uppercase">Processado por Fatu-r (Experimental AGT)</p>
+            <p className="text-[7px] text-zinc-400 uppercase">Processado por Fatu-R (Experimental AGT)</p>
             <p className="text-[7px] text-emerald-600 font-bold uppercase">Estado AGT: {sale.agt_status === 'sent' ? 'Submetido com Sucesso' : 'Pendente'}</p>
           </div>
         </div>
@@ -5740,6 +5749,7 @@ const SellerPOS = ({ user }: { user: User }) => {
   const [splitAmounts, setSplitAmounts] = useState({ cash: '', card: '' });
   const [cashReceived, setCashReceived] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [hasActiveSession, setHasActiveSession] = useState<boolean | null>(null);
 
   useEffect(() => {
     const storeId = user.store_id || 1;
@@ -5749,6 +5759,11 @@ const SellerPOS = ({ user }: { user: User }) => {
       const currentStore = stores.find((s: any) => s.id === storeId);
       setStoreInfo(currentStore);
     });
+
+    // Check for active session
+    fetch(`/api/seller/active-session/${storeId}`)
+      .then(res => res.json())
+      .then(data => setHasActiveSession(!!data));
   }, [user.store_id]);
 
   const addToCart = (product: Product) => {
@@ -5789,6 +5804,10 @@ const SellerPOS = ({ user }: { user: User }) => {
 
   const handleCheckout = () => {
     if (cart.length === 0) return;
+    if (hasActiveSession === false) {
+      alert('O caixa deve estar aberto para realizar vendas. Vá para a secção "Fechar Caixa" para abrir o caixa.');
+      return;
+    }
     setIsPaymentModalOpen(true);
   };
 
@@ -5884,6 +5903,11 @@ const SellerPOS = ({ user }: { user: User }) => {
         setDiscount(0);
         setClient({ name: 'Consumidor Final', nif: '999999999' });
         fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
+      } else if (res.status === 403) {
+        const data = await res.json();
+        alert(data.error || 'O caixa deve estar aberto para realizar vendas.');
+        setHasActiveSession(false);
+        setIsPaymentModalOpen(false);
       }
     } catch (error) {
       console.error('Error finalizing sale:', error);
@@ -5955,6 +5979,12 @@ const SellerPOS = ({ user }: { user: User }) => {
           </div>
 
           <div className="flex flex-col gap-4">
+            {hasActiveSession === false && (
+              <div className="bg-rose-50 border border-rose-200 p-4 rounded-2xl flex items-center gap-3 text-rose-600 mb-2">
+                <ShieldAlert size={20} />
+                <p className="text-sm font-bold">O caixa está fechado. Abra o caixa para poder realizar vendas.</p>
+              </div>
+            )}
             <div className="flex items-center gap-3">
               <div className="relative flex-1">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={20} />
@@ -6554,15 +6584,32 @@ const SellerHistory = ({ user }: { user: User }) => {
 
 const SellerDashboard = ({ user }: { user: User }) => {
   const [stats, setStats] = useState({ today: 0, last7Days: 0 });
+  const [hasActiveSession, setHasActiveSession] = useState<boolean | null>(null);
 
   useEffect(() => {
+    const storeId = user.store_id || 1;
     fetch(`/api/seller/dashboard-stats/${user.id}`)
       .then(res => res.json())
       .then(setStats);
+    
+    fetch(`/api/seller/active-session/${storeId}`)
+      .then(res => res.json())
+      .then(data => setHasActiveSession(!!data));
   }, [user.id]);
 
   return (
     <div className="space-y-6">
+      {hasActiveSession === false && (
+        <div className="bg-rose-50 border border-rose-200 p-4 rounded-2xl flex items-center justify-between text-rose-600">
+          <div className="flex items-center gap-3">
+            <ShieldAlert size={20} />
+            <p className="text-sm font-bold">O caixa está fechado. Abra o caixa para poder realizar vendas.</p>
+          </div>
+          <Link to="/seller/close" className="bg-rose-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-rose-700 transition-all">
+            Abrir Caixa
+          </Link>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Painel e Insights</h2>
@@ -6625,6 +6672,7 @@ const SellerCashMovements = ({ user }: { user: User }) => {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState<'in' | 'out'>('in');
+  const [hasActiveSession, setHasActiveSession] = useState<boolean | null>(null);
 
   const fetchMovements = () => {
     fetch(`/api/seller/cash-movements/${user.id}`)
@@ -6633,16 +6681,25 @@ const SellerCashMovements = ({ user }: { user: User }) => {
   };
 
   useEffect(() => {
+    const storeId = user.store_id || 1;
     fetchMovements();
+    fetch(`/api/seller/active-session/${storeId}`)
+      .then(res => res.json())
+      .then(data => setHasActiveSession(!!data));
   }, [user.id]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (hasActiveSession === false) {
+      alert('O caixa deve estar aberto para registar movimentos.');
+      return;
+    }
+    const storeId = user.store_id || 1;
     const res = await fetch('/api/seller/cash-movements', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        store_id: 1,
+        store_id: storeId,
         seller_id: user.id,
         type,
         amount: parseFloat(amount),
@@ -6788,7 +6845,8 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
 
   const fetchSession = () => {
     setLoading(true);
-    fetch(`/api/seller/active-session/${user.id}`)
+    const storeId = user.store_id || 1;
+    fetch(`/api/seller/active-session/${storeId}`)
       .then(res => res.json())
       .then(data => {
         setSession(data);
@@ -6798,15 +6856,16 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
 
   useEffect(() => {
     fetchSession();
-  }, [user.id]);
+  }, [user.store_id]);
 
   const handleOpenSession = async (e: FormEvent) => {
     e.preventDefault();
+    const storeId = user.store_id || 1;
     const res = await fetch('/api/seller/open-session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        store_id: 1,
+        store_id: storeId,
         seller_id: user.id,
         opening_amount: parseFloat(openingAmount)
       })
@@ -6953,10 +7012,11 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
   );
 };
 
-const SellerSettings = ({ user }: { user: User }) => {
+const SellerSettings = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void }) => {
   const [formData, setFormData] = useState({
     name: user.name || '',
     email: user.email || '',
+    username: user.username || '',
     password: '',
     confirmPassword: ''
   });
@@ -6971,12 +7031,15 @@ const SellerSettings = ({ user }: { user: User }) => {
     }
     setIsSaving(true);
     try {
+      const dataToSave = { ...formData, username: formData.username.trim() };
       const res = await fetch(`/api/profile/${user.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(dataToSave)
       });
       if (res.ok) {
+        const updatedUser = { ...user, username: dataToSave.username };
+        onUpdate(updatedUser);
         alert("Perfil actualizado com sucesso!");
         setIsPasswordModalOpen(false);
       }
@@ -7014,7 +7077,7 @@ const SellerSettings = ({ user }: { user: User }) => {
               <Info size={24} />
             </div>
             <div className="flex-1">
-              <h4 className="font-bold text-zinc-800">Sobre o Fatu-r</h4>
+              <h4 className="font-bold text-zinc-800">Sobre o Fatu-R</h4>
               <p className="text-xs text-zinc-500">Versão 1.0.4 - Sistema de Faturação Inteligente.</p>
             </div>
             <ChevronRight size={20} className="text-zinc-300" />
@@ -7037,17 +7100,27 @@ const SellerSettings = ({ user }: { user: User }) => {
       <Modal 
         isOpen={isPasswordModalOpen} 
         onClose={() => setIsPasswordModalOpen(false)} 
-        title="Alterar Palavra-passe"
+        title="Configurações da Conta"
       >
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nova Palavra-passe</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nome de Utilizador</label>
+              <input 
+                type="text" 
+                required
+                value={formData.username}
+                onChange={e => setFormData({...formData, username: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nova Palavra-passe (Opcional)</label>
               <input 
                 type="password" 
-                required
                 value={formData.password}
                 onChange={e => setFormData({...formData, password: e.target.value})}
+                placeholder="Deixe em branco para manter"
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
               />
             </div>
@@ -7055,7 +7128,6 @@ const SellerSettings = ({ user }: { user: User }) => {
               <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Confirmar Palavra-passe</label>
               <input 
                 type="password" 
-                required
                 value={formData.confirmPassword}
                 onChange={e => setFormData({...formData, confirmPassword: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
@@ -7095,6 +7167,28 @@ export default function App() {
     localStorage.removeItem('user');
   };
 
+  useEffect(() => {
+    if (user && user.role !== 'admin') {
+      const checkStatus = async () => {
+        try {
+          const res = await fetch(`/api/user-status/${user.id}`);
+          if (res.status === 403) {
+            handleLogout();
+            // Using a custom alert would be better but for now let's use a simple way
+            // since we are in an iframe, alert might not work well, but it's a start.
+            // Actually, the user will just see the login screen again.
+          }
+        } catch (e) {
+          console.error("Error checking status", e);
+        }
+      };
+      
+      checkStatus();
+      const interval = setInterval(checkStatus, 60000); // Check every minute
+      return () => clearInterval(interval);
+    }
+  }, [user]);
+
   if (!user) {
     return <Login onLogin={handleLogin} />;
   }
@@ -7127,7 +7221,7 @@ export default function App() {
                 <Route path="/seller/movements" element={<SellerCashMovements user={user} />} />
                 <Route path="/seller/close" element={<SellerCloseCashier user={user} />} />
                 <Route path="/seller/history" element={<SellerHistory user={user} />} />
-                <Route path="/seller/settings" element={<SellerSettings user={user} />} />
+                <Route path="/seller/settings" element={<SellerSettings user={user} onUpdate={handleLogin} />} />
                 <Route path="*" element={<Navigate to="/seller" replace />} />
               </>
             )}
