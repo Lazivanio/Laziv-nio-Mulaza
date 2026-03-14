@@ -171,6 +171,52 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
   </AnimatePresence>
 );
 
+const ConfirmModal = ({ 
+  isOpen, 
+  onClose, 
+  onConfirm, 
+  title, 
+  message,
+  confirmText = "Confirmar",
+  cancelText = "Cancelar",
+  variant = "danger"
+}: { 
+  isOpen: boolean, 
+  onClose: () => void, 
+  onConfirm: () => void, 
+  title: string, 
+  message: string,
+  confirmText?: string,
+  cancelText?: string,
+  variant?: "danger" | "primary"
+}) => (
+  <Modal isOpen={isOpen} onClose={onClose} title={title}>
+    <div className="space-y-6">
+      <p className="text-zinc-600">{message}</p>
+      <div className="flex justify-end gap-3">
+        <button 
+          onClick={onClose}
+          className="px-4 py-2 text-sm font-bold text-zinc-500 hover:bg-zinc-100 rounded-xl transition-all"
+        >
+          {cancelText}
+        </button>
+        <button 
+          onClick={() => {
+            onConfirm();
+            onClose();
+          }}
+          className={cn(
+            "px-6 py-2 text-sm font-bold text-white rounded-xl transition-all shadow-lg",
+            variant === "danger" ? "bg-rose-600 hover:bg-rose-700 shadow-rose-200" : "bg-black hover:bg-zinc-800 shadow-zinc-200"
+          )}
+        >
+          {confirmText}
+        </button>
+      </div>
+    </div>
+  </Modal>
+);
+
 // --- Admin Panel ---
 
 const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
@@ -445,6 +491,19 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [filterPlan, setFilterPlan] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
 
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    variant?: "danger" | "primary";
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+
   const [licenseSearchQuery, setLicenseSearchQuery] = useState('');
   const [licenseFilterStatus, setLicenseFilterStatus] = useState('all');
   const [licenseFilterPlan, setLicenseFilterPlan] = useState('all');
@@ -589,6 +648,31 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
     }
   };
 
+  const handleDeleteClient = async (clientId: number) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Eliminar Cliente",
+      message: "Tem certeza que deseja eliminar este cliente? Esta acção não pode ser desfeita.",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/admin/clients/${clientId}`, {
+            method: 'DELETE'
+          });
+          if (!res.ok) throw new Error("Failed to delete client");
+          fetchData();
+          if (selectedClient?.id === clientId) {
+            setSelectedClient(null);
+            setIsClientDetailsOpen(false);
+          }
+        } catch (e) {
+          console.error(e);
+          alert("Erro ao eliminar cliente.");
+        }
+      }
+    });
+  };
+
   const handleManageLicense = async (e: FormEvent) => {
     e.preventDefault();
     const userId = licenseFormData.user_id || selectedClient?.id;
@@ -602,6 +686,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
     }
 
     try {
+      const selectedPlan = plans.find(p => p.name === licenseFormData.plan_type);
       const expiry = new Date();
       expiry.setMonth(expiry.getMonth() + Number(licenseFormData.duration_months));
       
@@ -614,7 +699,10 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
           plan_type: licenseFormData.plan_type,
           start_date: new Date().toISOString().split('T')[0],
           expiry_date: expiry.toISOString().split('T')[0],
-          features: { max_stores: 5, max_products: 1000 } // Default for now
+          features: { 
+            max_stores: selectedPlan?.max_stores || 1, 
+            max_products: selectedPlan?.max_products || 100 
+          }
         })
       });
       if (!res.ok) throw new Error("Failed to manage license");
@@ -762,14 +850,21 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   };
 
   const handleDeletePlan = async (planId: number) => {
-    if (!confirm("Tem certeza que deseja excluir este plano?")) return;
-    try {
-      const res = await fetch(`/api/admin/plans/${planId}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error("Failed to delete plan");
-      fetchData();
-    } catch (e) {
-      console.error(e);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: "Excluir Plano",
+      message: "Tem certeza que deseja excluir este plano?",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/admin/plans/${planId}`, { method: 'DELETE' });
+          if (!res.ok) throw new Error("Failed to delete plan");
+          fetchData();
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    });
   };
 
   const handleUpdateSetting = async (key: string, value: string) => {
@@ -1361,6 +1456,12 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                               >
                                 {client.status === 'active' ? <ShieldAlert size={16} /> : <ShieldCheck size={16} />}
                               </button>
+                              <button 
+                                onClick={() => handleDeleteClient(client.id)}
+                                className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-rose-600 transition-all"
+                              >
+                                <Trash2 size={16} />
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -1632,14 +1733,14 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
 
                       {ticketMessages.map((msg) => (
                         <div key={msg.id} className={cn("flex gap-4", msg.is_admin ? "flex-row-reverse" : "")}>
-                          <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center shrink-0", msg.is_admin ? "bg-black text-white" : "bg-zinc-200")}>
+                          <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center shrink-0", msg.is_admin ? "bg-black text-white" : "bg-orange-100 text-orange-600")}>
                             {msg.is_admin ? <ShieldCheck size={16} /> : <UserIcon size={16} />}
                           </div>
                           <div className={cn(
                             "max-w-[80%] p-4 rounded-2xl shadow-sm border",
                             msg.is_admin 
                               ? "bg-black text-white border-black rounded-tr-none" 
-                              : "bg-white text-zinc-800 border-zinc-100 rounded-tl-none"
+                              : "bg-orange-500 text-white border-orange-500 rounded-tl-none"
                           )}>
                             <p className="text-sm leading-relaxed">{msg.message}</p>
                             <p className={cn("text-[8px] mt-2 font-bold uppercase tracking-widest opacity-50", msg.is_admin ? "text-right" : "")}>
@@ -2247,9 +2348,18 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">{clientDetails.client.name}</p>
                   </div>
                 </div>
-                <button onClick={() => setIsClientDetailsOpen(false)} className="p-2 hover:bg-zinc-200 rounded-full transition-colors">
-                  <X size={20} />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => handleDeleteClient(clientDetails.client.id)}
+                    className="flex items-center gap-2 px-4 py-2 bg-rose-50 text-rose-600 rounded-xl text-xs font-bold hover:bg-rose-100 transition-all"
+                  >
+                    <Trash2 size={16} />
+                    Eliminar Cliente
+                  </button>
+                  <button onClick={() => setIsClientDetailsOpen(false)} className="p-2 hover:bg-zinc-200 rounded-full transition-colors">
+                    <X size={20} />
+                  </button>
+                </div>
               </div>
 
               <div className="flex-1 overflow-y-auto p-8">
@@ -2616,7 +2726,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   >
                     <option value="">Selecione um plano</option>
                     {plans.map((plan: any) => (
-                      <option key={plan.id} value={plan.type}>{plan.name} (Kz {plan.price.toLocaleString()}/mês)</option>
+                      <option key={plan.id} value={plan.name}>{plan.name} (Kz {plan.price.toLocaleString()}/mês)</option>
                     ))}
                   </select>
                 </div>
@@ -2716,6 +2826,15 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
           </div>
         )}
       </AnimatePresence>
+
+      <ConfirmModal 
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        variant={confirmModal.variant}
+      />
     </div>
   );
 };
@@ -2785,7 +2904,7 @@ const OwnerOverview = ({ user }: { user: User }) => {
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-zinc-100 rounded-lg flex items-center justify-center text-zinc-600">
                     {store.logo_url ? (
-                      <img src={store.logo_url} alt="" className="w-full h-full object-cover rounded-lg" referrerPolicy="no-referrer" />
+                      <img src={store.logo_url || undefined} alt="" className="w-full h-full object-cover rounded-lg" referrerPolicy="no-referrer" />
                     ) : (
                       <Store size={20} />
                     )}
@@ -2863,6 +2982,9 @@ const MyStores = ({ user }: { user: User }) => {
       setEditingStore(null);
       setFormData({ name: '', address: '', phone: '', nif: '', logo_url: '', status: 'active' });
       fetchStores();
+    } else {
+      const data = await res.json();
+      alert(data.error || "Erro ao processar pedido");
     }
   };
 
@@ -2906,7 +3028,7 @@ const MyStores = ({ user }: { user: User }) => {
               <div className="flex justify-between items-start mb-6">
                 <div className="w-16 h-16 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-400 group-hover:bg-black group-hover:text-white transition-colors overflow-hidden">
                   {store.logo_url ? (
-                    <img src={store.logo_url} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <img src={store.logo_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     <Store size={32} />
                   )}
@@ -3045,6 +3167,18 @@ const OwnerClients = ({ user }: { user: User }) => {
   const [clients, setClients] = useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<any>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    variant?: "danger" | "primary";
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
   const [formData, setFormData] = useState({
     name: '',
     nif: '',
@@ -3090,13 +3224,20 @@ const OwnerClients = ({ user }: { user: User }) => {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Tem certeza que deseja excluir este cliente?")) return;
-    try {
-      const res = await fetch(`/api/owner/clients/${id}`, { method: 'DELETE' });
-      if (res.ok) fetchClients();
-    } catch (e) {
-      console.error(e);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: "Excluir Cliente",
+      message: "Tem certeza que deseja excluir este cliente?",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/owner/clients/${id}`, { method: 'DELETE' });
+          if (res.ok) fetchClients();
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    });
   };
 
   return (
@@ -3273,6 +3414,15 @@ const OwnerClients = ({ user }: { user: User }) => {
           </button>
         </form>
       </Modal>
+
+      <ConfirmModal 
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        variant={confirmModal.variant}
+      />
     </div>
   );
 };
@@ -3303,6 +3453,18 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [isPromoModalOpen, setIsPromoModalOpen] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isProformaModalOpen, setIsProformaModalOpen] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    variant?: "danger" | "primary";
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
   const [productForm, setProductForm] = useState({ name: '', price: '', stock: '', category: '', image_url: '', min_stock: '5' });
   const [staffForm, setStaffForm] = useState({ name: '', email: '', username: '', password: '', salary: '', shift_info: '' });
   const [promoForm, setPromoForm] = useState({ name: '', start_date: '', end_date: '', discount_percent: '', product_ids: [] as number[] });
@@ -3428,10 +3590,16 @@ const StoreAdmin = ({ user }: { user: User }) => {
   };
 
   const handleDeleteStaff = async (id: number) => {
-    if (confirm('Tem certeza que deseja demitir este colaborador?')) {
-      await fetch(`/api/owner/staff/${id}`, { method: 'DELETE' });
-      fetchData();
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: "Demitir Colaborador",
+      message: "Tem certeza que deseja demitir este colaborador?",
+      variant: "danger",
+      onConfirm: async () => {
+        await fetch(`/api/owner/staff/${id}`, { method: 'DELETE' });
+        fetchData();
+      }
+    });
   };
 
   const handleEditStaff = (member: any) => {
@@ -3448,10 +3616,16 @@ const StoreAdmin = ({ user }: { user: User }) => {
   };
 
   const handleDeleteProduct = async (id: number) => {
-    if (confirm('Tem certeza que deseja eliminar este produto?')) {
-      await fetch(`/api/owner/products/${id}`, { method: 'DELETE' });
-      fetchData();
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: "Eliminar Produto",
+      message: "Tem certeza que deseja eliminar este produto?",
+      variant: "danger",
+      onConfirm: async () => {
+        await fetch(`/api/owner/products/${id}`, { method: 'DELETE' });
+        fetchData();
+      }
+    });
   };
 
   const handleAddPromo = async (e: FormEvent) => {
@@ -3475,10 +3649,16 @@ const StoreAdmin = ({ user }: { user: User }) => {
   };
 
   const handleDeletePromo = async (id: number) => {
-    if (confirm('Tem certeza que deseja eliminar esta promoção?')) {
-      await fetch(`/api/owner/promotions/${id}`, { method: 'DELETE' });
-      fetchData();
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: "Eliminar Promoção",
+      message: "Tem certeza que deseja eliminar esta promoção?",
+      variant: "danger",
+      onConfirm: async () => {
+        await fetch(`/api/owner/promotions/${id}`, { method: 'DELETE' });
+        fetchData();
+      }
+    });
   };
 
   const handleStockMovement = async (e: FormEvent) => {
@@ -3671,7 +3851,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-black text-white rounded-2xl flex items-center justify-center overflow-hidden">
               {store.logo_url ? (
-                <img src={store.logo_url} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                <img src={store.logo_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
                 <Store size={24} />
               )}
@@ -3829,7 +4009,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                       <tr key={product.id} className="hover:bg-zinc-50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <img src={product.image_url} alt="" className="w-10 h-10 rounded-lg object-cover" referrerPolicy="no-referrer" />
+                            <img src={product.image_url || undefined} alt="" className="w-10 h-10 rounded-lg object-cover" referrerPolicy="no-referrer" />
                             <span className="font-medium text-sm">{product.name}</span>
                           </div>
                         </td>
@@ -4305,7 +4485,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                     {stockReport.lowStock.map((p: any) => (
                       <div key={p.id} className="flex items-center justify-between p-3 bg-white border border-rose-100 rounded-xl shadow-sm">
                         <div className="flex items-center gap-3">
-                          <img src={p.image_url} alt="" className="w-8 h-8 rounded object-cover" referrerPolicy="no-referrer" />
+                          <img src={p.image_url || undefined} alt="" className="w-8 h-8 rounded object-cover" referrerPolicy="no-referrer" />
                           <div>
                             <p className="text-xs font-bold text-zinc-800">{p.name}</p>
                             <p className="text-[10px] text-zinc-400">Mínimo: {p.min_stock}</p>
@@ -4348,7 +4528,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                           <tr key={product.id} className="hover:bg-zinc-50 transition-colors">
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-3">
-                                <img src={product.image_url} alt="" className="w-10 h-10 rounded-lg object-cover" referrerPolicy="no-referrer" />
+                                <img src={product.image_url || undefined} alt="" className="w-10 h-10 rounded-lg object-cover" referrerPolicy="no-referrer" />
                                 <span className="font-medium text-sm">{product.name}</span>
                               </div>
                             </td>
@@ -4494,13 +4674,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
                       {ticketMessages.map(msg => (
                         <div key={msg.id} className={cn(
                           "flex flex-col max-w-[80%]",
-                          msg.is_admin ? "self-start" : "self-end items-end"
+                          msg.is_admin ? "self-end items-end" : "self-start"
                         )}>
                           <div className={cn(
                             "p-4 rounded-2xl text-sm",
                             msg.is_admin 
-                              ? "bg-white border border-zinc-100 text-zinc-900 rounded-tl-none" 
-                              : "bg-black text-white rounded-tr-none"
+                              ? "bg-black text-white rounded-tr-none" 
+                              : "bg-orange-500 text-white rounded-tl-none"
                           )}>
                             {msg.message}
                           </div>
@@ -4598,7 +4778,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                     {products.map(product => (
                       <div key={product.id} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl border border-zinc-100 hover:border-zinc-300 transition-all">
                         <div className="flex items-center gap-3">
-                          <img src={product.image_url} alt="" className="w-8 h-8 rounded object-cover" referrerPolicy="no-referrer" />
+                          <img src={product.image_url || undefined} alt="" className="w-8 h-8 rounded object-cover" referrerPolicy="no-referrer" />
                           <div>
                             <p className="text-xs font-bold">{product.name}</p>
                             <p className="text-[10px] text-zinc-500">Kz {product.price.toLocaleString()}</p>
@@ -4960,7 +5140,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                     className="w-4 h-4 rounded border-zinc-300 text-black focus:ring-black"
                   />
                   <div className="flex items-center gap-2">
-                    <img src={p.image_url} alt="" className="w-6 h-6 rounded object-cover" referrerPolicy="no-referrer" />
+                    <img src={p.image_url || undefined} alt="" className="w-6 h-6 rounded object-cover" referrerPolicy="no-referrer" />
                     <span className="text-sm font-medium">{p.name}</span>
                     <span className="text-[10px] text-zinc-400">Kz {p.price.toLocaleString()}</span>
                   </div>
@@ -5142,6 +5322,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
           </button>
         </form>
       </Modal>
+
+      <ConfirmModal 
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        variant={confirmModal.variant}
+      />
     </div>
   );
 };
@@ -5618,7 +5807,7 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
       <div ref={invoiceRef} className="bg-white p-8 max-w-md mx-auto shadow-lg border border-zinc-100 rounded-xl invoice-print">
         <div className="text-center mb-6">
           {store.logo_url && (
-            <img src={store.logo_url} alt="" className="w-16 h-16 mx-auto mb-2 object-contain" referrerPolicy="no-referrer" />
+            <img src={store.logo_url || undefined} alt="" className="w-16 h-16 mx-auto mb-2 object-contain" referrerPolicy="no-referrer" />
           )}
           <h2 className="text-xl font-black uppercase tracking-tighter">{store.name}</h2>
           <p className="text-[10px] text-zinc-500">{store.address}</p>
@@ -5799,16 +5988,31 @@ const SellerPOS = ({ user }: { user: User }) => {
   
   const discountAmount = discount;
   const taxableAmount = Math.max(0, subtotal - discountAmount);
-  const tax = taxableAmount * 0.14;
-  const total = taxableAmount + tax;
+  const tax = Math.round((taxableAmount * 0.14) * 100) / 100;
+  const total = Math.round((taxableAmount + tax) * 100) / 100;
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     if (cart.length === 0) return;
-    if (hasActiveSession === false) {
-      alert('O caixa deve estar aberto para realizar vendas. Vá para a secção "Fechar Caixa" para abrir o caixa.');
-      return;
+    
+    setIsProcessing(true);
+    try {
+      const storeId = user.store_id || 1;
+      const res = await fetch(`/api/seller/active-session/${storeId}`);
+      const data = await res.json();
+      
+      if (data && data.status === 'open') {
+        setHasActiveSession(true);
+        setIsPaymentModalOpen(true);
+      } else {
+        setHasActiveSession(false);
+        alert('O caixa deve estar aberto para realizar vendas. Por favor, abra o caixa no Dashboard.');
+      }
+    } catch (error) {
+      console.error('Error checking session:', error);
+      alert('Erro ao verificar sessão do caixa. Verifique sua conexão.');
+    } finally {
+      setIsProcessing(false);
     }
-    setIsPaymentModalOpen(true);
   };
 
   const handleCreateProforma = async (e: FormEvent) => {
@@ -5847,6 +6051,16 @@ const SellerPOS = ({ user }: { user: User }) => {
   };
 
   const finalizeSale = async () => {
+    if (cart.length === 0) {
+      alert('O carrinho está vazio!');
+      return;
+    }
+
+    if (isNaN(total) || total <= 0) {
+      alert('Valor da venda inválido.');
+      return;
+    }
+
     if (paymentMethod === 'cash') {
       const received = parseFloat(cashReceived);
       if (isNaN(received) || received < total) {
@@ -5858,8 +6072,8 @@ const SellerPOS = ({ user }: { user: User }) => {
     if (paymentMethod === 'split') {
       const cash = parseFloat(splitAmounts.cash) || 0;
       const card = parseFloat(splitAmounts.card) || 0;
-      if (Math.abs((cash + card) - total) > 0.01) {
-        alert('A soma dos valores (Dinheiro + Cartão) deve ser igual ao total da venda!');
+      if (Math.abs((cash + card) - total) > 0.05) { // Allow small rounding difference
+        alert(`A soma dos valores (Kz ${cash + card}) deve ser igual ao total da venda (Kz ${total})!`);
         return;
       }
     }
@@ -5880,37 +6094,49 @@ const SellerPOS = ({ user }: { user: User }) => {
           discount_percent: 0,
           discount_amount: discountAmount,
           tax_amount: tax,
-          cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : (paymentMethod === 'split' ? parseFloat(splitAmounts.cash) : total),
-          split_details: paymentMethod === 'split' ? { cash: parseFloat(splitAmounts.cash), card: parseFloat(splitAmounts.card) } : null,
-          items: cart.map(item => ({ 
-            id: item.product.id, 
-            name: item.product.name,
-            quantity: item.quantity,
-            price: item.product.discount_percent 
+          cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : (paymentMethod === 'split' ? (parseFloat(splitAmounts.cash) || 0) : total),
+          split_details: paymentMethod === 'split' ? { cash: parseFloat(splitAmounts.cash) || 0, card: parseFloat(splitAmounts.card) || 0 } : null,
+          items: cart.map(item => {
+            const price = item.product.discount_percent 
               ? item.product.price * (1 - item.product.discount_percent / 100) 
-              : item.product.price
-          }))
+              : item.product.price;
+            return { 
+              id: item.product.id, 
+              name: item.product.name,
+              quantity: item.quantity,
+              price: price
+            };
+          })
         })
       });
+
       if (res.ok) {
         const saleData = await res.json();
-        setLastSale(saleData.sale);
-        setIsInvoiceModalOpen(true);
-        setCart([]);
-        setIsPaymentModalOpen(false);
-        setCashReceived('');
-        setSplitAmounts({ cash: '', card: '' });
-        setDiscount(0);
-        setClient({ name: 'Consumidor Final', nif: '999999999' });
-        fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
+        if (saleData.sale) {
+          setLastSale(saleData.sale);
+          setIsInvoiceModalOpen(true);
+          setCart([]);
+          setIsPaymentModalOpen(false);
+          setCashReceived('');
+          setSplitAmounts({ cash: '', card: '' });
+          setDiscount(0);
+          setClient({ name: 'Consumidor Final', nif: '999999999' });
+          fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
+        } else {
+          throw new Error("Dados da venda não recebidos do servidor.");
+        }
       } else if (res.status === 403) {
         const data = await res.json();
         alert(data.error || 'O caixa deve estar aberto para realizar vendas.');
         setHasActiveSession(false);
         setIsPaymentModalOpen(false);
+      } else {
+        const data = await res.json();
+        throw new Error(data.error || "Erro ao processar venda.");
       }
     } catch (error) {
       console.error('Error finalizing sale:', error);
+      alert(error instanceof Error ? error.message : "Erro crítico ao finalizar venda. Verifique a sua conexão.");
     } finally {
       setIsProcessing(false);
     }
@@ -6029,7 +6255,7 @@ const SellerPOS = ({ user }: { user: User }) => {
               <Card className="h-full hover:border-orange-500 transition-all border-zinc-100 shadow-sm rounded-xl flex flex-col overflow-hidden">
                 <div className="aspect-[4/3] relative p-2 bg-zinc-50/50">
                   <img 
-                    src={product.image_url} 
+                    src={product.image_url || undefined} 
                     alt={product.name} 
                     className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500" 
                     referrerPolicy="no-referrer" 
@@ -6092,7 +6318,7 @@ const SellerPOS = ({ user }: { user: User }) => {
                 {cart.map(item => (
                   <div key={item.product.id} className="flex items-center gap-3 group">
                     <div className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-100 flex-shrink-0">
-                      <img src={item.product.image_url} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <img src={item.product.image_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-zinc-800 truncate">{item.product.name}</p>
@@ -6199,13 +6425,18 @@ const SellerPOS = ({ user }: { user: User }) => {
               </button>
               <button 
                 onClick={handleCheckout}
-                disabled={cart.length === 0}
+                disabled={cart.length === 0 || isProcessing || hasActiveSession === false}
                 className="flex-[2] bg-orange-500 text-white py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 hover:bg-orange-600 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed transition-all shadow-lg shadow-orange-500/20 active:scale-[0.98]"
               >
-                Finalizar Venda
+                {isProcessing ? 'Processando...' : 'Finalizar Venda'}
                 <ChevronRight size={20} />
               </button>
             </div>
+            {hasActiveSession === false && (
+              <p className="text-rose-500 text-[10px] font-bold mt-2 text-center animate-pulse">
+                CAIXA FECHADO. ABRA O CAIXA NO DASHBOARD DO VENDEDOR.
+              </p>
+            )}
           </div>
         </Card>
       </div>
@@ -6323,7 +6554,15 @@ const SellerPOS = ({ user }: { user: User }) => {
               className="space-y-4"
             >
               <div className="space-y-1">
-                <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Quantia Recebida (Kz)</label>
+                <div className="flex justify-between items-center ml-1">
+                  <label className="text-xs font-bold text-zinc-500 uppercase">Quantia Recebida (Kz)</label>
+                  <button 
+                    onClick={() => setCashReceived(total.toString())}
+                    className="text-[10px] font-black text-orange-600 uppercase hover:underline"
+                  >
+                    Valor Exacto
+                  </button>
+                </div>
                 <input
                   type="number"
                   autoFocus
@@ -6399,7 +6638,7 @@ const SellerPOS = ({ user }: { user: User }) => {
 
           <button
             onClick={finalizeSale}
-            disabled={isProcessing || (paymentMethod === 'cash' && (!cashReceived || change < 0)) || (paymentMethod === 'split' && Math.abs((parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')) - total) > 0.01)}
+            disabled={isProcessing || (paymentMethod === 'cash' && (isNaN(parseFloat(cashReceived)) || parseFloat(cashReceived) < total)) || (paymentMethod === 'split' && Math.abs((parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')) - total) > 0.05)}
             className="w-full bg-orange-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed"
           >
             {isProcessing ? 'Processando...' : 'Confirmar Pagamento'}

@@ -376,7 +376,8 @@ if (userCount.count === 0) {
   db.prepare("INSERT INTO stores (owner_id, name, address, license_expiry) VALUES (?, ?, ?, ?)").run(2, "Minha Loja B", "Rua 2, Luanda", "2026-12-31");
   
   db.prepare("INSERT INTO system_plans (name, price, max_stores, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Básico", 5000, 1, 100, '{"reports": false, "multi_store": false}');
-  db.prepare("INSERT INTO system_plans (name, price, max_stores, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Profissional", 15000, 5, 1000, '{"reports": true, "multi_store": true}');
+  db.prepare("INSERT INTO system_plans (name, price, max_stores, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Profissional", 15000, 2, 1000, '{"reports": true, "multi_store": true}');
+  db.prepare("INSERT INTO system_plans (name, price, max_stores, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Empresarial", 35000, 10, 5000, '{"reports": true, "multi_store": true, "api_access": true}');
   
   db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("expiration_notice", "true");
   db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("weekly_reports", "false");
@@ -417,8 +418,8 @@ async function startServer() {
     const user = db.prepare("SELECT * FROM users WHERE (email = ? OR username = ?) AND password = ?").get(identifier, identifier, pass) as any;
     
     if (user) {
-      // Check if client is suspended
-      if (user.role === 'owner' && user.status === 'suspended') {
+      // Check if user is suspended
+      if (user.status === 'suspended') {
         return res.status(403).json({ error: "A sua conta está suspensa. Contacte o administrador." });
       }
 
@@ -435,6 +436,9 @@ async function startServer() {
               return res.status(403).json({ error: "O acesso à loja está suspenso. Contacte o proprietário." });
             }
           }
+        } else {
+          // Seller exists in users but not in staff (deleted staff)
+          return res.status(403).json({ error: "Esta conta de vendedor foi desativada." });
         }
       }
       
@@ -507,6 +511,8 @@ async function startServer() {
       if (staff) {
         const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(staff.store_id) as any;
         if (store) ownerId = store.owner_id;
+      } else {
+        return res.status(403).json({ error: "Vendedor removido" });
       }
     }
 
@@ -985,11 +991,44 @@ async function startServer() {
 
   app.post("/api/owner/stores", (req, res) => {
     const { owner_id, name, address, phone, nif, logo_url } = req.body;
-    db.prepare(`
-      INSERT INTO stores (owner_id, name, address, phone, nif, logo_url, license_expiry) 
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(owner_id, name, address, phone, nif, logo_url, "2026-12-31");
-    res.json({ success: true });
+    
+    try {
+      // Check limits
+      const activeLicenses = db.prepare(`
+        SELECT features FROM licenses 
+        WHERE user_id = ? AND status = 'active' AND expiry_date >= DATE('now')
+      `).all(owner_id) as any[];
+
+      let maxStores = 1; // Default for new users without license
+      
+      if (activeLicenses.length > 0) {
+        maxStores = activeLicenses.reduce((max, lic) => {
+          try {
+            const feat = JSON.parse(lic.features);
+            return Math.max(max, feat.max_stores || 0);
+          } catch (e) {
+            return max;
+          }
+        }, 0);
+      }
+
+      const currentStores = db.prepare("SELECT COUNT(*) as count FROM stores WHERE owner_id = ?").get(owner_id) as any;
+      
+      if (currentStores.count >= maxStores) {
+        return res.status(403).json({ 
+          error: `Limite de lojas atingido (${maxStores}). Por favor, atualize o seu plano.` 
+        });
+      }
+
+      db.prepare(`
+        INSERT INTO stores (owner_id, name, address, phone, nif, logo_url, license_expiry) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(owner_id, name, address, phone, nif, logo_url, "2026-12-31");
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.put("/api/owner/stores/:storeId", (req, res) => {
@@ -1130,9 +1169,8 @@ async function startServer() {
         const staff = db.prepare("SELECT user_id FROM staff WHERE id = ?").get(req.params.staffId) as any;
         if (staff) {
           db.prepare("DELETE FROM staff WHERE id = ?").run(req.params.staffId);
-          // We might want to keep the user for historical transactions, or delete if no transactions exist
-          // For simplicity, we just remove the staff link. If we delete the user, transactions might break FKs.
-          // db.prepare("DELETE FROM users WHERE id = ?").run(staff.user_id);
+          // Suspend the user so they can't login anymore even if the record stays for history
+          db.prepare("UPDATE users SET status = 'suspended' WHERE id = ?").run(staff.user_id);
         }
       })();
       res.json({ success: true });
@@ -1548,7 +1586,7 @@ async function startServer() {
       total_amount, 
       JSON.stringify(items),
       payment_method || 'cash',
-      cash_received || total_amount,
+      cash_received !== undefined && cash_received !== null ? cash_received : total_amount,
       split_details ? JSON.stringify(split_details) : null,
       client_name || 'Consumidor Final',
       client_nif || '999999999',
