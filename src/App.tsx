@@ -648,30 +648,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
     }
   };
 
-  const handleDeleteClient = async (clientId: number) => {
-    setConfirmModal({
-      isOpen: true,
-      title: "Eliminar Cliente",
-      message: "Tem certeza que deseja eliminar este cliente? Esta acção não pode ser desfeita.",
-      variant: "danger",
-      onConfirm: async () => {
-        try {
-          const res = await fetch(`/api/admin/clients/${clientId}`, {
-            method: 'DELETE'
-          });
-          if (!res.ok) throw new Error("Failed to delete client");
-          fetchData();
-          if (selectedClient?.id === clientId) {
-            setSelectedClient(null);
-            setIsClientDetailsOpen(false);
-          }
-        } catch (e) {
-          console.error(e);
-          alert("Erro ao eliminar cliente.");
-        }
-      }
-    });
-  };
+  // Removed handleDeleteClient as clients should stay in history
 
   const handleManageLicense = async (e: FormEvent) => {
     e.preventDefault();
@@ -1455,12 +1432,6 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                                 )}
                               >
                                 {client.status === 'active' ? <ShieldAlert size={16} /> : <ShieldCheck size={16} />}
-                              </button>
-                              <button 
-                                onClick={() => handleDeleteClient(client.id)}
-                                className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-rose-600 transition-all"
-                              >
-                                <Trash2 size={16} />
                               </button>
                             </div>
                           </td>
@@ -2349,13 +2320,6 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => handleDeleteClient(clientDetails.client.id)}
-                    className="flex items-center gap-2 px-4 py-2 bg-rose-50 text-rose-600 rounded-xl text-xs font-bold hover:bg-rose-100 transition-all"
-                  >
-                    <Trash2 size={16} />
-                    Eliminar Cliente
-                  </button>
                   <button onClick={() => setIsClientDetailsOpen(false)} className="p-2 hover:bg-zinc-200 rounded-full transition-colors">
                     <X size={20} />
                   </button>
@@ -3223,22 +3187,7 @@ const OwnerClients = ({ user }: { user: User }) => {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    setConfirmModal({
-      isOpen: true,
-      title: "Excluir Cliente",
-      message: "Tem certeza que deseja excluir este cliente?",
-      variant: "danger",
-      onConfirm: async () => {
-        try {
-          const res = await fetch(`/api/owner/clients/${id}`, { method: 'DELETE' });
-          if (res.ok) fetchClients();
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    });
-  };
+  // Removed handleDelete as clients should stay in history
 
   return (
     <div className="space-y-6">
@@ -3312,12 +3261,6 @@ const OwnerClients = ({ user }: { user: User }) => {
                       className="p-2 text-zinc-400 hover:text-orange-500 transition-colors"
                     >
                       <Edit2 size={18} />
-                    </button>
-                    <button 
-                      onClick={() => handleDelete(client.id)}
-                      className="p-2 text-zinc-400 hover:text-rose-500 transition-colors"
-                    >
-                      <Trash2 size={18} />
                     </button>
                   </div>
                 </td>
@@ -3600,6 +3543,22 @@ const StoreAdmin = ({ user }: { user: User }) => {
         fetchData();
       }
     });
+  };
+
+  const handleToggleStaffStatus = async (id: number, currentStatus: string) => {
+    const newStatus = currentStatus === 'active' ? 'suspended' : 'active';
+    try {
+      const res = await fetch(`/api/owner/staff/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (!res.ok) throw new Error("Failed to update status");
+      fetchData();
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao atualizar estado do colaborador.");
+    }
   };
 
   const handleEditStaff = (member: any) => {
@@ -4144,7 +4103,14 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             <UserIcon size={24} />
                           </div>
                           <div>
-                            <p className="font-bold">{member.name}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="font-bold">{member.name}</p>
+                              {member.status === 'suspended' && (
+                                <span className="text-[10px] font-black bg-rose-100 text-rose-600 px-2 py-0.5 rounded-full uppercase tracking-tighter">
+                                  Suspenso
+                                </span>
+                              )}
+                            </div>
                             <p className="text-xs text-zinc-500">{member.email} • {member.shift_info}</p>
                           </div>
                         </div>
@@ -4154,6 +4120,18 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             <p className="font-bold">Kz {member.salary.toLocaleString()}</p>
                           </div>
                           <div className="flex gap-2">
+                            <button 
+                              onClick={() => handleToggleStaffStatus(member.id, member.status)}
+                              className={cn(
+                                "p-2 rounded-lg transition-all",
+                                member.status === 'active' 
+                                  ? "text-zinc-400 hover:text-rose-500 hover:bg-rose-50" 
+                                  : "text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50"
+                              )}
+                              title={member.status === 'active' ? "Suspender Vendedor" : "Ativar Vendedor"}
+                            >
+                              {member.status === 'active' ? <ShieldAlert size={18} /> : <ShieldCheck size={18} />}
+                            </button>
                             <button 
                               onClick={() => handleEditStaff(member)}
                               className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
@@ -5050,7 +5028,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
           <div>
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Palavra-passe {editingStaff && "(Deixe em branco para manter)"}</label>
             <input 
-              type="password"
+              type="password" required={!editingStaff}
               value={staffForm.password}
               onChange={e => setStaffForm({...staffForm, password: e.target.value})}
               className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 

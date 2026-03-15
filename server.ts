@@ -424,21 +424,39 @@ async function startServer() {
       }
 
       let storeId = null;
+      let ownerId = user.id;
+
       if (user.role === 'seller') {
         const staff = db.prepare("SELECT store_id FROM staff WHERE user_id = ?").get(user.id) as any;
         if (staff) {
           storeId = staff.store_id;
-          // Check if the store owner is suspended
           const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(storeId) as any;
-          if (store) {
-            const owner = db.prepare("SELECT status FROM users WHERE id = ?").get(store.owner_id) as any;
-            if (owner && owner.status === 'suspended') {
-              return res.status(403).json({ error: "O acesso à loja está suspenso. Contacte o proprietário." });
-            }
-          }
+          if (store) ownerId = store.owner_id;
         } else {
-          // Seller exists in users but not in staff (deleted staff)
           return res.status(403).json({ error: "Esta conta de vendedor foi desativada." });
+        }
+      }
+
+      // Check owner status and license
+      if (user.role !== 'admin') {
+        const owner = db.prepare("SELECT status FROM users WHERE id = ?").get(ownerId) as any;
+        if (owner && owner.status === 'suspended') {
+          return res.status(403).json({ error: "O acesso está suspenso. Contacte o administrador." });
+        }
+
+        // License check
+        const activeLicense = db.prepare(`
+          SELECT id FROM licenses 
+          WHERE user_id = ? AND status = 'active' AND date(expiry_date) >= date('now')
+          LIMIT 1
+        `).get(ownerId);
+
+        if (!activeLicense) {
+          // Check if they have any stores. If they do, and no active license, block.
+          const storeCount = db.prepare("SELECT count(*) as count FROM stores WHERE owner_id = ?").get(ownerId) as any;
+          if (storeCount.count > 0) {
+            return res.status(403).json({ error: "A sua licença expirou ou foi cancelada. Por favor, contacte o suporte." });
+          }
         }
       }
       
@@ -451,7 +469,7 @@ async function startServer() {
   // Middleware to check if client is suspended
   const checkSuspended = (req: any, res: any, next: any) => {
     // Skip check for admin routes or login
-    if (req.path.startsWith('/api/admin') || req.path === '/api/login') {
+    if (req.path.startsWith('/api/admin') || req.path === '/api/login' || req.path === '/api/register') {
       return next();
     }
 
@@ -459,6 +477,7 @@ async function startServer() {
     const storeId = req.headers['x-store-id'] || req.query.storeId || req.body.store_id;
 
     let ownerId = null;
+    let currentStoreId = storeId;
 
     // Try to extract ID from path if not found in headers/body
     let idFromPath = null;
@@ -470,6 +489,8 @@ async function startServer() {
 
     const effectiveUserId = userId || (req.path.includes('user') || req.path.includes('owner') || req.path.includes('seller') ? idFromPath : null);
     const effectiveStoreId = storeId || (req.path.includes('store') ? idFromPath : null);
+    
+    if (effectiveStoreId) currentStoreId = effectiveStoreId;
 
     if (effectiveUserId) {
       const user = db.prepare("SELECT id, role, status FROM users WHERE id = ?").get(effectiveUserId) as any;
@@ -479,6 +500,7 @@ async function startServer() {
         } else if (user.role === 'seller') {
           const staff = db.prepare("SELECT store_id FROM staff WHERE user_id = ?").get(user.id) as any;
           if (staff) {
+            currentStoreId = staff.store_id;
             const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(staff.store_id) as any;
             if (store) ownerId = store.owner_id;
           }
@@ -486,8 +508,8 @@ async function startServer() {
       }
     } 
     
-    if (!ownerId && effectiveStoreId) {
-      const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(effectiveStoreId) as any;
+    if (!ownerId && currentStoreId) {
+      const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(currentStoreId) as any;
       if (store) ownerId = store.owner_id;
     }
 
@@ -495,6 +517,30 @@ async function startServer() {
       const owner = db.prepare("SELECT status FROM users WHERE id = ?").get(ownerId) as any;
       if (owner && owner.status === 'suspended') {
         return res.status(403).json({ error: "Acesso suspenso. Contacte o administrador." });
+      }
+
+      // Check if owner has ANY active license to allow dashboard access
+      // But if they are accessing a specific store, check that store's license
+      if (currentStoreId) {
+        const store = db.prepare("SELECT license_status, license_expiry FROM stores WHERE id = ?").get(currentStoreId) as any;
+        if (store && (store.license_status === 'expired' || (store.license_expiry && new Date(store.license_expiry) < new Date()))) {
+          return res.status(403).json({ error: "Licença expirada para esta loja. Por favor, renove a sua subscrição." });
+        }
+      } else {
+        // Global check for owner: must have at least one active license or be in trial
+        const activeLicense = db.prepare(`
+          SELECT id FROM licenses 
+          WHERE user_id = ? AND status = 'active' AND date(expiry_date) >= date('now')
+          LIMIT 1
+        `).get(ownerId);
+        
+        if (!activeLicense) {
+          // Check if they have any stores at all (if new user, allow)
+          const storeCount = db.prepare("SELECT count(*) as count FROM stores WHERE owner_id = ?").get(ownerId) as any;
+          if (storeCount.count > 0) {
+            return res.status(403).json({ error: "A sua licença expirou. Por favor, contacte o suporte para renovar." });
+          }
+        }
       }
     }
 
@@ -645,6 +691,13 @@ async function startServer() {
   app.put("/api/admin/licenses/:id/status", (req, res) => {
     const { status } = req.body;
     db.prepare("UPDATE licenses SET status = ? WHERE id = ?").run(status, req.params.id);
+    
+    // Sync with store if linked
+    const license = db.prepare("SELECT store_id FROM licenses WHERE id = ?").get(req.params.id) as any;
+    if (license?.store_id) {
+      db.prepare("UPDATE stores SET license_status = ? WHERE id = ?").run(status, license.store_id);
+    }
+    
     res.json({ success: true });
   });
 
@@ -1116,7 +1169,7 @@ async function startServer() {
 
   app.get("/api/owner/staff/:storeId", (req, res) => {
     const staff = db.prepare(`
-      SELECT s.*, u.name, u.email, u.username 
+      SELECT s.*, u.name, u.email, u.username, u.status 
       FROM staff s 
       JOIN users u ON s.user_id = u.id 
       WHERE s.store_id = ?
@@ -1129,13 +1182,24 @@ async function startServer() {
     const trimmedUsername = username?.trim();
     const trimmedEmail = email?.trim();
     
+    if (!trimmedUsername || !password || !name) {
+      return res.status(400).json({ error: "Nome, utilizador e palavra-passe são obrigatórios." });
+    }
+
     try {
+      // Check if username already exists
+      const existingUser = db.prepare("SELECT id FROM users WHERE username = ? OR (email = ? AND email IS NOT NULL)").get(trimmedUsername, trimmedEmail || '___never_match___');
+      if (existingUser) {
+        return res.status(400).json({ error: "Este nome de utilizador ou email já está em uso." });
+      }
+
       db.transaction(() => {
         const userResult = db.prepare("INSERT INTO users (email, username, password, name, role) VALUES (?, ?, ?, ?, 'seller')").run(trimmedEmail || null, trimmedUsername || null, password, name);
         db.prepare("INSERT INTO staff (store_id, user_id, salary, shift_info) VALUES (?, ?, ?, ?)").run(store_id, userResult.lastInsertRowid, salary, shift_info);
       })();
       res.json({ success: true });
     } catch (error: any) {
+      console.error("Staff creation error:", error);
       res.status(400).json({ error: error.message });
     }
   });
@@ -1158,6 +1222,21 @@ async function startServer() {
         }
       })();
       res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/owner/staff/:staffId/status", (req, res) => {
+    const { status } = req.body;
+    try {
+      const staff = db.prepare("SELECT user_id FROM staff WHERE id = ?").get(req.params.staffId) as any;
+      if (staff) {
+        db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status, staff.user_id);
+        res.json({ success: true });
+      } else {
+        res.status(404).json({ error: "Colaborador não encontrado" });
+      }
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
