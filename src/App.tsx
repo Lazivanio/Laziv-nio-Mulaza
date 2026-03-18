@@ -115,25 +115,25 @@ const Card = ({ children, className, ...props }: { children: ReactNode, classNam
 );
 
 const StatCard = ({ label, value, icon: Icon, trend, color = "blue" }: { label: string, value: string | number, icon: any, trend?: string, color?: string }) => (
-  <Card className="p-6">
-    <div className="flex justify-between items-start">
-      <div>
-        <p className="text-sm font-medium text-zinc-500 uppercase tracking-wider">{label}</p>
-        <h3 className="text-2xl font-bold mt-1">{value}</h3>
+  <Card className="p-4 md:p-6">
+    <div className="flex justify-between items-start gap-4">
+      <div className="min-w-0">
+        <p className="text-[10px] md:text-sm font-medium text-zinc-500 uppercase tracking-wider truncate">{label}</p>
+        <h3 className="text-xl md:text-2xl font-bold mt-1 truncate">{value}</h3>
         {trend && (
-          <p className={cn("text-xs mt-2 flex items-center gap-1", trend.startsWith('+') ? "text-emerald-600" : "text-rose-600")}>
-            <TrendingUp size={12} />
-            {trend} em relação ao mês passado
+          <p className={cn("text-[10px] md:text-xs mt-2 flex items-center gap-1", trend.startsWith('+') ? "text-emerald-600" : "text-rose-600")}>
+            <TrendingUp size={12} className="shrink-0" />
+            <span className="truncate">{trend} em relação ao mês passado</span>
           </p>
         )}
       </div>
-      <div className={cn("p-3 rounded-xl", {
+      <div className={cn("p-2 md:p-3 rounded-xl shrink-0", {
         "bg-blue-50 text-blue-600": color === "blue",
         "bg-emerald-50 text-emerald-600": color === "emerald",
         "bg-amber-50 text-amber-600": color === "amber",
         "bg-rose-50 text-rose-600": color === "rose",
       })}>
-        <Icon size={24} />
+        <Icon size={20} className="md:w-6 md:h-6" />
       </div>
     </div>
   </Card>
@@ -303,56 +303,77 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
 // --- Layout ---
 
 const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: () => void, children: ReactNode }) => {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleLogout = () => {
     onLogout();
     navigate('/');
   };
 
+  const closeSidebar = () => setIsSidebarOpen(false);
+
   return (
     <div className="min-h-screen bg-zinc-50 flex">
+      {/* Sidebar Overlay */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={closeSidebar}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40 lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
       <aside className={cn(
         "fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-zinc-200 transition-transform duration-300 lg:relative lg:translate-x-0",
         !isSidebarOpen && "-translate-x-full"
       )}>
         <div className="h-full flex flex-col p-4">
-          <div className="flex items-center gap-3 px-4 py-6 mb-4">
-            <div className="w-10 h-10 bg-black text-white rounded-xl flex items-center justify-center">
-              <Zap size={20} />
+          <div className="flex items-center justify-between lg:justify-start gap-3 px-4 py-6 mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-black text-white rounded-xl flex items-center justify-center">
+                <Zap size={20} />
+              </div>
+              <span className="text-xl font-bold tracking-tight">Fatu-R</span>
             </div>
-            <span className="text-xl font-bold tracking-tight">Fatu-R</span>
+            <button onClick={closeSidebar} className="lg:hidden p-2 text-zinc-400 hover:bg-zinc-100 rounded-lg">
+              <X size={20} />
+            </button>
           </div>
 
-          <nav className="flex-1 space-y-1">
+          <nav className="flex-1 space-y-1 overflow-y-auto">
             {user.role === 'admin' && (
               <>
-                <SidebarItem icon={LayoutDashboard} label="Dashboard" to="/admin" />
-                <SidebarItem icon={Store} label="Lojas" to="/admin/stores" />
-                <SidebarItem icon={Users} label="Clientes" to="/admin/clients" />
-                <SidebarItem icon={CreditCard} label="Pagamentos" to="/admin/payments" />
-                <SidebarItem icon={Settings} label="Configurações" to="/admin/settings" />
+                <SidebarItem icon={LayoutDashboard} label="Dashboard" to="/admin" onClick={closeSidebar} />
+                <SidebarItem icon={Store} label="Lojas" to="/admin/stores" onClick={closeSidebar} />
+                <SidebarItem icon={Users} label="Clientes" to="/admin/clients" onClick={closeSidebar} />
+                <SidebarItem icon={CreditCard} label="Pagamentos" to="/admin/payments" onClick={closeSidebar} />
+                <SidebarItem icon={Settings} label="Configurações" to="/admin/settings" onClick={closeSidebar} />
               </>
             )}
             {user.role === 'owner' && (
               <>
-                <SidebarItem icon={LayoutDashboard} label="Visão Geral" to="/owner" />
-                <SidebarItem icon={Store} label="Minhas Lojas" to="/owner/stores" />
-                <SidebarItem icon={Users} label="Clientes" to="/owner/clients" />
-                <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" />
-                <SidebarItem icon={Settings} label="Configurações" to="/owner/settings" />
+                <SidebarItem icon={LayoutDashboard} label="Visão Geral" to="/owner" onClick={closeSidebar} />
+                <SidebarItem icon={Store} label="Minhas Lojas" to="/owner/stores" onClick={closeSidebar} />
+                <SidebarItem icon={Users} label="Clientes" to="/owner/clients" onClick={closeSidebar} />
+                <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
+                <SidebarItem icon={Settings} label="Configurações" to="/owner/settings" onClick={closeSidebar} />
               </>
             )}
             {user.role === 'seller' && (
               <>
-                <SidebarItem icon={LayoutDashboard} label="Painel e Insights" to="/seller/dashboard" />
-                <SidebarItem icon={ShoppingCart} label="Vendas (PDV)" to="/seller" />
-                <SidebarItem icon={Wallet} label="Movimentos" to="/seller/movements" />
-                <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" />
-                <SidebarItem icon={History} label="Histórico" to="/seller/history" />
-                <SidebarItem icon={Settings} label="Configurações" to="/seller/settings" />
+                <SidebarItem icon={LayoutDashboard} label="Painel e Insights" to="/seller/dashboard" onClick={closeSidebar} />
+                <SidebarItem icon={ShoppingCart} label="Vendas (PDV)" to="/seller" onClick={closeSidebar} />
+                <SidebarItem icon={Wallet} label="Movimentos" to="/seller/movements" onClick={closeSidebar} />
+                <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />
+                <SidebarItem icon={History} label="Histórico" to="/seller/history" onClick={closeSidebar} />
+                <SidebarItem icon={Settings} label="Configurações" to="/seller/settings" onClick={closeSidebar} />
               </>
             )}
           </nav>
@@ -380,24 +401,29 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <header className="h-16 bg-white border-b border-zinc-200 flex items-center justify-between px-6">
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="lg:hidden text-zinc-500">
-            <Menu size={24} />
-          </button>
-          <div className="flex-1 px-4">
-            {/* Search bar removed as requested */}
-          </div>
+        <header className="h-16 bg-white border-b border-zinc-200 flex items-center justify-between px-4 md:px-6 shrink-0">
           <div className="flex items-center gap-4">
-            <div className="w-8 h-8 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600">
-              <Calendar size={18} />
+            <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 text-zinc-500 hover:bg-zinc-100 rounded-lg">
+              <Menu size={24} />
+            </button>
+            <h2 className="font-bold text-lg hidden md:block">
+              {location.pathname.includes('admin') ? 'Painel Administrador' : 
+               location.pathname.includes('owner') ? 'Painel Proprietário' : 'Painel Vendedor'}
+            </h2>
+          </div>
+          
+          <div className="flex items-center gap-2 md:gap-4">
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-zinc-100 rounded-full text-zinc-600 text-xs font-medium">
+              <Clock size={14} />
+              {new Date().toLocaleDateString()}
             </div>
-            <div className="w-8 h-8 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600">
-              <Settings size={18} />
+            <div className="w-8 h-8 md:w-10 md:h-10 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600">
+              <UserIcon size={18} />
             </div>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-24 lg:pb-6">
           {children}
         </div>
 
@@ -440,6 +466,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
 
 const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [dashboardData, setDashboardData] = useState<any>({
     stats: { totalClients: 0, activeClients: 0, totalStores: 0, pendingSupport: 0, expiredLicenses: 0, expiringSoon: 0 },
     recentClients: []
@@ -904,9 +931,25 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
 
   return (
     <div className="flex h-screen bg-zinc-50 overflow-hidden">
+      {/* Sidebar Overlay */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsSidebarOpen(false)}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40 lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-zinc-200 flex flex-col">
-        <div className="p-6 border-b border-zinc-100">
+      <aside className={cn(
+        "fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-zinc-200 flex flex-col transition-transform duration-300 lg:relative lg:translate-x-0",
+        !isSidebarOpen && "-translate-x-full"
+      )}>
+        <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-black text-white rounded-xl flex items-center justify-center">
               <ShieldCheck size={24} />
@@ -916,60 +959,63 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest mt-1">Platform Master</p>
             </div>
           </div>
+          <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden p-2 text-zinc-400 hover:bg-zinc-100 rounded-lg">
+            <X size={20} />
+          </button>
         </div>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
           <button 
-            onClick={() => setActiveTab('dashboard')}
+            onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'dashboard' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
           >
             <LayoutDashboard size={20} />
             <span className="font-bold text-sm">Dashboard</span>
           </button>
           <button 
-            onClick={() => setActiveTab('clients')}
+            onClick={() => { setActiveTab('clients'); setIsSidebarOpen(false); }}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'clients' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
           >
             <Users size={20} />
             <span className="font-bold text-sm">Clientes</span>
           </button>
           <button 
-            onClick={() => setActiveTab('finance')}
+            onClick={() => { setActiveTab('finance'); setIsSidebarOpen(false); }}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'finance' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
           >
             <Wallet size={20} />
             <span className="font-bold text-sm">Financeiro</span>
           </button>
           <button 
-            onClick={() => setActiveTab('licenses')}
+            onClick={() => { setActiveTab('licenses'); setIsSidebarOpen(false); }}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'licenses' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
           >
             <CreditCard size={20} />
             <span className="font-bold text-sm">Licenças</span>
           </button>
           <button 
-            onClick={() => setActiveTab('support')}
+            onClick={() => { setActiveTab('support'); setIsSidebarOpen(false); }}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'support' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
           >
             <LifeBuoy size={20} />
             <span className="font-bold text-sm">Suporte</span>
           </button>
           <button 
-            onClick={() => setActiveTab('monitoring')}
+            onClick={() => { setActiveTab('monitoring'); setIsSidebarOpen(false); }}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'monitoring' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
           >
             <Monitor size={20} />
             <span className="font-bold text-sm">Monitoramento</span>
           </button>
           <button 
-            onClick={() => setActiveTab('reports')}
+            onClick={() => { setActiveTab('reports'); setIsSidebarOpen(false); }}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'reports' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
           >
             <FilePieChart size={20} />
             <span className="font-bold text-sm">Relatórios</span>
           </button>
           <button 
-            onClick={() => setActiveTab('settings')}
+            onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'settings' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
           >
             <Settings2 size={20} />
@@ -994,32 +1040,37 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <header className="h-20 bg-white border-b border-zinc-200 flex items-center justify-between px-8 sticky top-0 z-10">
-          <div>
-            <h2 className="text-xl font-black">
-              {activeTab === 'dashboard' && 'Visão Geral da Plataforma'}
-              {activeTab === 'clients' && 'Gestão de Clientes'}
-              {activeTab === 'finance' && 'Gestão Financeira'}
-              {activeTab === 'licenses' && 'Controle de Licenças'}
-              {activeTab === 'support' && 'Centro de Suporte'}
-              {activeTab === 'monitoring' && 'Monitoramento do Sistema'}
-              {activeTab === 'reports' && 'Relatórios de Uso'}
-              {activeTab === 'settings' && 'Configurações Globais'}
-            </h2>
-            <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">
-              {new Date().toLocaleDateString('pt-PT', { weekday: 'long', day: 'numeric', month: 'long' })}
-            </p>
+      <main className="flex-1 overflow-y-auto min-w-0">
+        <header className="h-20 bg-white border-b border-zinc-200 flex items-center justify-between px-4 md:px-8 sticky top-0 z-10">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 text-zinc-500 hover:bg-zinc-100 rounded-lg">
+              <Menu size={24} />
+            </button>
+            <div>
+              <h2 className="text-lg md:text-xl font-black truncate max-w-[180px] sm:max-w-none">
+                {activeTab === 'dashboard' && 'Visão Geral'}
+                {activeTab === 'clients' && 'Gestão de Clientes'}
+                {activeTab === 'finance' && 'Gestão Financeira'}
+                {activeTab === 'licenses' && 'Controle de Licenças'}
+                {activeTab === 'support' && 'Centro de Suporte'}
+                {activeTab === 'monitoring' && 'Monitoramento'}
+                {activeTab === 'reports' && 'Relatórios'}
+                {activeTab === 'settings' && 'Configurações'}
+              </h2>
+              <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">
+                {new Date().toLocaleDateString('pt-PT', { weekday: 'short', day: 'numeric', month: 'short' })}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-full text-[10px] font-black uppercase">
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-full text-[10px] font-black uppercase">
               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-              Sistemas Operacionais
+              Sistemas Online
             </div>
           </div>
         </header>
 
-        <div className="p-8">
+        <div className="p-4 md:p-8">
           {activeTab === 'dashboard' && (
             <div className="space-y-8">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -1248,7 +1299,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                 <div className="p-6 border-b border-zinc-100">
                   <h3 className="font-bold">Histórico de Pagamentos</h3>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="hidden md:block overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
                       <tr className="border-b border-zinc-50">
@@ -1280,15 +1331,33 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     </tbody>
                   </table>
                 </div>
+
+                <div className="md:hidden divide-y divide-zinc-100">
+                  {financeData.payments.map((payment: any) => (
+                    <div key={payment.id} className="p-4 space-y-3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-sm font-bold">{payment.client_name}</p>
+                          <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">{payment.plan_name}</p>
+                        </div>
+                        <p className="text-sm font-black text-zinc-900">Kz {payment.amount.toLocaleString()}</p>
+                      </div>
+                      <div className="flex justify-between items-center text-[10px]">
+                        <span className="px-2 py-0.5 bg-zinc-100 rounded text-zinc-500 font-bold uppercase">{payment.payment_method}</span>
+                        <span className="text-zinc-400">{new Date(payment.timestamp).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </Card>
             </div>
           )}
 
           {activeTab === 'clients' && (
             <div className="space-y-6">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div className="flex flex-wrap gap-4 items-center">
-                  <div className="relative w-80">
+              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                <div className="flex flex-wrap gap-4 items-center w-full lg:w-auto">
+                  <div className="relative w-full md:w-80">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
                     <input 
                       type="text" 
@@ -1298,30 +1367,32 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       className="w-full pl-12 pr-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
                     />
                   </div>
-                  <select 
-                    value={filterPlan}
-                    onChange={(e) => setFilterPlan(e.target.value)}
-                    className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
-                  >
-                    <option value="all">Todos os Planos</option>
-                    <option value="basic">Basic</option>
-                    <option value="pro">Pro</option>
-                    <option value="enterprise">Enterprise</option>
-                  </select>
-                  <select 
-                    value={filterStatus}
-                    onChange={(e) => setFilterStatus(e.target.value)}
-                    className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
-                  >
-                    <option value="all">Todos os Estados</option>
-                    <option value="active">Ativos</option>
-                    <option value="suspended">Suspensos</option>
-                    <option value="blocked">Bloqueados</option>
-                  </select>
+                  <div className="flex flex-1 md:flex-none gap-4 w-full md:w-auto">
+                    <select 
+                      value={filterPlan}
+                      onChange={(e) => setFilterPlan(e.target.value)}
+                      className="flex-1 md:flex-none px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
+                    >
+                      <option value="all">Todos os Planos</option>
+                      <option value="basic">Basic</option>
+                      <option value="pro">Pro</option>
+                      <option value="enterprise">Enterprise</option>
+                    </select>
+                    <select 
+                      value={filterStatus}
+                      onChange={(e) => setFilterStatus(e.target.value)}
+                      className="flex-1 md:flex-none px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
+                    >
+                      <option value="all">Todos os Estados</option>
+                      <option value="active">Ativos</option>
+                      <option value="suspended">Suspensos</option>
+                      <option value="blocked">Bloqueados</option>
+                    </select>
+                  </div>
                 </div>
                 <button 
                   onClick={() => setIsCreateModalOpen(true)}
-                  className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all whitespace-nowrap"
+                  className="w-full lg:w-auto flex items-center justify-center gap-2 bg-black text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all whitespace-nowrap"
                 >
                   <Plus size={20} />
                   Novo Cliente
@@ -1344,7 +1415,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               </div>
 
               <Card>
-                <div className="overflow-x-auto">
+                <div className="hidden md:block overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
                       <tr className="border-b border-zinc-50">
@@ -1440,15 +1511,102 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     </tbody>
                   </table>
                 </div>
+
+                <div className="md:hidden divide-y divide-zinc-100">
+                  {filteredClients.map((client: any) => (
+                    <div key={client.id} className="p-4 space-y-4" onClick={() => fetchClientDetails(client.id)}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-zinc-100 rounded-xl flex items-center justify-center text-zinc-600 font-bold">
+                            {client.company_name ? client.company_name.charAt(0) : client.name.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold">{client.company_name || 'Individual'}</p>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">{client.name}</p>
+                          </div>
+                        </div>
+                        <span className={cn(
+                          "px-2 py-1 rounded-full text-[10px] font-black uppercase",
+                          client.status === 'active' ? "bg-emerald-100 text-emerald-700" : 
+                          client.status === 'suspended' ? "bg-amber-100 text-amber-700" :
+                          "bg-rose-100 text-rose-700"
+                        )}>
+                          {client.status === 'active' ? 'Ativo' : client.status === 'suspended' ? 'Suspenso' : 'Bloqueado'}
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4 py-2 border-y border-zinc-50">
+                        <div>
+                          <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Contacto</p>
+                          <p className="text-xs font-medium text-zinc-600 truncate">{client.email}</p>
+                          <p className="text-[10px] text-zinc-400">{client.phone || 'Sem telefone'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Plano / Lojas</p>
+                          <div className="flex items-center gap-2">
+                            <span className={cn(
+                              "px-2 py-0.5 rounded-full text-[10px] font-black uppercase",
+                              client.current_plan === 'pro' ? "bg-purple-100 text-purple-700" : 
+                              client.current_plan === 'enterprise' ? "bg-blue-100 text-blue-700" : 
+                              "bg-zinc-100 text-zinc-700"
+                            )}>
+                              {client.current_plan || 'Sem Plano'}
+                            </span>
+                            <span className="text-xs font-bold text-zinc-600">{client.store_count} lojas</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-2" onClick={(e) => e.stopPropagation()}>
+                        <button 
+                          onClick={() => {
+                            setSelectedClient(client);
+                            setClientFormData({
+                              name: client.name,
+                              company_name: client.company_name || '',
+                              email: client.email,
+                              password: '',
+                              phone: client.phone || '',
+                              nif: client.nif || '',
+                              address: client.address || ''
+                            });
+                            setIsEditModalOpen(true);
+                          }}
+                          className="flex-1 flex items-center justify-center gap-2 py-2 bg-zinc-100 hover:bg-zinc-200 rounded-lg text-zinc-600 text-xs font-bold transition-all"
+                        >
+                          <Edit2 size={14} /> Editar
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setSelectedClient(client);
+                            setIsLicenseModalOpen(true);
+                          }}
+                          className="flex-1 flex items-center justify-center gap-2 py-2 bg-emerald-50 hover:bg-emerald-100 rounded-lg text-emerald-600 text-xs font-bold transition-all"
+                        >
+                          <CreditCard size={14} /> Licença
+                        </button>
+                        <button 
+                          onClick={() => handleUpdateStatus(client.id, client.status === 'active' ? 'suspended' : 'active')}
+                          className={cn(
+                            "p-2 rounded-lg transition-all",
+                            client.status === 'active' ? "bg-rose-50 text-rose-500" : "bg-emerald-50 text-emerald-500"
+                          )}
+                        >
+                          {client.status === 'active' ? <ShieldAlert size={16} /> : <ShieldCheck size={16} />}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </Card>
             </div>
           )}
 
           {activeTab === 'licenses' && (
             <div className="space-y-6">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div className="flex flex-wrap gap-4 items-center">
-                  <div className="relative w-80">
+              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                <div className="flex flex-wrap gap-4 items-center w-full lg:w-auto">
+                  <div className="relative w-full md:w-80">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
                     <input 
                       type="text" 
@@ -1458,30 +1616,32 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       className="w-full pl-12 pr-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
                     />
                   </div>
-                  <select 
-                    value={licenseFilterPlan}
-                    onChange={(e) => setLicenseFilterPlan(e.target.value)}
-                    className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
-                  >
-                    <option value="all">Todos os Planos</option>
-                    <option value="basic">Basic</option>
-                    <option value="pro">Pro</option>
-                    <option value="enterprise">Enterprise</option>
-                  </select>
-                  <select 
-                    value={licenseFilterStatus}
-                    onChange={(e) => setLicenseFilterStatus(e.target.value)}
-                    className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
-                  >
-                    <option value="all">Todos os Estados</option>
-                    <option value="active">Ativas</option>
-                    <option value="expired">Expiradas</option>
-                    <option value="suspended">Suspensas</option>
-                  </select>
+                  <div className="flex flex-1 md:flex-none gap-4 w-full md:w-auto">
+                    <select 
+                      value={licenseFilterPlan}
+                      onChange={(e) => setLicenseFilterPlan(e.target.value)}
+                      className="flex-1 md:flex-none px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
+                    >
+                      <option value="all">Todos os Planos</option>
+                      <option value="basic">Basic</option>
+                      <option value="pro">Pro</option>
+                      <option value="enterprise">Enterprise</option>
+                    </select>
+                    <select 
+                      value={licenseFilterStatus}
+                      onChange={(e) => setLicenseFilterStatus(e.target.value)}
+                      className="flex-1 md:flex-none px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
+                    >
+                      <option value="all">Todos os Estados</option>
+                      <option value="active">Ativas</option>
+                      <option value="expired">Expiradas</option>
+                      <option value="suspended">Suspensas</option>
+                    </select>
+                  </div>
                 </div>
                 <button 
                   onClick={() => setIsLicenseModalOpen(true)}
-                  className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all whitespace-nowrap"
+                  className="w-full lg:w-auto flex items-center justify-center gap-2 bg-black text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all whitespace-nowrap"
                 >
                   <Plus size={20} />
                   Nova Licença
@@ -1507,7 +1667,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                 <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
                   <h3 className="font-bold">Gestão de Licenciamento</h3>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="hidden md:block overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
                       <tr className="border-b border-zinc-50">
@@ -1586,15 +1746,85 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     </tbody>
                   </table>
                 </div>
+
+                <div className="md:hidden divide-y divide-zinc-100">
+                  {filteredLicenses.map((license: any) => (
+                    <div key={license.id} className="p-4 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-bold">{license.company_name || license.client_name}</p>
+                          <p className="text-[10px] text-zinc-400">{license.store_name || 'Licença Global'}</p>
+                        </div>
+                        <span className={cn(
+                          "px-2 py-1 rounded-full text-[10px] font-black uppercase",
+                          license.status === 'active' ? "bg-emerald-100 text-emerald-700" : 
+                          license.status === 'suspended' ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"
+                        )}>
+                          {license.status}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 py-2 border-y border-zinc-50">
+                        <div>
+                          <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Plano</p>
+                          <span className={cn(
+                            "px-2 py-0.5 text-[10px] font-black rounded-full uppercase",
+                            license.plan_type === 'enterprise' ? "bg-purple-100 text-purple-700" :
+                            license.plan_type === 'pro' ? "bg-blue-100 text-blue-700" : "bg-zinc-100 text-zinc-600"
+                          )}>
+                            {license.plan_type}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Expiração</p>
+                          <p className="text-xs font-bold text-zinc-700">{new Date(license.expiry_date).toLocaleDateString()}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-2">
+                        <button 
+                          onClick={() => fetchLicenseHistory(license.user_id)}
+                          className="flex-1 flex items-center justify-center gap-2 py-2 bg-zinc-100 hover:bg-zinc-200 rounded-lg text-zinc-600 text-xs font-bold transition-all"
+                        >
+                          <History size={14} /> Histórico
+                        </button>
+                        <button 
+                          onClick={() => handleRenewLicense(license.id, 1)}
+                          className="flex-1 flex items-center justify-center gap-2 py-2 bg-zinc-900 hover:bg-black rounded-lg text-white text-xs font-bold transition-all"
+                        >
+                          <Calendar size={14} /> Renovar
+                        </button>
+                        <button 
+                          onClick={() => handleUpdateLicenseStatus(license.id, license.status === 'active' ? 'suspended' : 'active')}
+                          className={cn(
+                            "p-2 rounded-lg transition-all",
+                            license.status === 'active' ? "bg-amber-50 text-amber-500" : "bg-emerald-50 text-emerald-500"
+                          )}
+                        >
+                          {license.status === 'active' ? <ShieldAlert size={16} /> : <ShieldCheck size={16} />}
+                        </button>
+                        <button 
+                          onClick={() => handleUpdateLicenseStatus(license.id, 'expired')}
+                          className="p-2 bg-rose-50 rounded-lg text-rose-400 hover:text-rose-600 transition-all"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </Card>
             </div>
           )}
 
           {activeTab === 'support' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-[calc(100vh-180px)]">
-              <div className="lg:col-span-1 flex flex-col gap-6 overflow-hidden">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-auto lg:h-[calc(100vh-180px)]">
+              <div className={cn(
+                "lg:col-span-1 flex flex-col gap-6 overflow-hidden",
+                selectedTicket ? "hidden lg:flex" : "flex"
+              )}>
                 <div className="flex items-center justify-between shrink-0">
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {['open', 'pending', 'closed'].map((status) => (
                       <button 
                         key={status}
@@ -1612,7 +1842,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+                <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar min-h-[400px] lg:min-h-0">
                   {tickets.filter(t => t.status === supportFilter).map((ticket: any) => (
                     <Card 
                       key={ticket.id} 
@@ -1651,24 +1881,30 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                 </div>
               </div>
 
-              <div className="lg:col-span-2 flex flex-col overflow-hidden">
+              <div className={cn(
+                "lg:col-span-2 flex flex-col overflow-hidden",
+                !selectedTicket ? "hidden lg:flex" : "flex h-[calc(100vh-200px)] lg:h-auto"
+              )}>
                 {selectedTicket ? (
                   <Card className="flex-1 flex flex-col">
-                    <div className="p-6 border-b border-zinc-100 flex items-center justify-between shrink-0">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-600">
-                          <UserIcon size={24} />
+                    <div className="p-4 md:p-6 border-b border-zinc-100 flex items-center justify-between shrink-0 bg-zinc-50 lg:bg-white">
+                      <div className="flex items-center gap-3 md:gap-4">
+                        <button onClick={() => setSelectedTicket(null)} className="lg:hidden p-2 hover:bg-zinc-200 rounded-lg transition-colors">
+                          <ChevronLeft size={20} />
+                        </button>
+                        <div className="w-10 h-10 md:w-12 md:h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-600">
+                          <UserIcon size={20} className="md:w-6 md:h-6" />
                         </div>
-                        <div>
-                          <h3 className="font-bold text-lg leading-tight">{selectedTicket.subject}</h3>
-                          <p className="text-xs text-zinc-400">Cliente: <span className="font-bold text-zinc-900">{selectedTicket.client_name}</span></p>
+                        <div className="min-w-0">
+                          <h3 className="font-bold text-base md:text-lg leading-tight truncate">{selectedTicket.subject}</h3>
+                          <p className="text-[10px] md:text-xs text-zinc-400 truncate">Cliente: <span className="font-bold text-zinc-900">{selectedTicket.client_name}</span></p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2 md:gap-3">
                         <select 
                           value={selectedTicket.priority}
                           onChange={(e) => handleUpdateTicketPriority(selectedTicket.id, e.target.value)}
-                          className="text-[10px] font-black uppercase bg-zinc-50 border-none rounded-lg px-2 py-1 outline-none"
+                          className="text-[8px] md:text-[10px] font-black uppercase bg-zinc-100 lg:bg-zinc-50 border-none rounded-lg px-2 py-1 outline-none"
                         >
                           <option value="low">Baixa</option>
                           <option value="medium">Média</option>
@@ -1677,7 +1913,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                         <select 
                           value={selectedTicket.status}
                           onChange={(e) => handleUpdateTicketStatus(selectedTicket.id, e.target.value)}
-                          className="text-[10px] font-black uppercase bg-zinc-50 border-none rounded-lg px-2 py-1 outline-none"
+                          className="text-[8px] md:text-[10px] font-black uppercase bg-zinc-100 lg:bg-zinc-50 border-none rounded-lg px-2 py-1 outline-none"
                         >
                           <option value="open">Aberto</option>
                           <option value="pending">Pendente</option>
@@ -2330,7 +2566,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                   <div className="lg:col-span-2 space-y-8">
                     {/* Stats Summary */}
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
                         <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Lojas</p>
                         <p className="text-2xl font-black">{clientDetails.stats.totalStores}</p>
@@ -2818,12 +3054,12 @@ const OwnerOverview = ({ user }: { user: User }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-end">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Visão Geral do Negócio</h2>
           <p className="text-zinc-500">Resumo de desempenho de todas as suas unidades.</p>
         </div>
-        <div className="text-right">
+        <div className="text-left md:text-right">
           <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Estado Global</p>
           <div className="flex items-center gap-2 text-emerald-600 font-bold">
             <Activity size={16} />
@@ -2967,7 +3203,7 @@ const MyStores = ({ user }: { user: User }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-end">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Minhas Lojas</h2>
           <p className="text-zinc-500">Gerencie e configure suas unidades de negócio.</p>
@@ -2978,7 +3214,7 @@ const MyStores = ({ user }: { user: User }) => {
             setFormData({ name: '', address: '', phone: '', nif: '', logo_url: '', status: 'active' });
             setIsModalOpen(true);
           }}
-          className="bg-black text-white px-6 py-3 rounded-xl flex items-center gap-2 font-bold hover:bg-zinc-800 transition-all active:scale-95 shadow-lg shadow-black/10"
+          className="w-full md:w-auto bg-black text-white px-6 py-3 rounded-xl flex items-center justify-center gap-2 font-bold hover:bg-zinc-800 transition-all active:scale-95 shadow-lg shadow-black/10"
         >
           <Plus size={20} />
           Nova Loja
@@ -3191,7 +3427,7 @@ const OwnerClients = ({ user }: { user: User }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black tracking-tight">Gestão de Clientes</h2>
           <p className="text-zinc-500">Registe e gira os seus clientes para faturação.</p>
@@ -3202,7 +3438,7 @@ const OwnerClients = ({ user }: { user: User }) => {
             setFormData({ name: '', nif: '', email: '', phone: '', address: '', type: 'individual' });
             setIsModalOpen(true);
           }}
-          className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
+          className="w-full md:w-auto bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
         >
           <Plus size={20} />
           Novo Cliente
@@ -3210,7 +3446,8 @@ const OwnerClients = ({ user }: { user: User }) => {
       </div>
 
       <Card className="overflow-hidden border-zinc-100 shadow-sm rounded-2xl">
-        <table className="w-full text-left">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left min-w-[600px]">
           <thead className="bg-zinc-50 border-b border-zinc-100">
             <tr>
               <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Nome</th>
@@ -3268,6 +3505,7 @@ const OwnerClients = ({ user }: { user: User }) => {
             ))}
           </tbody>
         </table>
+        </div>
       </Card>
 
       <Modal 
@@ -3799,7 +4037,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <button 
             onClick={() => navigate('/owner/stores')}
@@ -3808,30 +4046,30 @@ const StoreAdmin = ({ user }: { user: User }) => {
             <ChevronLeft size={24} />
           </button>
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-black text-white rounded-2xl flex items-center justify-center overflow-hidden">
+            <div className="w-10 h-10 md:w-12 md:h-12 bg-black text-white rounded-2xl flex items-center justify-center overflow-hidden shrink-0">
               {store.logo_url ? (
                 <img src={store.logo_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
-                <Store size={24} />
+                <Store size={20} className="md:w-6 md:h-6" />
               )}
             </div>
-            <div>
-              <h2 className="text-2xl font-bold tracking-tight">{store.name}</h2>
-              <p className="text-zinc-500 text-sm flex items-center gap-1">
-                <Activity size={14} className={store.status === 'active' ? 'text-emerald-500' : 'text-rose-500'} />
+            <div className="min-w-0">
+              <h2 className="text-xl md:text-2xl font-bold tracking-tight truncate">{store.name}</h2>
+              <p className="text-zinc-500 text-[10px] md:text-sm flex items-center gap-1 truncate">
+                <Activity size={12} className={store.status === 'active' ? 'text-emerald-500' : 'text-rose-500'} />
                 Painel Administrativo • {store.status === 'active' ? 'Ativa' : 'Inativa'}
               </p>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-xl overflow-x-auto">
+        <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-xl overflow-x-auto no-scrollbar">
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
             { id: 'products', icon: Package, label: 'Produtos' },
             { id: 'promotions', icon: Tag, label: 'Promoções' },
             { id: 'stock', icon: Barcode, label: 'Stock' },
-            { id: 'staff', icon: Users, label: 'Pessoal' },
+            { id: 'staff', icon: Users, label: 'Pessoas' },
             { id: 'reports', icon: BarChart3, label: 'Relatórios' },
             { id: 'settings', icon: Settings2, label: 'Configurações' },
             { id: 'support', icon: LifeBuoy, label: 'Suporte' },
@@ -3840,13 +4078,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
               className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap",
+                "flex items-center gap-2 px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-bold transition-all whitespace-nowrap",
                 activeTab === tab.id 
                   ? "bg-orange-500 text-white shadow-sm" 
                   : "bg-white text-zinc-500 hover:text-orange-500"
               )}
             >
-              <tab.icon size={16} />
+              <tab.icon size={14} className="md:w-4 md:h-4" />
               {tab.label}
             </button>
           ))}
@@ -3928,31 +4166,31 @@ const StoreAdmin = ({ user }: { user: User }) => {
 
           {activeTab === 'products' && (
             <Card>
-              <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
+              <div className="p-6 border-b border-zinc-100 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                 <h3 className="font-bold">Gestão de Produtos</h3>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 w-full lg:w-auto">
                   <button 
                     onClick={() => setIsPromoModalOpen(true)}
-                    className="bg-amber-100 text-amber-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-amber-200 transition-colors"
+                    className="flex-1 lg:flex-none bg-amber-100 text-amber-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-amber-200 transition-colors"
                   >
                     <Tag size={16} /> Criar Promoção
                   </button>
                   <button 
                     onClick={() => setIsProformaModalOpen(true)}
-                    className="bg-blue-100 text-blue-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-200 transition-colors"
+                    className="flex-1 lg:flex-none bg-blue-100 text-blue-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-blue-200 transition-colors"
                   >
                     <FileText size={16} /> Fatura Proforma
                   </button>
                   <button 
                     onClick={() => setIsProductModalOpen(true)}
-                    className="bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
+                    className="flex-1 lg:flex-none bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
                   >
                     <Plus size={16} /> Novo Produto
                   </button>
                 </div>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left min-w-[800px]">
                   <thead>
                     <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
                       <th className="px-6 py-4 font-semibold">Produto</th>
@@ -4017,22 +4255,77 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   </tbody>
                 </table>
               </div>
+
+              <div className="md:hidden divide-y divide-zinc-100">
+                {products.map(product => (
+                  <div key={product.id} className="p-4 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <img src={product.image_url || undefined} alt="" className="w-12 h-12 rounded-xl object-cover" referrerPolicy="no-referrer" />
+                        <div>
+                          <p className="font-bold text-sm">{product.name}</p>
+                          <p className="text-[10px] font-mono text-zinc-400">{product.barcode}</p>
+                        </div>
+                      </div>
+                      <span className={cn(
+                        "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
+                        product.stock >= 10 ? "bg-emerald-100 text-emerald-700" : 
+                        product.stock >= 5 ? "bg-amber-100 text-amber-700" : 
+                        "bg-rose-100 text-rose-700"
+                      )}>
+                        {product.stock} un
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between py-2 border-y border-zinc-50">
+                      <div>
+                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Preço</p>
+                        {product.discount_percent ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-zinc-400 line-through text-xs">Kz {product.price.toLocaleString()}</span>
+                            <span className="text-emerald-600 font-bold text-sm">Kz {(product.price * (1 - product.discount_percent / 100)).toLocaleString()}</span>
+                          </div>
+                        ) : (
+                          <p className="font-bold text-sm">Kz {product.price.toLocaleString()}</p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Categoria</p>
+                        <p className="text-xs font-bold text-zinc-600">{product.category}</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => handleEditProduct(product)}
+                        className="flex-1 flex items-center justify-center gap-2 py-2 bg-zinc-100 hover:bg-zinc-200 rounded-lg text-zinc-600 text-xs font-bold transition-all"
+                      >
+                        <Edit2 size={14} /> Editar
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteProduct(product.id)}
+                        className="flex-1 flex items-center justify-center gap-2 py-2 bg-rose-50 hover:bg-rose-100 rounded-lg text-rose-600 text-xs font-bold transition-all"
+                      >
+                        <Trash2 size={14} /> Eliminar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </Card>
           )}
 
           {activeTab === 'promotions' && (
             <Card>
-              <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
+              <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <h3 className="font-bold">Promoções Ativas</h3>
                 <button 
                   onClick={() => setIsPromoModalOpen(true)}
-                  className="bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
+                  className="w-full md:w-auto bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
                 >
                   <Plus size={16} /> Nova Promoção
                 </button>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left min-w-[600px]">
                   <thead>
                     <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
                       <th className="px-6 py-4 font-semibold">Nome</th>
@@ -4075,6 +4368,37 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   </tbody>
                 </table>
               </div>
+
+              <div className="md:hidden divide-y divide-zinc-100">
+                {promotions.map(promo => (
+                  <div key={promo.id} className="p-4 space-y-3">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-bold text-sm">{promo.name}</p>
+                        <p className="text-[10px] text-zinc-400">{new Date(promo.start_date).toLocaleDateString()} - {new Date(promo.end_date).toLocaleDateString()}</p>
+                      </div>
+                      <span className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-[10px] font-bold">
+                        -{promo.discount_percent}%
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-zinc-500 line-clamp-2 bg-zinc-50 p-2 rounded-lg">
+                      <span className="font-bold uppercase tracking-widest text-zinc-400 mr-1">Produtos:</span>
+                      {promo.product_names}
+                    </p>
+                    <div className="flex justify-end">
+                      <button 
+                        onClick={() => handleDeletePromo(promo.id)}
+                        className="flex items-center gap-2 px-4 py-2 bg-rose-50 text-rose-600 rounded-lg text-xs font-bold transition-all"
+                      >
+                        <Trash2 size={14} /> Eliminar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {promotions.length === 0 && (
+                  <div className="p-12 text-center text-zinc-400 text-sm">Nenhuma promoção registada.</div>
+                )}
+              </div>
             </Card>
           )}
 
@@ -4082,7 +4406,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
             <div className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <Card className="lg:col-span-2">
-                  <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
+                  <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <h3 className="font-bold">Equipa da Loja</h3>
                     <button 
                       onClick={() => {
@@ -4090,47 +4414,59 @@ const StoreAdmin = ({ user }: { user: User }) => {
                         setStaffForm({ name: '', email: '', username: '', password: '', salary: '', shift_info: '' });
                         setIsStaffModalOpen(true);
                       }}
-                      className="bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
+                      className="w-full md:w-auto bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
                     >
                       <Plus size={16} /> Adicionar Colaborador
                     </button>
                   </div>
                   <div className="divide-y divide-zinc-100">
                     {staff.map(member => (
-                      <div key={member.id} className="p-6 flex items-center justify-between hover:bg-zinc-50 transition-colors">
+                      <div key={member.id} className="p-4 md:p-6 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-zinc-50 transition-colors gap-4">
                         <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-400">
-                            <UserIcon size={24} />
+                          <div className="w-10 h-10 md:w-12 md:h-12 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-400 shrink-0">
+                            <UserIcon size={20} className="md:w-6 md:h-6" />
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="font-bold">{member.name}</p>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-bold truncate">{member.name}</p>
                               {member.status === 'suspended' && (
                                 <span className="text-[10px] font-black bg-rose-100 text-rose-600 px-2 py-0.5 rounded-full uppercase tracking-tighter">
                                   Suspenso
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-zinc-500">{member.email} • {member.shift_info}</p>
+                            <p className="text-xs text-zinc-500 truncate">{member.email} • {member.shift_info}</p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-4">
-                          <div className="text-right">
-                            <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Salário</p>
-                            <p className="font-bold">Kz {member.salary.toLocaleString()}</p>
+                        <div className="flex items-center justify-between sm:justify-end gap-2 md:gap-4">
+                          <div className="text-left sm:text-right">
+                            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Salário</p>
+                            <p className="font-bold text-sm md:text-base">Kz {member.salary.toLocaleString()}</p>
                           </div>
-                          <div className="flex gap-2">
+                          <div className="flex gap-1 md:gap-2">
                             <button 
                               onClick={() => handleToggleStaffStatus(member.id, member.status)}
                               className={cn(
-                                "p-2 rounded-lg transition-all",
+                                "flex items-center gap-2 px-3 py-2 rounded-lg transition-all text-xs font-bold",
                                 member.status === 'active' 
-                                  ? "text-zinc-400 hover:text-rose-500 hover:bg-rose-50" 
-                                  : "text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50"
+                                  ? "text-zinc-500 hover:text-rose-600 hover:bg-rose-50" 
+                                  : "text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
                               )}
                               title={member.status === 'active' ? "Suspender Vendedor" : "Ativar Vendedor"}
                             >
-                              {member.status === 'active' ? <ShieldAlert size={18} /> : <ShieldCheck size={18} />}
+                              {member.status === 'active' ? (
+                                <>
+                                  <ShieldAlert size={16} />
+                                  <span className="hidden sm:inline">Suspender</span>
+                                  <span className="sm:hidden">Susp.</span>
+                                </>
+                              ) : (
+                                <>
+                                  <ShieldCheck size={16} />
+                                  <span className="hidden sm:inline">Ativar</span>
+                                  <span className="sm:hidden">Ativ.</span>
+                                </>
+                              )}
                             </button>
                             <button 
                               onClick={() => handleEditStaff(member)}
@@ -4190,14 +4526,14 @@ const StoreAdmin = ({ user }: { user: User }) => {
           {activeTab === 'reports' && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <Card className="lg:col-span-2 p-6">
-                  <div className="flex justify-between items-center mb-6">
+                <Card className="lg:col-span-2 p-4 md:p-6">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-2">
                     <h3 className="font-bold">Faturamento (Últimos 30 dias)</h3>
-                    <div className="flex items-center gap-2 text-xs font-bold text-zinc-400">
+                    <div className="flex items-center gap-2 text-[10px] md:text-xs font-bold text-zinc-400">
                       <div className="w-3 h-3 bg-emerald-500 rounded-full" /> Receita
                     </div>
                   </div>
-                  <div className="h-[300px] w-full">
+                  <div className="h-[250px] md:h-[300px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={reportsData?.salesByDay || []}>
                         <defs>
@@ -4211,17 +4547,17 @@ const StoreAdmin = ({ user }: { user: User }) => {
                           dataKey="date" 
                           axisLine={false} 
                           tickLine={false} 
-                          tick={{ fontSize: 10, fill: '#a1a1aa' }}
+                          tick={{ fontSize: 9, fill: '#a1a1aa' }}
                           tickFormatter={(str) => new Date(str).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' })}
                         />
                         <YAxis 
                           axisLine={false} 
                           tickLine={false} 
-                          tick={{ fontSize: 10, fill: '#a1a1aa' }}
+                          tick={{ fontSize: 9, fill: '#a1a1aa' }}
                           tickFormatter={(val) => `Kz ${val >= 1000 ? (val/1000).toFixed(1) + 'k' : val}`}
                         />
                         <Tooltip 
-                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
                           formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Receita']}
                         />
                         <Area type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
@@ -4230,21 +4566,21 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   </div>
                 </Card>
 
-                <Card className="p-6">
+                <Card className="p-4 md:p-6">
                   <h3 className="font-bold mb-6">Top 5 Produtos</h3>
                   <div className="space-y-4">
                     {reportsData?.topProducts?.map((product: any, idx: number) => (
                       <div key={idx} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 bg-black text-white rounded-lg flex items-center justify-center text-xs font-bold">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-8 h-8 bg-black text-white rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0">
                             #{idx + 1}
                           </div>
-                          <div>
-                            <p className="text-sm font-bold truncate max-w-[120px]">{product.name}</p>
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-zinc-800 truncate">{product.name}</p>
                             <p className="text-[10px] text-zinc-400">{product.quantity} unidades</p>
                           </div>
                         </div>
-                        <p className="text-sm font-black">Kz {product.revenue.toLocaleString()}</p>
+                        <p className="text-xs font-black shrink-0 ml-2">Kz {product.revenue.toLocaleString()}</p>
                       </div>
                     ))}
                     {(!reportsData?.topProducts || reportsData.topProducts.length === 0) && (
@@ -4255,17 +4591,17 @@ const StoreAdmin = ({ user }: { user: User }) => {
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Card className="p-6">
+                <Card className="p-4 md:p-6">
                   <h3 className="font-bold mb-6">Vendas por Categoria</h3>
-                  <div className="h-[300px]">
+                  <div className="h-[250px] md:h-[300px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
                           data={reportsData?.salesByCategory || []}
                           cx="50%"
                           cy="50%"
-                          innerRadius={60}
-                          outerRadius={80}
+                          innerRadius={50}
+                          outerRadius={70}
                           paddingAngle={5}
                           dataKey="value"
                         >
@@ -4274,23 +4610,23 @@ const StoreAdmin = ({ user }: { user: User }) => {
                           ))}
                         </Pie>
                         <Tooltip />
-                        <Legend verticalAlign="bottom" height={36}/>
+                        <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '10px' }}/>
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
                 </Card>
 
-                <Card className="p-6">
+                <Card className="p-4 md:p-6">
                   <h3 className="font-bold mb-6">Métodos de Pagamento</h3>
-                  <div className="h-[300px]">
+                  <div className="h-[250px] md:h-[300px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={reportsData?.paymentMethods || []}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
-                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#a1a1aa' }} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: '#a1a1aa' }} />
                         <Tooltip 
                           cursor={{ fill: '#f4f4f5' }}
-                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
                         />
                         <Bar dataKey="value" radius={[10, 10, 0, 0]}>
                           {(reportsData?.paymentMethods || []).map((entry: any, index: number) => (
@@ -4311,57 +4647,57 @@ const StoreAdmin = ({ user }: { user: User }) => {
                 <div className="p-6 border-b border-zinc-100">
                   <h3 className="font-bold">Configurações da Loja</h3>
                 </div>
-                <form onSubmit={handleUpdateSettings} className="p-6 space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <form onSubmit={handleUpdateSettings} className="p-4 md:p-6 space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                     <div>
-                      <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome da Loja</label>
+                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome da Loja</label>
                       <input 
                         type="text" 
                         value={settingsForm.name}
                         onChange={e => setSettingsForm({...settingsForm, name: e.target.value})}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF da Empresa</label>
+                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF da Empresa</label>
                       <input 
                         type="text" 
                         value={settingsForm.nif}
                         onChange={e => setSettingsForm({...settingsForm, nif: e.target.value})}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Telefone de Contacto</label>
+                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Telefone de Contacto</label>
                       <input 
                         type="text" 
                         value={settingsForm.phone}
                         onChange={e => setSettingsForm({...settingsForm, phone: e.target.value})}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
+                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
                       <input 
                         type="text" 
                         value={settingsForm.address}
                         onChange={e => setSettingsForm({...settingsForm, address: e.target.value})}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
                       />
                     </div>
                     <div className="col-span-full">
-                      <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">URL do Logotipo</label>
+                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">URL do Logotipo</label>
                       <input 
                         type="text" 
                         value={settingsForm.logo_url}
                         onChange={e => setSettingsForm({...settingsForm, logo_url: e.target.value})}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
                         placeholder="https://..."
                       />
                     </div>
                   </div>
                   <div className="pt-4 border-t border-zinc-100 flex justify-end">
-                    <button type="submit" className="bg-black text-white px-8 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95">
+                    <button type="submit" className="w-full md:w-auto bg-black text-white px-8 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95">
                       Guardar Alterações
                     </button>
                   </div>
@@ -4419,34 +4755,34 @@ const StoreAdmin = ({ user }: { user: User }) => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <Card className="p-6">
                   <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center">
-                      <Package size={24} />
+                    <div className="w-10 h-10 md:w-12 md:h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center shrink-0">
+                      <Package size={20} className="md:w-6 md:h-6" />
                     </div>
                     <div>
-                      <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Total Produtos</p>
-                      <p className="text-2xl font-black">{stockReport?.stats?.total_products || 0}</p>
+                      <p className="text-[10px] md:text-xs font-bold text-zinc-400 uppercase tracking-widest">Total Produtos</p>
+                      <p className="text-xl md:text-2xl font-black">{stockReport?.stats?.total_products || 0}</p>
                     </div>
                   </div>
                 </Card>
                 <Card className="p-6">
                   <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center">
-                      <BarChart3 size={24} />
+                    <div className="w-10 h-10 md:w-12 md:h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center shrink-0">
+                      <BarChart3 size={20} className="md:w-6 md:h-6" />
                     </div>
                     <div>
-                      <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Quantidade Total</p>
-                      <p className="text-2xl font-black">{stockReport?.stats?.total_quantity || 0}</p>
+                      <p className="text-[10px] md:text-xs font-bold text-zinc-400 uppercase tracking-widest">Quantidade Total</p>
+                      <p className="text-xl md:text-2xl font-black">{stockReport?.stats?.total_quantity || 0}</p>
                     </div>
                   </div>
                 </Card>
                 <Card className="p-6">
                   <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center">
-                      <DollarSign size={24} />
+                    <div className="w-10 h-10 md:w-12 md:h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center shrink-0">
+                      <DollarSign size={20} className="md:w-6 md:h-6" />
                     </div>
                     <div>
-                      <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Valor do Stock</p>
-                      <p className="text-2xl font-black">Kz {(stockReport?.stats?.total_value || 0).toLocaleString()}</p>
+                      <p className="text-[10px] md:text-xs font-bold text-zinc-400 uppercase tracking-widest">Valor do Stock</p>
+                      <p className="text-xl md:text-2xl font-black truncate">Kz {(stockReport?.stats?.total_value || 0).toLocaleString()}</p>
                     </div>
                   </div>
                 </Card>
@@ -4462,14 +4798,14 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {stockReport.lowStock.map((p: any) => (
                       <div key={p.id} className="flex items-center justify-between p-3 bg-white border border-rose-100 rounded-xl shadow-sm">
-                        <div className="flex items-center gap-3">
-                          <img src={p.image_url || undefined} alt="" className="w-8 h-8 rounded object-cover" referrerPolicy="no-referrer" />
-                          <div>
-                            <p className="text-xs font-bold text-zinc-800">{p.name}</p>
+                        <div className="flex items-center gap-3 min-w-0">
+                          <img src={p.image_url || undefined} alt="" className="w-8 h-8 rounded object-cover shrink-0" referrerPolicy="no-referrer" />
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-zinc-800 truncate">{p.name}</p>
                             <p className="text-[10px] text-zinc-400">Mínimo: {p.min_stock}</p>
                           </div>
                         </div>
-                        <span className="text-xs font-black text-rose-600 bg-rose-50 px-2 py-1 rounded-lg">
+                        <span className="text-xs font-black text-rose-600 bg-rose-50 px-2 py-1 rounded-lg shrink-0">
                           {p.stock} un
                         </span>
                       </div>
@@ -4481,17 +4817,17 @@ const StoreAdmin = ({ user }: { user: User }) => {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Inventory List */}
                 <Card className="lg:col-span-2">
-                  <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
+                  <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <h3 className="font-bold">Inventário / Lista de Stock</h3>
                     <button 
                       onClick={() => setIsStockModalOpen(true)}
-                      className="bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
+                      className="w-full md:w-auto bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
                     >
                       <Plus size={16} /> Movimentar Stock
                     </button>
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left">
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-left min-w-[600px]">
                       <thead>
                         <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
                           <th className="px-6 py-4 font-semibold">Produto</th>
@@ -4528,6 +4864,38 @@ const StoreAdmin = ({ user }: { user: User }) => {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+
+                  <div className="md:hidden divide-y divide-zinc-100">
+                    {products.map(product => (
+                      <div key={product.id} className="p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <img src={product.image_url || undefined} alt="" className="w-10 h-10 rounded-lg object-cover" referrerPolicy="no-referrer" />
+                            <p className="font-bold text-sm">{product.name}</p>
+                          </div>
+                          <span className={cn(
+                            "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
+                            product.stock > (product.min_stock || 5) ? "bg-emerald-100 text-emerald-700" : 
+                            product.stock > 0 ? "bg-amber-100 text-amber-700" : 
+                            "bg-rose-100 text-rose-700"
+                          )}>
+                            {product.stock > (product.min_stock || 5) ? "Normal" : 
+                             product.stock > 0 ? "Baixo" : "Esgotado"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center py-2 border-y border-zinc-50">
+                          <div>
+                            <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Stock Atual</p>
+                            <p className="font-bold text-sm">{product.stock} un</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Mínimo</p>
+                            <p className="text-sm font-bold text-zinc-400">{product.min_stock || 5} un</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </Card>
 
@@ -5782,25 +6150,38 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
 
   return (
     <div className="space-y-4">
-      <div ref={invoiceRef} className="bg-white p-8 max-w-md mx-auto shadow-lg border border-zinc-100 rounded-xl invoice-print">
-        <div className="text-center mb-6">
+      <div ref={invoiceRef} className="bg-white p-6 max-w-[300px] mx-auto shadow-sm border border-zinc-100 rounded-lg invoice-print font-mono text-zinc-900">
+        <div className="text-center mb-4 border-b border-zinc-100 pb-4">
           {store.logo_url && (
-            <img src={store.logo_url || undefined} alt="" className="w-16 h-16 mx-auto mb-2 object-contain" referrerPolicy="no-referrer" />
+            <img src={store.logo_url || undefined} alt="" className="w-12 h-12 mx-auto mb-2 object-contain grayscale" referrerPolicy="no-referrer" />
           )}
-          <h2 className="text-xl font-black uppercase tracking-tighter">{store.name}</h2>
-          <p className="text-[10px] text-zinc-500">{store.address}</p>
-          <p className="text-[10px] text-zinc-500">NIF: {store.nif} | Tel: {store.phone}</p>
+          <h2 className="text-lg font-black uppercase tracking-tight">{store.name}</h2>
+          <p className="text-[9px] leading-tight">{store.address}</p>
+          <p className="text-[9px] font-bold">NIF: {store.nif} | TEL: {store.phone}</p>
         </div>
 
-        <div className="border-y border-dashed border-zinc-200 py-3 mb-4 flex justify-between text-[10px] font-medium">
-          <div>
-            <p className="font-black">FATURA Nº: {sale.invoice_number || sale.id.toString().padStart(6, '0')}</p>
-            <p>DATA: {new Date(sale.timestamp).toLocaleString()}</p>
+        <div className="space-y-1 mb-4 text-[9px]">
+          <div className="flex justify-between">
+            <span className="font-bold">FATURA:</span>
+            <span>{sale.invoice_number}</span>
           </div>
-          <div className="text-right">
-            <p>OPERADOR: {user.name}</p>
-            <p>CLIENTE: {sale.client_name}</p>
-            <p>NIF: {sale.client_nif}</p>
+          <div className="flex justify-between">
+            <span className="font-bold">DATA:</span>
+            <span>{new Date(sale.timestamp).toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="font-bold">OPERADOR:</span>
+            <span>{user.name.toUpperCase()}</span>
+          </div>
+          <div className="pt-1 border-t border-zinc-50">
+            <div className="flex justify-between">
+              <span className="font-bold">CLIENTE:</span>
+              <span>{sale.client_name.toUpperCase()}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="font-bold">NIF:</span>
+              <span>{sale.client_nif}</span>
+            </div>
           </div>
         </div>
 

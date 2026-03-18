@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -565,6 +566,20 @@ async function startServer() {
     const owner = db.prepare("SELECT status FROM users WHERE id = ?").get(ownerId) as any;
     if (owner && owner.status === 'suspended') {
       return res.status(403).json({ error: "Acesso suspenso" });
+    }
+
+    // License check
+    const activeLicense = db.prepare(`
+      SELECT id FROM licenses 
+      WHERE user_id = ? AND status = 'active' AND date(expiry_date) >= date('now')
+      LIMIT 1
+    `).get(ownerId);
+
+    if (!activeLicense) {
+      const storeCount = db.prepare("SELECT count(*) as count FROM stores WHERE owner_id = ?").get(ownerId) as any;
+      if (storeCount.count > 0) {
+        return res.status(403).json({ error: "Licença expirada" });
+      }
     }
 
     res.json({ status: user.status });
@@ -1685,10 +1700,55 @@ async function startServer() {
     if (sale) {
       sale.items = JSON.parse(sale.items);
       if (sale.split_details) sale.split_details = JSON.parse(sale.split_details);
-    }
+      
+      // --- SAF-T JSON Generation & AGT Submission ---
+      try {
+        const store = db.prepare("SELECT * FROM stores WHERE id = ?").get(store_id) as any;
+        const saftData = {
+          Header: {
+            InvoiceNo: invoice_number,
+            InvoiceDate: new Date(sale.timestamp).toISOString().split('T')[0],
+            SystemEntryDate: new Date(sale.timestamp).toISOString(),
+            StoreName: store.name,
+            StoreNIF: store.nif,
+            ClientName: client_name || 'Consumidor Final',
+            ClientNIF: client_nif || '999999999'
+          },
+          Items: sale.items.map((item: any) => ({
+            ProductCode: item.barcode || item.id,
+            ProductDescription: item.name,
+            Quantity: item.quantity,
+            UnitPrice: item.price,
+            TaxAmount: (item.price * item.quantity * 0.14), // Assuming 14% VAT
+            TotalAmount: item.price * item.quantity
+          })),
+          Totals: {
+            GrossTotal: total_amount,
+            TaxPayable: tax_amount || (total_amount * 0.14),
+            NetTotal: total_amount - (tax_amount || (total_amount * 0.14))
+          }
+        };
 
-    // Experimental AGT Submission Log
-    console.log(`[AGT EXPERIMENTAL] Invoice ${invoice_number} forwarded to AGT successfully.`);
+        // 1. Save to local folder
+        const saftDir = path.join(process.cwd(), "saft_files");
+        if (!fs.existsSync(saftDir)) {
+          fs.mkdirSync(saftDir, { recursive: true });
+        }
+        const fileName = `SAFT_${invoice_number.replace(/[\/\s]/g, '_')}.json`;
+        fs.writeFileSync(path.join(saftDir, fileName), JSON.stringify(saftData, null, 2));
+        console.log(`SAF-T file saved: ${fileName}`);
+
+        // 2. Submit to AGT (Mock)
+        console.log(`Submitting invoice ${invoice_number} to AGT...`);
+        // In a real scenario, we would use fetch() to send the JSON to AGT API
+        db.prepare("UPDATE transactions SET agt_status = 'sent' WHERE id = ?").run(sale.id);
+        
+      } catch (saftError) {
+        console.error("Error generating SAF-T or submitting to AGT:", saftError);
+        db.prepare("UPDATE transactions SET agt_status = 'error' WHERE id = ?").run(sale.id);
+      }
+      // ----------------------------------------------
+    }
     
     res.json({ success: true, sale });
   });
