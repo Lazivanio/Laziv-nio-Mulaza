@@ -220,6 +220,10 @@ try {
       console.error("Error creating barcode index:", e);
     }
   }
+  const proformaColumns = db.prepare("PRAGMA table_info(proforma_invoices)").all() as any[];
+  if (!proformaColumns.some(col => col.name === 'invoice_number')) {
+    db.exec("ALTER TABLE proforma_invoices ADD COLUMN invoice_number TEXT");
+  }
 } catch (e) {
   console.error("Migration error:", e);
 }
@@ -319,6 +323,7 @@ db.exec(`
     items TEXT, -- JSON string
     bank_accounts TEXT, -- JSON string
     status TEXT DEFAULT 'draft', -- 'draft', 'sent', 'converted'
+    invoice_number TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(store_id) REFERENCES stores(id),
     FOREIGN KEY(owner_id) REFERENCES users(id)
@@ -2003,11 +2008,21 @@ async function startServer() {
       const store = db.prepare("SELECT bank_accounts FROM stores WHERE id = ?").get(store_id) as any;
       const bank_accounts = store?.bank_accounts || "[]";
 
+      // Generate invoice number
+      const year = new Date().getFullYear();
+      const count = db.prepare("SELECT count(*) as count FROM proforma_invoices WHERE store_id = ? AND strftime('%Y', created_at) = ?").get(store_id, year.toString()) as any;
+      const invoice_number = `PF/${year}/${(count.count + 1).toString().padStart(4, '0')}`;
+
       const result = db.prepare(`
-        INSERT INTO proforma_invoices (store_id, owner_id, client_name, client_nif, client_address, total_amount, items, bank_accounts)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(store_id, owner_id, client_name, client_nif, client_address, total_amount, JSON.stringify(items), bank_accounts);
-      res.json({ id: result.lastInsertRowid });
+        INSERT INTO proforma_invoices (store_id, owner_id, client_name, client_nif, client_address, total_amount, items, bank_accounts, invoice_number)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(store_id, owner_id, client_name, client_nif, client_address, total_amount, JSON.stringify(items), bank_accounts, invoice_number);
+      
+      const newProforma = db.prepare("SELECT * FROM proforma_invoices WHERE id = ?").get(result.lastInsertRowid) as any;
+      res.json({
+        ...newProforma,
+        items: JSON.parse(newProforma.items)
+      });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

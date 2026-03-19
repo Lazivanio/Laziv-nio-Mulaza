@@ -1,6 +1,7 @@
 import { useState, useEffect, ReactNode, FormEvent, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { jsPDF } from "jspdf";
+import autoTable from 'jspdf-autotable';
 import html2canvas from "html2canvas";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -3772,6 +3773,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [isPromoModalOpen, setIsPromoModalOpen] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isProformaModalOpen, setIsProformaModalOpen] = useState(false);
+  const [proformas, setProformas] = useState<any[]>([]);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -3844,6 +3846,9 @@ const StoreAdmin = ({ user }: { user: User }) => {
     fetch(`/api/owner/reports/${storeId}`)
       .then(res => res.json())
       .then(setReportsData);
+    fetch(`/api/owner/proforma/${storeId}`)
+      .then(res => res.json())
+      .then(setProformas);
     fetch('/api/admin/stores')
       .then(res => res.json())
       .then(setStores);
@@ -4149,9 +4154,11 @@ const StoreAdmin = ({ user }: { user: User }) => {
       });
 
       if (res.ok) {
+        const proformaData = await res.json();
         setIsProformaModalOpen(false);
         setProformaForm({ client_name: '', client_nif: '', client_address: '', items: [] });
         alert("Fatura Proforma criada com sucesso!");
+        await generateProformaPDF(proformaData, store, user);
         fetchData();
       }
     } catch (e) {
@@ -4229,6 +4236,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
             { id: 'products', icon: Package, label: 'Produtos' },
+            { id: 'proformas', icon: FileText, label: 'Proformas' },
             { id: 'promotions', icon: Tag, label: 'Promoções' },
             { id: 'stock', icon: Barcode, label: 'Stock' },
             { id: 'staff', icon: Users, label: 'Pessoas' },
@@ -4809,6 +4817,86 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   </div>
                 </Card>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'proformas' && (
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex justify-between items-center mb-6 shrink-0">
+                <div>
+                  <h3 className="text-xl font-bold">Faturas Proforma</h3>
+                  <p className="text-sm text-zinc-500">Histórico de orçamentos e faturas proforma emitidas.</p>
+                </div>
+                <button 
+                  onClick={() => setIsProformaModalOpen(true)}
+                  className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-zinc-800 transition-all shadow-lg shadow-black/10"
+                >
+                  <Plus size={18} /> Nova Proforma
+                </button>
+              </div>
+
+              <Card className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                <div className="flex-1 overflow-y-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="sticky top-0 bg-white z-10">
+                      <tr className="border-b border-zinc-100">
+                        <th className="p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Nº Fatura</th>
+                        <th className="p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
+                        <th className="p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Data</th>
+                        <th className="p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Total</th>
+                        <th className="p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Status</th>
+                        <th className="p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {proformas.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="p-12 text-center text-zinc-400">
+                            Nenhuma fatura proforma encontrada.
+                          </td>
+                        </tr>
+                      ) : (
+                        proformas.map((p) => (
+                          <tr key={p.id} className="border-b border-zinc-50 hover:bg-zinc-50 transition-colors group">
+                            <td className="p-4">
+                              <span className="font-mono font-bold text-zinc-900">{p.invoice_number}</span>
+                            </td>
+                            <td className="p-4">
+                              <p className="font-bold text-zinc-900">{p.client_name}</p>
+                              <p className="text-[10px] text-zinc-500">{p.client_nif}</p>
+                            </td>
+                            <td className="p-4 text-sm text-zinc-600">
+                              {new Date(p.created_at).toLocaleDateString()}
+                            </td>
+                            <td className="p-4 font-bold text-zinc-900">
+                              Kz {p.total_amount.toLocaleString()}
+                            </td>
+                            <td className="p-4">
+                              <span className={cn(
+                                "px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider",
+                                p.status === 'converted' ? "bg-emerald-100 text-emerald-600" : "bg-amber-100 text-amber-600"
+                              )}>
+                                {p.status === 'converted' ? 'Convertida' : 'Pendente'}
+                              </span>
+                            </td>
+                            <td className="p-4 text-right">
+                              <div className="flex justify-end gap-2">
+                                <button 
+                                  onClick={async () => await generateProformaPDF(p, store, user)}
+                                  className="p-2 hover:bg-zinc-200 rounded-xl transition-colors text-zinc-600"
+                                  title="Imprimir / Descarregar"
+                                >
+                                  <Printer size={16} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
             </div>
           )}
 
@@ -6817,9 +6905,11 @@ const SellerPOS = ({ user }: { user: User }) => {
       });
 
       if (res.ok) {
+        const proformaData = await res.json();
         setIsProformaModalOpen(false);
         setProformaForm({ client_name: '', client_nif: '', client_address: '' });
         alert("Fatura Proforma criada com sucesso!");
+        await generateProformaPDF(proformaData, storeInfo, user);
       }
     } catch (e) {
       console.error(e);
@@ -8163,6 +8253,225 @@ const SellerSettings = ({ user, onUpdate }: { user: User, onUpdate: (u: User) =>
 };
 
 // --- Main App ---
+
+const generateProformaPDF = async (proforma: any, store: any, user: any) => {
+  const doc = new jsPDF();
+  const orange = [249, 115, 22]; // #f97316
+  const black = [0, 0, 0];
+  const white = [255, 255, 255];
+  const zinc400 = [161, 161, 170];
+  const zinc500 = [113, 113, 122];
+
+  // Background accent (top orange bar)
+  doc.setFillColor(orange[0], orange[1], orange[2]);
+  doc.rect(0, 0, 210, 5, 'F');
+  
+  // Top left: Logo
+  if (store.logo_url) {
+    try {
+      const imgData = await new Promise<string>((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0);
+            resolve(canvas.toDataURL('image/png'));
+          } else {
+            reject(new Error('Canvas context error'));
+          }
+        };
+        img.onerror = () => reject(new Error('Image load error'));
+        img.src = store.logo_url;
+      });
+      doc.addImage(imgData, 'PNG', 20, 15, 25, 25);
+    } catch (e) {
+      console.error('Error loading logo for PDF:', e);
+      doc.setFontSize(28);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(orange[0], orange[1], orange[2]);
+      doc.text(store.name.substring(0, 1).toUpperCase(), 25, 35);
+    }
+  } else {
+    doc.setFontSize(28);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(orange[0], orange[1], orange[2]);
+    doc.text(store.name.substring(0, 1).toUpperCase(), 25, 35);
+  }
+
+  // Top right: Store details
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(black[0], black[1], black[2]);
+  doc.text(store.name.toUpperCase(), 190, 20, { align: 'right' });
+  
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(zinc500[0], zinc500[1], zinc500[2]);
+  doc.text(`NIF: ${store.nif || '---'}`, 190, 26, { align: 'right' });
+  doc.text(`TEL: ${store.phone || '---'}`, 190, 31, { align: 'right' });
+  doc.text(`EMAIL: ${store.email || '---'}`, 190, 36, { align: 'right' });
+  
+  const splitAddress = doc.splitTextToSize(store.address || '---', 60);
+  doc.text(splitAddress, 190, 41, { align: 'right' });
+
+  // Title Section
+  doc.setFillColor(black[0], black[1], black[2]);
+  doc.rect(20, 60, 170, 15, 'F');
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(white[0], white[1], white[2]);
+  doc.text('FATURA PROFORMA', 105, 70, { align: 'center' });
+
+  // Document Info
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(black[0], black[1], black[2]);
+  doc.text(`Nº DOCUMENTO:`, 20, 85);
+  doc.setFont('helvetica', 'normal');
+  doc.text(proforma.invoice_number || 'PF-' + Date.now().toString().slice(-6), 55, 85);
+  
+  doc.setFont('helvetica', 'bold');
+  doc.text(`DATA EMISSÃO:`, 20, 90);
+  doc.setFont('helvetica', 'normal');
+  doc.text(new Date().toLocaleString(), 55, 90);
+
+  // Client info box
+  doc.setDrawColor(zinc400[0], zinc400[1], zinc400[2]);
+  doc.setLineWidth(0.1);
+  doc.roundedRect(20, 100, 170, 30, 3, 3, 'S');
+  
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(orange[0], orange[1], orange[2]);
+  doc.text('DADOS DO CLIENTE', 25, 106);
+  
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(black[0], black[1], black[2]);
+  doc.text(proforma.client_name.toUpperCase(), 25, 113);
+  
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(zinc500[0], zinc500[1], zinc500[2]);
+  doc.text(`NIF: ${proforma.client_nif || 'CONSUMIDOR FINAL'}`, 25, 119);
+  doc.text(`ENDEREÇO: ${proforma.client_address || 'N/A'}`, 25, 124);
+
+  // Table
+  const tableData = proforma.items.map((item: any, index: number) => [
+    index + 1,
+    item.name,
+    item.quantity,
+    `Kz ${item.price.toLocaleString()}`,
+    `Kz ${(item.price * item.quantity).toLocaleString()}`
+  ]);
+
+  autoTable(doc, {
+    startY: 140,
+    head: [['Nº', 'DESCRIÇÃO DO PRODUTO', 'QTD', 'PREÇO UNIT.', 'TOTAL']],
+    body: tableData,
+    theme: 'striped',
+    headStyles: { 
+      fillColor: [249, 115, 22], // orange-500
+      textColor: [255, 255, 255],
+      fontSize: 9,
+      fontStyle: 'bold',
+      halign: 'center'
+    },
+    columnStyles: {
+      0: { halign: 'center', cellWidth: 10 },
+      1: { cellWidth: 'auto' },
+      2: { halign: 'center', cellWidth: 20 },
+      3: { halign: 'right', cellWidth: 35 },
+      4: { halign: 'right', cellWidth: 35 }
+    },
+    styles: { 
+      fontSize: 8,
+      cellPadding: 4,
+      lineColor: [244, 244, 245], // zinc-100
+      lineWidth: 0.1
+    },
+    margin: { left: 20, right: 20 }
+  });
+
+  // Totals
+  const finalY = (doc as any).lastAutoTable.finalY + 10;
+  const subtotal = proforma.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
+  const iva = 0; 
+  const total = subtotal + iva;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(zinc500[0], zinc500[1], zinc500[2]);
+  doc.text(`SUBTOTAL:`, 140, finalY);
+  doc.setTextColor(black[0], black[1], black[2]);
+  doc.text(`Kz ${subtotal.toLocaleString()}`, 190, finalY, { align: 'right' });
+  
+  doc.setTextColor(zinc500[0], zinc500[1], zinc500[2]);
+  doc.text(`IVA (0%):`, 140, finalY + 7);
+  doc.setTextColor(black[0], black[1], black[2]);
+  doc.text(`Kz ${iva.toLocaleString()}`, 190, finalY + 7, { align: 'right' });
+  
+  doc.setDrawColor(orange[0], orange[1], orange[2]);
+  doc.setLineWidth(0.5);
+  doc.line(140, finalY + 10, 190, finalY + 10);
+  
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(orange[0], orange[1], orange[2]);
+  doc.text(`TOTAL GERAL:`, 140, finalY + 18);
+  doc.text(`Kz ${total.toLocaleString()}`, 190, finalY + 18, { align: 'right' });
+
+  // Footer: Bank details
+  const pageHeight = doc.internal.pageSize.height;
+  
+  // Orange footer bar
+  doc.setFillColor(orange[0], orange[1], orange[2]);
+  doc.rect(0, pageHeight - 1, 210, 1, 'F');
+
+  doc.setDrawColor(zinc400[0], zinc400[1], zinc400[2]);
+  doc.setLineWidth(0.1);
+  doc.line(20, pageHeight - 50, 190, pageHeight - 50);
+  
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(black[0], black[1], black[2]);
+  doc.text('COORDENADAS BANCÁRIAS', 105, pageHeight - 43, { align: 'center' });
+  
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(zinc500[0], zinc500[1], zinc500[2]);
+  
+  let bankAccounts: any[] = [];
+  if (store.bank_accounts) {
+    bankAccounts = typeof store.bank_accounts === 'string' ? JSON.parse(store.bank_accounts) : store.bank_accounts;
+  }
+
+  if (bankAccounts.length > 0) {
+    let currentY = pageHeight - 37;
+    bankAccounts.forEach((acc: any) => {
+      const text = `${acc.bank_name}: ${acc.iban} (${acc.account_number})`;
+      doc.text(text, 105, currentY, { align: 'center' });
+      currentY += 5;
+    });
+  } else {
+    doc.text('Nenhuma coordenada bancária disponível.', 105, pageHeight - 37, { align: 'center' });
+  }
+
+  doc.setFontSize(7);
+  doc.text(`Emitido por: ${user.name} • Software Fatu-R`, 105, pageHeight - 10, { align: 'center' });
+
+  // Save and Print
+  const fileName = `PROFORMA_${proforma.client_name.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+  doc.save(fileName);
+  
+  const pdfBlob = doc.output('blob');
+  const url = URL.createObjectURL(pdfBlob);
+  window.open(url, '_blank');
+};
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
