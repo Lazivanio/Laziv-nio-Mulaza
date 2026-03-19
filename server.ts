@@ -126,6 +126,7 @@ db.exec(`
     status TEXT DEFAULT 'active', -- 'active' or 'inactive'
     license_status TEXT DEFAULT 'active',
     license_expiry TEXT,
+    bank_accounts TEXT, -- JSON string
     FOREIGN KEY(owner_id) REFERENCES users(id)
   );
 
@@ -178,8 +179,16 @@ try {
   }
   if (!columns.some(col => col.name === 'nif')) db.exec("ALTER TABLE stores ADD COLUMN nif TEXT");
   if (!columns.some(col => col.name === 'phone')) db.exec("ALTER TABLE stores ADD COLUMN phone TEXT");
+  if (!columns.some(col => col.name === 'bank_accounts')) db.exec("ALTER TABLE stores ADD COLUMN bank_accounts TEXT");
 } catch (e) {
   console.error("Migration error (stores):", e);
+}
+
+try {
+  const columns = db.prepare("PRAGMA table_info(proforma_invoices)").all() as any[];
+  if (!columns.some(col => col.name === 'bank_accounts')) db.exec("ALTER TABLE proforma_invoices ADD COLUMN bank_accounts TEXT");
+} catch (e) {
+  console.error("Migration error (proforma_invoices):", e);
 }
 
 try {
@@ -308,6 +317,7 @@ db.exec(`
     client_address TEXT,
     total_amount REAL,
     items TEXT, -- JSON string
+    bank_accounts TEXT, -- JSON string
     status TEXT DEFAULT 'draft', -- 'draft', 'sent', 'converted'
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(store_id) REFERENCES stores(id),
@@ -1053,12 +1063,16 @@ async function startServer() {
         (SELECT SUM(total_amount) FROM transactions t WHERE t.store_id = s.id AND date(t.timestamp) = date('now')) as today_sales
       FROM stores s 
       WHERE s.owner_id = ?
-    `).all(req.params.ownerId);
-    res.json(stores);
+    `).all(req.params.ownerId) as any[];
+    
+    res.json(stores.map(s => ({
+      ...s,
+      bank_accounts: s.bank_accounts ? JSON.parse(s.bank_accounts) : []
+    })));
   });
 
   app.post("/api/owner/stores", (req, res) => {
-    const { owner_id, name, address, phone, nif, logo_url } = req.body;
+    const { owner_id, name, address, phone, nif, logo_url, bank_accounts } = req.body;
     
     try {
       // Check limits
@@ -1089,9 +1103,9 @@ async function startServer() {
       }
 
       db.prepare(`
-        INSERT INTO stores (owner_id, name, address, phone, nif, logo_url, license_expiry) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(owner_id, name, address, phone, nif, logo_url, "2026-12-31");
+        INSERT INTO stores (owner_id, name, address, phone, nif, logo_url, license_expiry, bank_accounts) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(owner_id, name, address, phone, nif, logo_url, "2026-12-31", JSON.stringify(bank_accounts || []));
       
       res.json({ success: true });
     } catch (error: any) {
@@ -1100,12 +1114,12 @@ async function startServer() {
   });
 
   app.put("/api/owner/stores/:storeId", (req, res) => {
-    const { name, address, phone, nif, logo_url, status } = req.body;
+    const { name, address, phone, nif, logo_url, status, bank_accounts } = req.body;
     db.prepare(`
       UPDATE stores 
-      SET name = ?, address = ?, phone = ?, nif = ?, logo_url = ?, status = ? 
+      SET name = ?, address = ?, phone = ?, nif = ?, logo_url = ?, status = ?, bank_accounts = ? 
       WHERE id = ?
-    `).run(name, address, phone, nif, logo_url, status, req.params.storeId);
+    `).run(name, address, phone, nif, logo_url, status, JSON.stringify(bank_accounts || []), req.params.storeId);
     res.json({ success: true });
   });
 
@@ -1360,6 +1374,13 @@ async function startServer() {
 
   app.post("/api/owner/products", (req, res) => {
     const { store_id, name, price, stock, category, image_url, min_stock } = req.body;
+    
+    // Check if product with same name exists in this store
+    const existing = db.prepare("SELECT id FROM products WHERE store_id = ? AND LOWER(name) = LOWER(?)").get(store_id, name);
+    if (existing) {
+      return res.status(400).json({ error: "Já existe um produto com este nome nesta loja." });
+    }
+
     const barcode = Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
     db.prepare("INSERT INTO products (store_id, name, price, stock, category, image_url, min_stock, barcode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(store_id, name, price, stock, category, image_url, min_stock || 5, barcode);
     res.json({ success: true });
@@ -1372,6 +1393,17 @@ async function startServer() {
 
   app.put("/api/owner/products/:id", (req, res) => {
     const { name, price, stock, category, image_url, min_stock } = req.body;
+    
+    // Get store_id for this product
+    const product = db.prepare("SELECT store_id FROM products WHERE id = ?").get(req.params.id) as { store_id: number } | undefined;
+    if (!product) return res.status(404).json({ error: "Produto não encontrado." });
+
+    // Check for other products with same name in same store
+    const existing = db.prepare("SELECT id FROM products WHERE store_id = ? AND LOWER(name) = LOWER(?) AND id != ?").get(product.store_id, name, req.params.id);
+    if (existing) {
+      return res.status(400).json({ error: "Já existe um outro produto com este nome nesta loja." });
+    }
+
     db.prepare(`
       UPDATE products 
       SET name = ?, price = ?, stock = ?, category = ?, image_url = ?, min_stock = ? 
@@ -1591,12 +1623,12 @@ async function startServer() {
   });
 
   app.put("/api/owner/store-settings/:id", (req, res) => {
-    const { name, nif, phone, address, logo_url, status } = req.body;
+    const { name, nif, phone, address, logo_url, status, bank_accounts } = req.body;
     db.prepare(`
       UPDATE stores 
-      SET name = ?, nif = ?, phone = ?, address = ?, logo_url = ?, status = ?
+      SET name = ?, nif = ?, phone = ?, address = ?, logo_url = ?, status = ?, bank_accounts = ?
       WHERE id = ?
-    `).run(name, nif, phone, address, logo_url, status, req.params.id);
+    `).run(name, nif, phone, address, logo_url, status, JSON.stringify(bank_accounts || []), req.params.id);
     res.json({ success: true });
   });
 
@@ -1967,10 +1999,14 @@ async function startServer() {
   app.post("/api/owner/proforma", (req, res) => {
     const { store_id, owner_id, client_name, client_nif, client_address, total_amount, items } = req.body;
     try {
+      // Fetch store bank accounts to include in the proforma
+      const store = db.prepare("SELECT bank_accounts FROM stores WHERE id = ?").get(store_id) as any;
+      const bank_accounts = store?.bank_accounts || "[]";
+
       const result = db.prepare(`
-        INSERT INTO proforma_invoices (store_id, owner_id, client_name, client_nif, client_address, total_amount, items)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(store_id, owner_id, client_name, client_nif, client_address, total_amount, JSON.stringify(items));
+        INSERT INTO proforma_invoices (store_id, owner_id, client_name, client_nif, client_address, total_amount, items, bank_accounts)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(store_id, owner_id, client_name, client_nif, client_address, total_amount, JSON.stringify(items), bank_accounts);
       res.json({ id: result.lastInsertRowid });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -1978,8 +2014,12 @@ async function startServer() {
   });
 
   app.get("/api/owner/proforma/:storeId", (req, res) => {
-    const proformas = db.prepare("SELECT * FROM proforma_invoices WHERE store_id = ? ORDER BY created_at DESC").all(req.params.storeId);
-    res.json(proformas);
+    const proformas = db.prepare("SELECT * FROM proforma_invoices WHERE store_id = ? ORDER BY created_at DESC").all(req.params.storeId) as any[];
+    res.json(proformas.map(p => ({
+      ...p,
+      items: p.items ? JSON.parse(p.items) : [],
+      bank_accounts: p.bank_accounts ? JSON.parse(p.bank_accounts) : []
+    })));
   });
 
   // Vite middleware for development

@@ -9,6 +9,13 @@ export interface User {
   store_id?: number | null;
 }
 
+export interface BankAccount {
+  bank_name: string;
+  iban: string;
+  holder: string;
+  account_number: string;
+}
+
 export interface Store {
   id: number;
   owner_id: number;
@@ -22,6 +29,7 @@ export interface Store {
   license_expiry: string;
   staff_count?: number;
   today_sales?: number;
+  bank_accounts?: BankAccount[];
 }
 
 export interface Product {

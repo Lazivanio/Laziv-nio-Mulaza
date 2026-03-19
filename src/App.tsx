@@ -78,7 +78,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { User, Store as StoreType, Product, Transaction } from './types';
+import { User, Store as StoreType, Product, Transaction, BankAccount } from './types';
 
 // --- Utilities ---
 function cn(...inputs: ClassValue[]) {
@@ -315,7 +315,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
   const closeSidebar = () => setIsSidebarOpen(false);
 
   return (
-    <div className="min-h-screen bg-zinc-50 flex">
+    <div className="h-screen bg-zinc-50 flex overflow-hidden">
       {/* Sidebar Overlay */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -423,7 +423,12 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-24 lg:pb-6">
+        <div className={cn(
+          "flex-1",
+          (location.pathname === '/seller' || location.pathname.includes('/owner/stores/')) 
+            ? "overflow-hidden flex flex-col" 
+            : "overflow-y-auto p-4 md:p-6 pb-24 lg:pb-6"
+        )}>
           {children}
         </div>
 
@@ -3155,8 +3160,14 @@ const MyStores = ({ user }: { user: User }) => {
     phone: '',
     nif: '',
     logo_url: '',
-    status: 'active' as 'active' | 'inactive'
+    status: 'active' as 'active' | 'inactive',
+    bank_accounts: [] as BankAccount[]
   });
+
+  const [viewingProformasStore, setViewingProformasStore] = useState<StoreType | null>(null);
+  const [proformas, setProformas] = useState<any[]>([]);
+  const [isProformaListModalOpen, setIsProformaListModalOpen] = useState(false);
+  const [selectedProforma, setSelectedProforma] = useState<any | null>(null);
 
   const fetchStores = () => {
     fetch(`/api/owner/stores/${user.id}`)
@@ -3164,7 +3175,19 @@ const MyStores = ({ user }: { user: User }) => {
       .then(setStores);
   };
 
+  const fetchProformas = (storeId: number) => {
+    fetch(`/api/owner/proforma/${storeId}`)
+      .then(res => res.json())
+      .then(setProformas);
+  };
+
   useEffect(fetchStores, [user.id]);
+
+  useEffect(() => {
+    if (viewingProformasStore) {
+      fetchProformas(viewingProformasStore.id);
+    }
+  }, [viewingProformasStore]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -3180,7 +3203,7 @@ const MyStores = ({ user }: { user: User }) => {
     if (res.ok) {
       setIsModalOpen(false);
       setEditingStore(null);
-      setFormData({ name: '', address: '', phone: '', nif: '', logo_url: '', status: 'active' });
+      setFormData({ name: '', address: '', phone: '', nif: '', logo_url: '', status: 'active', bank_accounts: [] });
       fetchStores();
     } else {
       const data = await res.json();
@@ -3196,9 +3219,30 @@ const MyStores = ({ user }: { user: User }) => {
       phone: store.phone || '',
       nif: store.nif || '',
       logo_url: store.logo_url || '',
-      status: store.status
+      status: store.status,
+      bank_accounts: store.bank_accounts || []
     });
     setIsModalOpen(true);
+  };
+
+  const addBankAccount = () => {
+    setFormData({
+      ...formData,
+      bank_accounts: [...formData.bank_accounts, { bank_name: '', iban: '', holder: '', account_number: '' }]
+    });
+  };
+
+  const removeBankAccount = (index: number) => {
+    setFormData({
+      ...formData,
+      bank_accounts: formData.bank_accounts.filter((_, i) => i !== index)
+    });
+  };
+
+  const updateBankAccount = (index: number, field: keyof BankAccount, value: string) => {
+    const newAccounts = [...formData.bank_accounts];
+    newAccounts[index] = { ...newAccounts[index], [field]: value };
+    setFormData({ ...formData, bank_accounts: newAccounts });
   };
 
   return (
@@ -3211,7 +3255,7 @@ const MyStores = ({ user }: { user: User }) => {
         <button 
           onClick={() => {
             setEditingStore(null);
-            setFormData({ name: '', address: '', phone: '', nif: '', logo_url: '', status: 'active' });
+            setFormData({ name: '', address: '', phone: '', nif: '', logo_url: '', status: 'active', bank_accounts: [] });
             setIsModalOpen(true);
           }}
           className="w-full md:w-auto bg-black text-white px-6 py-3 rounded-xl flex items-center justify-center gap-2 font-bold hover:bg-zinc-800 transition-all active:scale-95 shadow-lg shadow-black/10"
@@ -3234,6 +3278,16 @@ const MyStores = ({ user }: { user: User }) => {
                   )}
                 </div>
                 <div className="flex gap-2">
+                  <button 
+                    onClick={() => {
+                      setViewingProformasStore(store);
+                      setIsProformaListModalOpen(true);
+                    }}
+                    className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
+                    title="Ver Proformas"
+                  >
+                    <FileText size={18} />
+                  </button>
                   <button 
                     onClick={() => handleEdit(store)}
                     className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
@@ -3353,6 +3407,82 @@ const MyStores = ({ user }: { user: User }) => {
                 </select>
               </div>
             )}
+
+            <div className="col-span-2 space-y-4">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Coordenadas Bancárias</label>
+                <button 
+                  type="button"
+                  onClick={addBankAccount}
+                  className="text-[10px] font-bold text-orange-500 flex items-center gap-1 hover:text-orange-600 transition-colors"
+                >
+                  <Plus size={12} /> Adicionar Conta
+                </button>
+              </div>
+              
+              <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                {formData.bank_accounts.map((account, index) => (
+                  <div key={index} className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3 relative">
+                    <button 
+                      type="button"
+                      onClick={() => removeBankAccount(index)}
+                      className="absolute top-2 right-2 p-1 text-zinc-400 hover:text-rose-500 transition-colors"
+                    >
+                      <X size={14} />
+                    </button>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Banco</label>
+                        <input 
+                          type="text" 
+                          required
+                          value={account.bank_name}
+                          onChange={e => updateBankAccount(index, 'bank_name', e.target.value)}
+                          placeholder="Ex: BAI, BFA..."
+                          className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs outline-none focus:border-black transition-all" 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Titular</label>
+                        <input 
+                          type="text" 
+                          required
+                          value={account.holder}
+                          onChange={e => updateBankAccount(index, 'holder', e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs outline-none focus:border-black transition-all" 
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">IBAN</label>
+                        <input 
+                          type="text" 
+                          required
+                          value={account.iban}
+                          onChange={e => updateBankAccount(index, 'iban', e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-mono outline-none focus:border-black transition-all" 
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Número da Conta</label>
+                        <input 
+                          type="text" 
+                          required
+                          value={account.account_number}
+                          onChange={e => updateBankAccount(index, 'account_number', e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-mono outline-none focus:border-black transition-all" 
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {formData.bank_accounts.length === 0 && (
+                  <p className="text-[10px] text-zinc-400 text-center py-4 border border-dashed border-zinc-200 rounded-xl">
+                    Nenhuma conta bancária configurada.
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
           <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95 mt-4">
             {editingStore ? "Guardar Alterações" : "Criar Loja"}
@@ -3626,7 +3756,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [newMessage, setNewMessage] = useState('');
   const [isTicketModalOpen, setIsTicketModalOpen] = useState(false);
   const [ticketForm, setTicketForm] = useState({ subject: '', description: '', priority: 'medium' });
-  const [settingsForm, setSettingsForm] = useState({ name: '', nif: '', phone: '', address: '', logo_url: '', status: 'active' });
+  const [settingsForm, setSettingsForm] = useState({ 
+    name: '', 
+    nif: '', 
+    phone: '', 
+    address: '', 
+    logo_url: '', 
+    status: 'active',
+    bank_accounts: [] as BankAccount[]
+  });
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<any>(null);
@@ -3680,7 +3818,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
             phone: data.store.phone || '',
             address: data.store.address || '',
             logo_url: data.store.logo_url || '',
-            status: data.store.status || 'active'
+            status: data.store.status || 'active',
+            bank_accounts: data.store.bank_accounts ? (typeof data.store.bank_accounts === 'string' ? JSON.parse(data.store.bank_accounts) : data.store.bank_accounts) : []
           });
         }
       });
@@ -3736,6 +3875,9 @@ const StoreAdmin = ({ user }: { user: User }) => {
       setEditingProduct(null);
       setProductForm({ name: '', price: '', stock: '', category: '', image_url: '', min_stock: '5' });
       fetchData();
+    } else {
+      const data = await res.json();
+      alert(data.error || 'Erro ao guardar produto.');
     }
   };
 
@@ -3923,6 +4065,26 @@ const StoreAdmin = ({ user }: { user: User }) => {
     }
   };
 
+  const addBankAccount = () => {
+    setSettingsForm({
+      ...settingsForm,
+      bank_accounts: [...settingsForm.bank_accounts, { bank_name: '', iban: '', holder: '', account_number: '' }]
+    });
+  };
+
+  const removeBankAccount = (index: number) => {
+    setSettingsForm({
+      ...settingsForm,
+      bank_accounts: settingsForm.bank_accounts.filter((_, i) => i !== index)
+    });
+  };
+
+  const updateBankAccount = (index: number, field: keyof BankAccount, value: string) => {
+    const updated = [...settingsForm.bank_accounts];
+    updated[index] = { ...updated[index], [field]: value };
+    setSettingsForm({ ...settingsForm, bank_accounts: updated });
+  };
+
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !selectedTicket) return;
@@ -4036,8 +4198,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const { store, dashboard } = storeData;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden p-4 md:p-6 space-y-6">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 shrink-0">
         <div className="flex items-center gap-4">
           <button 
             onClick={() => navigate('/owner/stores')}
@@ -4098,9 +4260,10 @@ const StoreAdmin = ({ user }: { user: User }) => {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
           transition={{ duration: 0.2 }}
+          className="flex-1 overflow-hidden flex flex-col min-h-0"
         >
           {activeTab === 'dashboard' && (
-            <div className="space-y-6">
+            <div className="flex-1 overflow-y-auto pr-2 space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard label="Vendas (Hoje)" value={dashboard.todaySales} icon={ShoppingCart} color="blue" />
                 <StatCard label="Faturamento (Hoje)" value={`Kz ${dashboard.todayRevenue.toLocaleString()}`} icon={DollarSign} color="emerald" />
@@ -4165,8 +4328,9 @@ const StoreAdmin = ({ user }: { user: User }) => {
           )}
 
           {activeTab === 'products' && (
-            <Card>
-              <div className="p-6 border-b border-zinc-100 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+            <div className="flex-1 flex flex-col min-h-0">
+              <Card className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                <div className="p-6 border-b border-zinc-100 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 shrink-0">
                 <h3 className="font-bold">Gestão de Produtos</h3>
                 <div className="flex flex-wrap gap-2 w-full lg:w-auto">
                   <button 
@@ -4189,8 +4353,9 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   </button>
                 </div>
               </div>
-              <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-left min-w-[800px]">
+              <div className="flex-1 overflow-y-auto">
+                <div className="hidden md:block">
+                    <table className="w-full text-left min-w-[800px]">
                   <thead>
                     <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
                       <th className="px-6 py-4 font-semibold">Produto</th>
@@ -4310,21 +4475,25 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   </div>
                 ))}
               </div>
-            </Card>
-          )}
+            </div>
+          </Card>
+        </div>
+      )}
 
           {activeTab === 'promotions' && (
-            <Card>
-              <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <h3 className="font-bold">Promoções Ativas</h3>
-                <button 
-                  onClick={() => setIsPromoModalOpen(true)}
-                  className="w-full md:w-auto bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
-                >
-                  <Plus size={16} /> Nova Promoção
-                </button>
-              </div>
-              <div className="hidden md:block overflow-x-auto">
+            <div className="flex-1 flex flex-col min-h-0">
+              <Card className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shrink-0">
+                  <h3 className="font-bold">Promoções Ativas</h3>
+                  <button 
+                    onClick={() => setIsPromoModalOpen(true)}
+                    className="w-full md:w-auto bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+                  >
+                    <Plus size={16} /> Nova Promoção
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  <div className="hidden md:block">
                 <table className="w-full text-left min-w-[600px]">
                   <thead>
                     <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
@@ -4399,11 +4568,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   <div className="p-12 text-center text-zinc-400 text-sm">Nenhuma promoção registada.</div>
                 )}
               </div>
-            </Card>
-          )}
+            </div>
+          </Card>
+        </div>
+      )}
 
           {activeTab === 'staff' && (
-            <div className="space-y-6">
+            <div className="flex-1 overflow-y-auto pr-2 space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <Card className="lg:col-span-2">
                   <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -4524,7 +4695,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
           )}
 
           {activeTab === 'reports' && (
-            <div className="space-y-6">
+            <div className="flex-1 overflow-y-auto pr-2 space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <Card className="lg:col-span-2 p-4 md:p-6">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-2">
@@ -4642,7 +4813,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
           )}
 
           {activeTab === 'settings' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="flex-1 overflow-y-auto pr-2">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <Card className="lg:col-span-2">
                 <div className="p-6 border-b border-zinc-100">
                   <h3 className="font-bold">Configurações da Loja</h3>
@@ -4694,6 +4866,80 @@ const StoreAdmin = ({ user }: { user: User }) => {
                         className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
                         placeholder="https://..."
                       />
+                    </div>
+
+                    <div className="col-span-full space-y-4">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest">Coordenadas Bancárias</label>
+                        <button 
+                          type="button"
+                          onClick={addBankAccount}
+                          className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                        >
+                          <Plus size={14} /> Adicionar Conta
+                        </button>
+                      </div>
+                      
+                      <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                        {settingsForm.bank_accounts.map((account, index) => (
+                          <div key={index} className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-4 relative group">
+                            <button 
+                              type="button"
+                              onClick={() => removeBankAccount(index)}
+                              className="absolute top-2 right-2 p-1 text-zinc-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                            >
+                              <X size={16} />
+                            </button>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Nome do Banco</label>
+                                <input 
+                                  type="text"
+                                  value={account.bank_name}
+                                  onChange={e => updateBankAccount(index, 'bank_name', e.target.value)}
+                                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
+                                  placeholder="Ex: BFA, BAI..."
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">IBAN</label>
+                                <input 
+                                  type="text"
+                                  value={account.iban}
+                                  onChange={e => updateBankAccount(index, 'iban', e.target.value)}
+                                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
+                                  placeholder="AO06..."
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Titular da Conta</label>
+                                <input 
+                                  type="text"
+                                  value={account.holder}
+                                  onChange={e => updateBankAccount(index, 'holder', e.target.value)}
+                                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Número da Conta</label>
+                                <input 
+                                  type="text"
+                                  value={account.account_number}
+                                  onChange={e => updateBankAccount(index, 'account_number', e.target.value)}
+                                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        
+                        {settingsForm.bank_accounts.length === 0 && (
+                          <div className="text-center py-6 border-2 border-dashed border-zinc-100 rounded-xl">
+                            <p className="text-xs text-zinc-400">Nenhuma coordenada bancária configurada.</p>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div className="pt-4 border-t border-zinc-100 flex justify-end">
@@ -4747,10 +4993,11 @@ const StoreAdmin = ({ user }: { user: User }) => {
                 </Card>
               </div>
             </div>
+          </div>
           )}
           
           {activeTab === 'stock' && (
-            <div className="space-y-6">
+            <div className="flex-1 overflow-y-auto pr-2 space-y-6">
               {/* Stock Overview Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <Card className="p-6">
@@ -4947,7 +5194,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
             </div>
           )}
           {activeTab === 'support' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="flex-1 overflow-y-auto pr-2">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               <Card className="lg:col-span-1 flex flex-col h-[600px]">
                 <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
                   <h3 className="font-bold">Meus Tickets</h3>
@@ -5060,6 +5308,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                 )}
               </Card>
             </div>
+          </div>
           )}
         </motion.div>
       </AnimatePresence>
@@ -6110,6 +6359,164 @@ const OwnerSettings = ({ user }: { user: User }) => {
   );
 };
 
+const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => {
+  const invoiceRef = useRef<HTMLDivElement>(null);
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleDownload = async () => {
+    if (!invoiceRef.current) return;
+    
+    const canvas = await html2canvas(invoiceRef.current, {
+      scale: 2,
+      useCORS: true,
+      logging: false
+    });
+    
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    });
+    
+    const imgProps = pdf.getImageProperties(imgData);
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+    
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save(`PROFORMA_${proforma.id}.pdf`);
+  };
+
+  if (!proforma || !store) return null;
+
+  const bankAccounts = typeof proforma.bank_accounts === 'string' 
+    ? JSON.parse(proforma.bank_accounts) 
+    : proforma.bank_accounts || [];
+
+  const items = typeof proforma.items === 'string'
+    ? JSON.parse(proforma.items)
+    : proforma.items || [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end gap-2 no-print">
+        <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2 bg-zinc-100 hover:bg-zinc-200 rounded-lg text-sm font-bold transition-all">
+          <Printer size={16} /> Imprimir
+        </button>
+        <button onClick={handleDownload} className="flex items-center gap-2 px-4 py-2 bg-black text-white hover:bg-zinc-800 rounded-lg text-sm font-bold transition-all">
+          <Download size={16} /> PDF
+        </button>
+      </div>
+
+      <div ref={invoiceRef} className="bg-white p-12 max-w-[800px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 min-h-[1123px] flex flex-col">
+        <div className="flex justify-between items-start mb-12">
+          <div className="flex items-center gap-4">
+            {store.logo_url && (
+              <img src={store.logo_url} alt="" className="w-20 h-20 object-contain" referrerPolicy="no-referrer" />
+            )}
+            <div>
+              <h2 className="text-2xl font-black uppercase tracking-tight">{store.name}</h2>
+              <p className="text-sm text-zinc-500 max-w-xs">{store.address}</p>
+              <p className="text-sm font-bold mt-1">NIF: {store.nif} | TEL: {store.phone}</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <h1 className="text-4xl font-black text-zinc-200 uppercase mb-2">PROFORMA</h1>
+            <div className="space-y-1 text-sm text-zinc-600">
+              <p><span className="font-bold">Nº:</span> {proforma.id.toString().padStart(6, '0')}</p>
+              <p><span className="font-bold">Data:</span> {new Date(proforma.created_at).toLocaleDateString()}</p>
+              <p><span className="font-bold">Vencimento:</span> {new Date(new Date(proforma.created_at).getTime() + 15 * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-12 mb-12">
+          <div className="bg-zinc-50 p-6 rounded-2xl">
+            <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-4">Dados do Cliente</h4>
+            <div className="space-y-1">
+              <p className="font-bold text-lg">{proforma.client_name.toUpperCase()}</p>
+              <p className="text-sm text-zinc-600">{proforma.client_address}</p>
+              <p className="text-sm font-bold mt-2">NIF: {proforma.client_nif}</p>
+            </div>
+          </div>
+          <div className="p-6">
+            <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-4">Condições de Pagamento</h4>
+            <p className="text-sm text-zinc-600">Pronto Pagamento / Transferência Bancária</p>
+            <p className="text-sm text-zinc-600 mt-2">Válido por 15 dias a contar da data de emissão.</p>
+          </div>
+        </div>
+
+        <div className="flex-grow">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left border-b-2 border-zinc-900">
+                <th className="pb-4 font-black uppercase tracking-widest text-[10px]">Descrição</th>
+                <th className="pb-4 text-center font-black uppercase tracking-widest text-[10px]">Qtd</th>
+                <th className="pb-4 text-right font-black uppercase tracking-widest text-[10px]">Preço Unit.</th>
+                <th className="pb-4 text-right font-black uppercase tracking-widest text-[10px]">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {items.map((item: any, idx: number) => (
+                <tr key={idx}>
+                  <td className="py-4">
+                    <p className="font-bold">{item.name.toUpperCase()}</p>
+                  </td>
+                  <td className="py-4 text-center">{item.quantity}</td>
+                  <td className="py-4 text-right">Kz {item.price.toLocaleString()}</td>
+                  <td className="py-4 text-right font-bold">Kz {(item.price * item.quantity).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-12 pt-12 border-t-2 border-zinc-100">
+          <div className="flex justify-between items-start mb-12">
+            <div className="space-y-4">
+              <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Coordenadas Bancárias</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {bankAccounts.map((acc: any, idx: number) => (
+                  <div key={idx} className="text-xs space-y-1">
+                    <p className="font-bold text-zinc-900">{acc.bank_name}</p>
+                    <p className="text-zinc-500">IBAN: <span className="font-mono text-zinc-900">{acc.iban}</span></p>
+                    <p className="text-zinc-500">Titular: <span className="text-zinc-900">{acc.holder}</span></p>
+                    {acc.account_number && <p className="text-zinc-500">Nº Conta: <span className="text-zinc-900">{acc.account_number}</span></p>}
+                  </div>
+                ))}
+                {bankAccounts.length === 0 && (
+                  <p className="text-xs text-zinc-400 italic">Nenhuma conta bancária associada.</p>
+                )}
+              </div>
+            </div>
+            <div className="w-64 space-y-3">
+              <div className="flex justify-between text-sm">
+                <span className="text-zinc-500">Subtotal</span>
+                <span className="font-bold">Kz {proforma.total_amount.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-zinc-500">Imposto (0%)</span>
+                <span className="font-bold">Kz 0</span>
+              </div>
+              <div className="flex justify-between text-xl pt-3 border-t-2 border-zinc-900">
+                <span className="font-black uppercase tracking-tight">Total</span>
+                <span className="font-black">Kz {proforma.total_amount.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="text-center text-[10px] text-zinc-400 uppercase tracking-[0.2em] mt-12">
+            Obrigado pela sua preferência
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Seller Module ---
 
 const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) => {
@@ -6150,63 +6557,66 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
 
   return (
     <div className="space-y-4">
-      <div ref={invoiceRef} className="bg-white p-6 max-w-[300px] mx-auto shadow-sm border border-zinc-100 rounded-lg invoice-print font-mono text-zinc-900">
-        <div className="text-center mb-4 border-b border-zinc-100 pb-4">
+      <div ref={invoiceRef} className="bg-white p-4 max-w-[280px] mx-auto shadow-sm border border-zinc-100 rounded-lg invoice-print font-mono text-zinc-900">
+        <div className="text-center mb-4 border-b-2 border-dashed border-zinc-200 pb-4">
           {store.logo_url && (
-            <img src={store.logo_url || undefined} alt="" className="w-12 h-12 mx-auto mb-2 object-contain grayscale" referrerPolicy="no-referrer" />
+            <img src={store.logo_url || undefined} alt="" className="w-10 h-10 mx-auto mb-2 object-contain grayscale" referrerPolicy="no-referrer" />
           )}
-          <h2 className="text-lg font-black uppercase tracking-tight">{store.name}</h2>
-          <p className="text-[9px] leading-tight">{store.address}</p>
-          <p className="text-[9px] font-bold">NIF: {store.nif} | TEL: {store.phone}</p>
+          <h2 className="text-base font-black uppercase tracking-tight">{store.name}</h2>
+          <p className="text-[8px] leading-tight text-zinc-500">{store.address}</p>
+          <p className="text-[8px] font-bold mt-1">NIF: {store.nif} | TEL: {store.phone}</p>
         </div>
 
-        <div className="space-y-1 mb-4 text-[9px]">
+        <div className="space-y-0.5 mb-4 text-[8px] text-zinc-600">
           <div className="flex justify-between">
-            <span className="font-bold">FATURA:</span>
-            <span>{sale.invoice_number}</span>
+            <span>Nº DOCUMENTO:</span>
+            <span className="font-bold">{sale.invoice_number}</span>
           </div>
           <div className="flex justify-between">
-            <span className="font-bold">DATA:</span>
+            <span>DATA/HORA:</span>
             <span>{new Date(sale.timestamp).toLocaleString()}</span>
           </div>
           <div className="flex justify-between">
-            <span className="font-bold">OPERADOR:</span>
+            <span>OPERADOR:</span>
             <span>{user.name.toUpperCase()}</span>
           </div>
-          <div className="pt-1 border-t border-zinc-50">
+          <div className="mt-2 pt-2 border-t border-dashed border-zinc-100">
             <div className="flex justify-between">
-              <span className="font-bold">CLIENTE:</span>
-              <span>{sale.client_name.toUpperCase()}</span>
+              <span>CLIENTE:</span>
+              <span className="font-bold">{sale.client_name.toUpperCase()}</span>
             </div>
             <div className="flex justify-between">
-              <span className="font-bold">NIF:</span>
+              <span>NIF CLIENTE:</span>
               <span>{sale.client_nif}</span>
             </div>
           </div>
         </div>
 
-        <table className="w-full text-[10px] mb-4">
-          <thead>
-            <tr className="border-b border-zinc-100 text-left">
-              <th className="py-1">DESCRIÇÃO</th>
-              <th className="py-1 text-center">QTD</th>
-              <th className="py-1 text-right">PREÇO</th>
-              <th className="py-1 text-right">TOTAL</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sale.items.map((item: any, idx: number) => (
-              <tr key={idx} className="border-b border-zinc-50">
-                <td className="py-1 uppercase">{item.name}</td>
-                <td className="py-1 text-center">{item.quantity}</td>
-                <td className="py-1 text-right">{item.price.toLocaleString()}</td>
-                <td className="py-1 text-right">{(item.price * item.quantity).toLocaleString()}</td>
+        <div className="border-y-2 border-dashed border-zinc-200 py-2 mb-4">
+          <table className="w-full text-[9px]">
+            <thead>
+              <tr className="text-left border-b border-zinc-100">
+                <th className="pb-1">ARTIGO</th>
+                <th className="pb-1 text-center">QTD</th>
+                <th className="pb-1 text-right">TOTAL</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-zinc-50">
+              {sale.items.map((item: any, idx: number) => (
+                <tr key={idx}>
+                  <td className="py-1.5 leading-tight">
+                    <p className="font-bold">{item.name.toUpperCase()}</p>
+                    <p className="text-[7px] text-zinc-500">{item.price.toLocaleString()} x {item.quantity}</p>
+                  </td>
+                  <td className="py-1.5 text-center align-top">{item.quantity}</td>
+                  <td className="py-1.5 text-right align-top font-bold">{(item.price * item.quantity).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-        <div className="space-y-1 text-[10px] border-t border-zinc-100 pt-3">
+        <div className="space-y-1 text-[9px] pt-1">
           <div className="flex justify-between">
             <span>SUBTOTAL</span>
             <span>Kz {(sale.total_amount - sale.tax_amount + sale.discount_amount).toLocaleString()}</span>
@@ -6218,20 +6628,27 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
             </div>
           )}
           <div className="flex justify-between">
-            <span>IMPOSTO (14%)</span>
+            <span>IVA (14%)</span>
             <span>Kz {sale.tax_amount.toLocaleString()}</span>
           </div>
-          <div className="flex justify-between text-sm font-black pt-2 border-t border-zinc-200">
-            <span>TOTAL</span>
+          <div className="flex justify-between text-sm font-black pt-2 border-t-2 border-dashed border-zinc-900 mt-2">
+            <span>TOTAL A PAGAR</span>
             <span>Kz {sale.total_amount.toLocaleString()}</span>
           </div>
         </div>
 
-        <div className="mt-6 text-center space-y-2">
-          <p className="text-[8px] text-zinc-400 uppercase tracking-widest font-bold">Obrigado pela preferência!</p>
-          <div className="pt-2 border-t border-zinc-50">
-            <p className="text-[7px] text-zinc-400 uppercase">Processado por Fatu-R (Experimental AGT)</p>
-            <p className="text-[7px] text-emerald-600 font-bold uppercase">Estado AGT: {sale.agt_status === 'sent' ? 'Submetido com Sucesso' : 'Pendente'}</p>
+        <div className="mt-6 text-center space-y-3">
+          <div className="py-2 border-y border-zinc-100">
+            <p className="text-[8px] font-bold uppercase tracking-widest">Obrigado pela preferência!</p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-[6px] text-zinc-400 uppercase">Processado por Fatu-R (Experimental AGT)</p>
+            <p className={cn(
+              "text-[7px] font-bold uppercase px-2 py-0.5 rounded-full inline-block",
+              sale.agt_status === 'sent' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+            )}>
+              AGT: {sale.agt_status === 'sent' ? 'Submetido' : 'Pendente'}
+            </p>
           </div>
         </div>
       </div>
@@ -6535,9 +6952,9 @@ const SellerPOS = ({ user }: { user: User }) => {
   ];
 
   return (
-    <div className="h-full flex flex-col lg:flex-row gap-6">
+    <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-0 p-4 md:p-6 pb-24 lg:pb-6">
       {/* Product Selection */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <div className="mb-6 space-y-6">
           <div className="bg-orange-500 -mx-6 -mt-6 p-6 text-white rounded-b-[2rem] shadow-lg">
             <div className="flex items-center justify-between mb-4">
