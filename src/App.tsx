@@ -30,6 +30,7 @@ import {
   Search,
   Plus,
   Printer,
+  Eye,
   Filter,
   ChevronRight,
   Menu,
@@ -141,7 +142,7 @@ const StatCard = ({ label, value, icon: Icon, trend, color = "blue" }: { label: 
   </Card>
 );
 
-const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose: () => void, title: string, children: ReactNode }) => (
+const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-lg" }: { isOpen: boolean, onClose: () => void, title: string, children: ReactNode, maxWidth?: string }) => (
   <AnimatePresence>
     {isOpen && (
       <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -156,7 +157,7 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden"
+          className={cn("relative w-full bg-white rounded-2xl shadow-2xl overflow-hidden", maxWidth)}
         >
           <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
             <h3 className="text-xl font-bold">{title}</h3>
@@ -3821,6 +3822,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isProformaModalOpen, setIsProformaModalOpen] = useState(false);
   const [proformas, setProformas] = useState<any[]>([]);
+  const [selectedProforma, setSelectedProforma] = useState<any>(null);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -4870,6 +4872,17 @@ const StoreAdmin = ({ user }: { user: User }) => {
 
           {activeTab === 'proformas' && (
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              {/* Proforma Preview Modal */}
+              <Modal 
+                isOpen={!!selectedProforma} 
+                onClose={() => setSelectedProforma(null)}
+                title="Visualizar Proforma"
+                maxWidth="max-w-4xl"
+              >
+                {selectedProforma && (
+                  <ProformaInvoice proforma={selectedProforma} store={store} />
+                )}
+              </Modal>
               <div className="flex justify-between items-center mb-6 shrink-0">
                 <div>
                   <h3 className="text-xl font-bold">Faturas Proforma</h3>
@@ -4929,6 +4942,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             </td>
                             <td className="p-4 text-right">
                               <div className="flex justify-end gap-2">
+                                <button 
+                                  onClick={() => setSelectedProforma(p)}
+                                  className="p-2 hover:bg-zinc-200 rounded-xl transition-colors text-zinc-600"
+                                  title="Visualizar"
+                                >
+                                  <Eye size={16} />
+                                </button>
                                 <button 
                                   onClick={async () => await generateProformaPDF(p, store, user)}
                                   className="p-2 hover:bg-zinc-200 rounded-xl transition-colors text-zinc-600"
@@ -6582,24 +6602,30 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
   const handleDownload = async () => {
     if (!invoiceRef.current) return;
     
-    const canvas = await html2canvas(invoiceRef.current, {
-      scale: 2,
-      useCORS: true,
-      logging: false
-    });
-    
-    const imgData = canvas.toDataURL('image/png');
+    const pages = invoiceRef.current.querySelectorAll('.proforma-page');
     const pdf = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
       format: 'a4'
     });
     
-    const imgProps = pdf.getImageProperties(imgData);
     const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-    
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    const pdfHeight = pdf.internal.pageSize.getHeight();
+
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i] as HTMLElement;
+      const canvas = await html2canvas(page, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        windowWidth: 800
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+      if (i > 0) pdf.addPage();
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    }
+
     pdf.save(`PROFORMA_${proforma.id}.pdf`);
   };
 
@@ -6613,6 +6639,86 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
     ? JSON.parse(proforma.items)
     : proforma.items || [];
 
+  // Logic to split items into pages
+  const FIRST_PAGE_MAX = 8;
+  const OTHER_PAGE_MAX = 15;
+  
+  const itemPages: any[][] = [];
+  let tempItems = [...items];
+  
+  if (tempItems.length === 0) {
+    itemPages.push([]);
+  } else {
+    // Page 1
+    itemPages.push(tempItems.splice(0, FIRST_PAGE_MAX));
+    
+    // Subsequent pages
+    while (tempItems.length > 0) {
+      itemPages.push(tempItems.splice(0, OTHER_PAGE_MAX));
+    }
+  }
+
+  // Determine if footer needs its own page
+  // Footer needs a lot of space (totals + bank accounts)
+  const isOnlyOnePage = itemPages.length === 1;
+  const lastPageItems = itemPages[itemPages.length - 1] || [];
+  const showFooterOnNewPage = isOnlyOnePage 
+    ? lastPageItems.length > 5 
+    : lastPageItems.length > 10;
+  const totalPages = showFooterOnNewPage ? itemPages.length + 1 : itemPages.length;
+
+  const renderFooterContent = () => (
+    <div className="mt-auto pt-8 border-t-2 border-zinc-100">
+      <div className="mb-8">
+        <div className="flex justify-end">
+          <div className="w-full max-w-[320px] bg-zinc-50 p-6 rounded-2xl space-y-3 border border-zinc-100 shadow-sm">
+            <div className="flex justify-between text-xs">
+              <span className="text-zinc-500 font-medium">Subtotal</span>
+              <span className="font-bold text-zinc-900">Kz {proforma.total_amount.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-zinc-500 font-medium">Imposto (0%)</span>
+              <span className="font-bold text-zinc-900">Kz 0</span>
+            </div>
+            <div className="pt-4 border-t border-zinc-200">
+              <div className="flex justify-between items-baseline">
+                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-[0.2em]">Total Geral</span>
+                <span className="text-2xl font-black text-orange-600">Kz {proforma.total_amount.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        <div className="bg-zinc-50/50 p-6 rounded-2xl border border-zinc-100">
+          <h4 className="text-[9px] font-black text-zinc-400 uppercase tracking-[0.2em] mb-6">Coordenadas Bancárias para Pagamento</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {bankAccounts.map((acc: any, idx: number) => (
+              <div key={idx} className="text-[11px] border-l-4 border-orange-500 pl-4 py-1 bg-white rounded-r-xl shadow-sm">
+                <p className="font-black text-zinc-900 uppercase tracking-tight mb-1">{acc.bank_name}</p>
+                <div className="space-y-1 text-zinc-600">
+                  <div className="flex justify-between items-center border-b border-zinc-50 pb-0.5">
+                    <span className="font-bold text-[7px] uppercase tracking-widest text-zinc-400">IBAN</span>
+                    <span className="font-mono text-zinc-900 font-bold">{acc.iban}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-[7px] uppercase tracking-widest text-zinc-400">Titular</span>
+                    <span className="text-zinc-900 font-medium truncate ml-4">{acc.holder}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="text-center text-[8px] text-zinc-400 uppercase tracking-[0.4em] mt-12 font-bold">
+        Documento processado por computador · Obrigado pela sua preferência
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex justify-end gap-2 no-print">
@@ -6624,110 +6730,142 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
         </button>
       </div>
 
-      <div ref={invoiceRef} className="bg-white p-12 max-w-[800px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 min-h-[1123px] flex flex-col">
-        <div className="flex justify-between items-start mb-12">
-          <div className="flex items-center gap-4">
-            {store.logo_url && (
-              <img src={store.logo_url} alt="" className="w-20 h-20 object-contain" referrerPolicy="no-referrer" />
-            )}
-            <div>
-              <h2 className="text-2xl font-black uppercase tracking-tight">{store.name}</h2>
-              <p className="text-sm text-zinc-500 max-w-xs">{store.address}</p>
-              <p className="text-sm font-bold mt-1">
-                NIF: {store.nif} | TEL: {store.phone}
-                {store.email && ` | EMAIL: ${store.email}`}
-              </p>
-            </div>
-          </div>
-          <div className="text-right">
-            <h1 className="text-4xl font-black text-orange-500 uppercase mb-2">PROFORMA</h1>
-            <div className="space-y-1 text-sm text-zinc-600">
-              <p><span className="font-bold">Nº:</span> {proforma.id.toString().padStart(6, '0')}</p>
-              <p><span className="font-bold">Data:</span> {new Date(proforma.created_at).toLocaleDateString()}</p>
-              <p><span className="font-bold">Vencimento:</span> {new Date(new Date(proforma.created_at).getTime() + 15 * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-12 mb-12">
-          <div className="bg-zinc-50 p-6 rounded-2xl">
-            <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-4">Dados do Cliente</h4>
-            <div className="space-y-1">
-              <p className="font-bold text-lg">{proforma.client_name.toUpperCase()}</p>
-              <p className="text-sm text-zinc-600">{proforma.client_address}</p>
-              <p className="text-sm font-bold mt-2">NIF: {proforma.client_nif}</p>
-            </div>
-          </div>
-          <div className="p-6">
-            <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-4">Condições de Pagamento</h4>
-            <p className="text-sm text-zinc-600">Pronto Pagamento / Transferência Bancária</p>
-            <p className="text-sm text-zinc-600 mt-2">Válido por 15 dias a contar da data de emissão.</p>
-          </div>
-        </div>
-
-        <div className="flex-grow">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left border-b-2 border-orange-500">
-                <th className="pb-4 font-black uppercase tracking-widest text-[10px]">Descrição</th>
-                <th className="pb-4 text-center font-black uppercase tracking-widest text-[10px]">Qtd</th>
-                <th className="pb-4 text-right font-black uppercase tracking-widest text-[10px]">Preço Unit.</th>
-                <th className="pb-4 text-right font-black uppercase tracking-widest text-[10px]">Total</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {items.map((item: any, idx: number) => (
-                <tr key={idx}>
-                  <td className="py-4">
-                    <p className="font-bold">{item.name.toUpperCase()}</p>
-                  </td>
-                  <td className="py-4 text-center">{item.quantity}</td>
-                  <td className="py-4 text-right">Kz {item.price.toLocaleString()}</td>
-                  <td className="py-4 text-right font-bold">Kz {(item.price * item.quantity).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-12 pt-12 border-t-2 border-zinc-100">
-          <div className="flex justify-between items-start mb-12">
-            <div className="space-y-4">
-              <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Coordenadas Bancárias</h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {bankAccounts.map((acc: any, idx: number) => (
-                  <div key={idx} className="text-xs space-y-1">
-                    <p className="font-bold text-zinc-900">{acc.bank_name}</p>
-                    <p className="text-zinc-500">IBAN: <span className="font-mono text-zinc-900">{acc.iban}</span></p>
-                    <p className="text-zinc-500">Titular: <span className="text-zinc-900">{acc.holder}</span></p>
-                    {acc.account_number && <p className="text-zinc-500">Nº Conta: <span className="text-zinc-900">{acc.account_number}</span></p>}
+      <div ref={invoiceRef} className="space-y-8 no-shadow">
+        {itemPages.map((pageItems, pageIdx) => (
+          <div key={pageIdx} className="proforma-page bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden mb-8 last:mb-0">
+            {/* Header - Only on first page */}
+            {pageIdx === 0 && (
+              <div className="flex justify-between items-start mb-12">
+                <div className="flex items-center gap-8">
+                  {store.logo_url && (
+                    <div className="w-24 h-24 bg-zinc-50 rounded-2xl flex items-center justify-center p-2 border border-zinc-100">
+                      <img src={store.logo_url} alt="" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                    </div>
+                  )}
+                  <div className="space-y-4">
+                    <h2 className="text-3xl font-black uppercase tracking-tight text-orange-600 leading-none">{store.name}</h2>
+                    <div className="grid grid-cols-1 gap-2 text-sm">
+                      <div className="grid grid-cols-[80px_1fr] gap-4 items-start">
+                        <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] pt-1 shrink-0">Endereço</span>
+                        <span className="text-zinc-600 font-medium">{store.address}</span>
+                      </div>
+                      <div className="grid grid-cols-[80px_1fr] gap-4 items-center">
+                        <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] shrink-0">NIF</span>
+                        <span className="text-zinc-600 font-bold">{store.nif}</span>
+                      </div>
+                      <div className="grid grid-cols-[80px_1fr] gap-4 items-center">
+                        <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] shrink-0">Telefone</span>
+                        <span className="text-zinc-600 font-bold">{store.phone}</span>
+                      </div>
+                      {store.email && (
+                        <div className="grid grid-cols-[80px_1fr] gap-4 items-center">
+                          <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] shrink-0">Email</span>
+                          <span className="text-orange-600 font-bold">{store.email}</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                ))}
-                {bankAccounts.length === 0 && (
-                  <p className="text-xs text-zinc-400 italic">Nenhuma conta bancária associada.</p>
-                )}
+                </div>
+                <div className="text-right">
+                  <h1 className="text-4xl font-black text-orange-500 uppercase mb-2">PROFORMA</h1>
+                  <div className="space-y-1 text-sm text-zinc-600">
+                    <p><span className="font-bold">Nº:</span> {proforma.id.toString().padStart(6, '0')}</p>
+                    <p><span className="font-bold">Data:</span> {new Date(proforma.created_at).toLocaleDateString()}</p>
+                    <p><span className="font-bold">Vencimento:</span> {new Date(new Date(proforma.created_at).getTime() + 15 * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div className="w-64 space-y-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-zinc-500">Subtotal</span>
-                <span className="font-bold">Kz {proforma.total_amount.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-zinc-500">Imposto (0%)</span>
-                <span className="font-bold">Kz 0</span>
-              </div>
-              <div className="flex justify-between text-xl pt-3 border-t-2 border-orange-500">
-                <span className="font-black uppercase tracking-tight">Total</span>
-                <span className="font-black text-orange-600">Kz {proforma.total_amount.toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
+            )}
 
-          <div className="text-center text-[10px] text-zinc-400 uppercase tracking-[0.2em] mt-12">
-            Obrigado pela sua preferência
+            {/* Client Info - Only on first page */}
+            {pageIdx === 0 && (
+              <div className="grid grid-cols-2 gap-12 mb-12">
+                <div className="bg-zinc-50 p-6 rounded-2xl">
+                  <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-4">Dados do Cliente</h4>
+                  <div className="space-y-1">
+                    <p className="font-bold text-lg">{proforma.client_name.toUpperCase()}</p>
+                    <p className="text-sm text-zinc-600">{proforma.client_address}</p>
+                    <p className="text-sm font-bold mt-2">NIF: {proforma.client_nif}</p>
+                  </div>
+                </div>
+                <div className="p-6">
+                  <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-4">Condições de Pagamento</h4>
+                  <p className="text-sm text-zinc-600">Pronto Pagamento / Transferência Bancária</p>
+                  <p className="text-sm text-zinc-600 mt-2">Válido por 15 dias a contar da data de emissão.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Items Table */}
+            <div className="flex-grow">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left border-b-2 border-orange-500">
+                    <th className="pb-4 font-black uppercase tracking-widest text-[10px]">Descrição</th>
+                    <th className="pb-4 text-center font-black uppercase tracking-widest text-[10px]">Qtd</th>
+                    <th className="pb-4 text-right font-black uppercase tracking-widest text-[10px]">Preço Unit.</th>
+                    <th className="pb-4 text-right font-black uppercase tracking-widest text-[10px]">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {pageItems.map((item: any, idx: number) => (
+                    <tr key={idx}>
+                      <td className="py-4">
+                        <p className="font-bold">{item.name.toUpperCase()}</p>
+                      </td>
+                      <td className="py-4 text-center">{item.quantity}</td>
+                      <td className="py-4 text-right">Kz {item.price.toLocaleString()}</td>
+                      <td className="py-4 text-right font-bold">Kz {(item.price * item.quantity).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer - Only on last page (if it fits) */}
+            {pageIdx === itemPages.length - 1 && !showFooterOnNewPage && renderFooterContent()}
+
+            {/* Page Number */}
+            <div className="absolute bottom-6 right-12 text-[10px] font-bold text-zinc-300 uppercase tracking-widest">
+              Página {pageIdx + 1} de {showFooterOnNewPage ? itemPages.length + 1 : itemPages.length}
+            </div>
           </div>
-        </div>
+        ))}
+
+        {/* Dedicated Footer Page if needed */}
+        {showFooterOnNewPage && (
+          <div className="proforma-page bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden">
+            <div className="flex justify-between items-start mb-12 opacity-50">
+              <div className="flex items-center gap-8">
+                {store.logo_url && (
+                  <div className="w-16 h-16 bg-zinc-50 rounded-2xl flex items-center justify-center p-2 border border-zinc-100">
+                    <img src={store.logo_url} alt="" className="max-w-full max-h-full object-contain opacity-50" referrerPolicy="no-referrer" />
+                  </div>
+                )}
+                <div>
+                  <h2 className="text-xl font-black uppercase tracking-tight text-zinc-400 leading-none">{store.name}</h2>
+                  <p className="text-[10px] font-bold text-zinc-300 mt-2 uppercase tracking-widest">Página de Continuação / Coordenadas Bancárias</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <h1 className="text-2xl font-black text-zinc-200 uppercase mb-1">PROFORMA</h1>
+                <p className="text-[10px] font-bold text-zinc-300 uppercase tracking-widest">Nº {proforma.id.toString().padStart(6, '0')}</p>
+              </div>
+            </div>
+
+            <div className="flex-grow flex flex-col">
+              <div className="text-center py-8 border-2 border-dashed border-zinc-100 rounded-3xl mb-8">
+                <p className="text-zinc-400 font-bold uppercase tracking-[0.3em] text-[9px]">Continuação da Fatura Proforma</p>
+              </div>
+              {renderFooterContent()}
+            </div>
+
+            {/* Page Number */}
+            <div className="absolute bottom-6 right-12 text-[10px] font-bold text-zinc-300 uppercase tracking-widest">
+              Página {itemPages.length + 1} de {itemPages.length + 1}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -6752,15 +6890,15 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
     });
     
     const imgData = canvas.toDataURL('image/png');
+    const imgProps = new jsPDF().getImageProperties(imgData);
+    const pdfWidth = 80; // Typical thermal printer width
+    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
     const pdf = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
-      format: [80, 200] // Typical thermal printer width
+      format: [pdfWidth, pdfHeight]
     });
-    
-    const imgProps = pdf.getImageProperties(imgData);
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
     
     pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
     pdf.save(`FATURA_${sale.invoice_number.replace('/', '_')}.pdf`);
@@ -6779,11 +6917,12 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
             <img src={store.logo_url || undefined} alt="" className="w-10 h-10 mx-auto mb-2 object-contain grayscale" referrerPolicy="no-referrer" />
           )}
           <h2 className="text-base font-black uppercase tracking-tight">{store.name}</h2>
-          <p className="text-[8px] leading-tight text-zinc-500">{store.address}</p>
-          <p className="text-[8px] font-bold mt-1">
-            NIF: {store.nif} | TEL: {store.phone}
-            {store.email && ` | EMAIL: ${store.email}`}
-          </p>
+          <p className="text-[8px] leading-tight text-zinc-500 mb-1">{store.address}</p>
+          <div className="text-[7px] font-bold flex flex-wrap justify-center gap-x-2">
+            <span>NIF: {store.nif}</span>
+            <span>TEL: {store.phone}</span>
+            {store.email && <span>EMAIL: {store.email}</span>}
+          </div>
         </div>
 
         <div className="space-y-0.5 mb-4 text-[8px] text-zinc-600">
@@ -8402,6 +8541,15 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
   const zinc400 = [161, 161, 170];
   const zinc500 = [113, 113, 122];
 
+  // Parse items and bank accounts
+  const items = typeof proforma.items === 'string' 
+    ? JSON.parse(proforma.items) 
+    : proforma.items || [];
+    
+  const bankAccounts = typeof proforma.bank_accounts === 'string' 
+    ? JSON.parse(proforma.bank_accounts) 
+    : proforma.bank_accounts || [];
+
   // Background accent (top orange bar)
   doc.setFillColor(orange[0], orange[1], orange[2]);
   doc.rect(0, 0, 210, 5, 'F');
@@ -8501,7 +8649,7 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
   doc.text(`ENDEREÇO: ${proforma.client_address || 'N/A'}`, 25, 124);
 
   // Table
-  const tableData = proforma.items.map((item: any, index: number) => [
+  const tableData = items.map((item: any, index: number) => [
     index + 1,
     item.name,
     item.quantity,
@@ -8538,10 +8686,27 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
   });
 
   // Totals
-  const finalY = (doc as any).lastAutoTable.finalY + 10;
-  const subtotal = proforma.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
+  let finalY = (doc as any).lastAutoTable.finalY + 10;
+  const pageHeight = doc.internal.pageSize.height;
+  const subtotal = items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
   const iva = 0; 
   const total = subtotal + iva;
+
+  // Check if totals and bank details fit on the current page
+  // We need about 90mm of space for totals + bank details to be safe
+  // If we have 5 or fewer items, we try to keep it on one page by reducing the threshold slightly
+  const footerThreshold = items.length <= 5 ? 80 : 100;
+  if (finalY > pageHeight - footerThreshold) {
+    doc.addPage();
+    // Header for continuation
+    doc.setFillColor(orange[0], orange[1], orange[2]);
+    doc.rect(0, 0, 210, 5, 'F');
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(black[0], black[1], black[2]);
+    doc.text(`${store.name.toUpperCase()} - PROFORMA Nº ${proforma.invoice_number || ''} (CONTINUAÇÃO)`, 20, 15);
+    finalY = 30;
+  }
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
@@ -8566,46 +8731,46 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
   doc.text(`Kz ${total.toLocaleString()}`, 190, finalY + 18, { align: 'right' });
 
   // Footer: Bank details
-  const pageHeight = doc.internal.pageSize.height;
-  
   // Orange footer bar
   doc.setFillColor(orange[0], orange[1], orange[2]);
   doc.rect(0, pageHeight - 1, 210, 1, 'F');
 
+  // Determine dynamic Y position for bank details
+  // If we are on a new page, we can place them after the totals
+  // If we are on the same page, we keep them at the bottom but ensure no collision
+  let currentY = Math.max(finalY + 30, pageHeight - 45);
+
+  // Draw a separator line before bank accounts
   doc.setDrawColor(zinc400[0], zinc400[1], zinc400[2]);
   doc.setLineWidth(0.1);
-  doc.line(20, pageHeight - 50, 190, pageHeight - 50);
+  doc.line(20, currentY - 5, 190, currentY - 5);
   
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(black[0], black[1], black[2]);
-  doc.text('COORDENADAS BANCÁRIAS', 105, pageHeight - 43, { align: 'center' });
+  doc.text('COORDENADAS BANCÁRIAS', 105, currentY, { align: 'center' });
+  currentY += 7;
   
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(zinc500[0], zinc500[1], zinc500[2]);
-  
-  let bankAccounts: any[] = [];
-  if (store.bank_accounts) {
-    bankAccounts = typeof store.bank_accounts === 'string' ? JSON.parse(store.bank_accounts) : store.bank_accounts;
-  }
 
   if (bankAccounts.length > 0) {
-    let currentY = pageHeight - 37;
     bankAccounts.forEach((acc: any) => {
-      const text = `${acc.bank_name}: ${acc.iban} (${acc.account_number})`;
+      const text = `${acc.bank_name}: ${acc.iban}${acc.account_number ? ` (${acc.account_number})` : ''}`;
       doc.text(text, 105, currentY, { align: 'center' });
       currentY += 5;
     });
   } else {
-    doc.text('Nenhuma coordenada bancária disponível.', 105, pageHeight - 37, { align: 'center' });
+    doc.text('Nenhuma coordenada bancária disponível.', 105, currentY, { align: 'center' });
   }
 
   doc.setFontSize(7);
   doc.text(`Emitido por: ${user.name} • Software Fatu-R`, 105, pageHeight - 10, { align: 'center' });
 
   // Save and Print
-  const fileName = `PROFORMA_${proforma.client_name.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+  const safeClientName = (proforma.client_name || 'CLIENTE').replace(/\s+/g, '_');
+  const fileName = `PROFORMA_${safeClientName}_${Date.now()}.pdf`;
   doc.save(fileName);
   
   const pdfBlob = doc.output('blob');

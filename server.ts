@@ -149,9 +149,10 @@ db.exec(`
     image_url TEXT,
     is_promo INTEGER DEFAULT 0,
     min_stock INTEGER DEFAULT 5,
-    barcode TEXT UNIQUE,
+    barcode TEXT,
     FOREIGN KEY(store_id) REFERENCES stores(id)
   );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_products_store_barcode ON products(store_id, barcode);
 `);
 
 try {
@@ -222,12 +223,14 @@ try {
       const barcode = Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
       db.prepare("UPDATE products SET barcode = ? WHERE id = ?").run(barcode, p.id);
     }
-    // Add unique index after populating data
-    try {
-      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)");
-    } catch (e) {
-      console.error("Error creating barcode index:", e);
-    }
+  }
+  
+  // Ensure barcode uniqueness is per store, not global
+  try {
+    db.exec("DROP INDEX IF EXISTS idx_products_barcode");
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_products_store_barcode ON products(store_id, barcode)");
+  } catch (e) {
+    console.error("Error updating barcode index:", e);
   }
   const proformaColumns = db.prepare("PRAGMA table_info(proforma_invoices)").all() as any[];
   if (!proformaColumns.some(col => col.name === 'invoice_number')) {
@@ -253,8 +256,22 @@ db.exec(`
     FOREIGN KEY(product_id) REFERENCES products(id),
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
+`);
 
-  CREATE TABLE IF NOT EXISTS transactions (
+  try {
+    const columns = db.prepare("PRAGMA table_info(stock_movements)").all() as any[];
+    if (!columns.some(col => col.name === 'from_store_id')) {
+      db.exec("ALTER TABLE stock_movements ADD COLUMN from_store_id INTEGER");
+    }
+    if (!columns.some(col => col.name === 'to_store_id')) {
+      db.exec("ALTER TABLE stock_movements ADD COLUMN to_store_id INTEGER");
+    }
+  } catch (e) {
+    console.error("Migration error (stock_movements):", e);
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     store_id INTEGER,
     seller_id INTEGER,
@@ -1959,11 +1976,22 @@ async function startServer() {
     try {
       db.transaction(() => {
         const sourceProduct = db.prepare("SELECT * FROM products WHERE id = ?").get(product_id) as any;
-        if (!sourceProduct || sourceProduct.stock < quantity) {
-          throw new Error("Estoque insuficiente para transferência");
+        if (!sourceProduct) {
+          throw new Error("Produto não encontrado");
+        }
+        if (sourceProduct.stock < quantity) {
+          throw new Error(`Estoque insuficiente em ${sourceProduct.name}. Disponível: ${sourceProduct.stock}`);
         }
 
-        let destProduct = db.prepare("SELECT * FROM products WHERE store_id = ? AND name = ?").get(to_store_id, sourceProduct.name) as any;
+        // Try to find the product in the destination store by barcode first, then by name
+        let destProduct;
+        if (sourceProduct.barcode) {
+          destProduct = db.prepare("SELECT * FROM products WHERE store_id = ? AND barcode = ?").get(to_store_id, sourceProduct.barcode) as any;
+        }
+        
+        if (!destProduct) {
+          destProduct = db.prepare("SELECT * FROM products WHERE store_id = ? AND name = ?").get(to_store_id, sourceProduct.name) as any;
+        }
         
         if (!destProduct) {
           const barcode = sourceProduct.barcode || Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
@@ -1977,18 +2005,21 @@ async function startServer() {
         db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(quantity, sourceProduct.id);
         db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(quantity, destProduct.id);
 
-        db.prepare(`
-          INSERT INTO stock_movements (store_id, product_id, user_id, type, quantity, reason, from_store_id, to_store_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(from_store_id, sourceProduct.id, user_id, 'transfer', -quantity, reason, from_store_id, to_store_id);
+        const transferReason = reason || `Transferência de ${quantity} un de ${sourceProduct.name}`;
 
         db.prepare(`
           INSERT INTO stock_movements (store_id, product_id, user_id, type, quantity, reason, from_store_id, to_store_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(to_store_id, destProduct.id, user_id, 'transfer', quantity, reason, from_store_id, to_store_id);
+        `).run(from_store_id, sourceProduct.id, user_id, 'transfer', -quantity, transferReason, from_store_id, to_store_id);
+
+        db.prepare(`
+          INSERT INTO stock_movements (store_id, product_id, user_id, type, quantity, reason, from_store_id, to_store_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(to_store_id, destProduct.id, user_id, 'transfer', quantity, transferReason, from_store_id, to_store_id);
       })();
       res.json({ success: true });
     } catch (error: any) {
+      console.error("Transfer error:", error);
       res.status(500).json({ error: error.message });
     }
   });
