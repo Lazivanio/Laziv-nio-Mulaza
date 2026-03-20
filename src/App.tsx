@@ -47,6 +47,7 @@ import {
   FileText,
   PieChart as PieChartIcon,
   Download,
+  Upload,
   Image as ImageIcon,
   Activity,
   BarChart3,
@@ -3159,6 +3160,7 @@ const MyStores = ({ user }: { user: User }) => {
     name: '',
     address: '',
     phone: '',
+    email: '',
     nif: '',
     logo_url: '',
     status: 'active' as 'active' | 'inactive',
@@ -3204,7 +3206,7 @@ const MyStores = ({ user }: { user: User }) => {
     if (res.ok) {
       setIsModalOpen(false);
       setEditingStore(null);
-      setFormData({ name: '', address: '', phone: '', nif: '', logo_url: '', status: 'active', bank_accounts: [] });
+      setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', status: 'active', bank_accounts: [] });
       fetchStores();
     } else {
       const data = await res.json();
@@ -3218,6 +3220,7 @@ const MyStores = ({ user }: { user: User }) => {
       name: store.name,
       address: store.address,
       phone: store.phone || '',
+      email: store.email || '',
       nif: store.nif || '',
       logo_url: store.logo_url || '',
       status: store.status,
@@ -3377,6 +3380,15 @@ const MyStores = ({ user }: { user: User }) => {
               />
             </div>
             <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email (Opcional)</label>
+              <input 
+                type="email" 
+                value={formData.email}
+                onChange={e => setFormData({...formData, email: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+              />
+            </div>
+            <div>
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF</label>
               <input 
                 type="text" 
@@ -3386,14 +3398,48 @@ const MyStores = ({ user }: { user: User }) => {
               />
             </div>
             <div className="col-span-2">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">URL do Logotipo</label>
-              <input 
-                type="text" 
-                value={formData.logo_url}
-                onChange={e => setFormData({...formData, logo_url: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
-                placeholder="https://..."
-              />
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Logotipo da Loja</label>
+              <div className="flex flex-col md:flex-row gap-4">
+                <div className="flex-1 space-y-2">
+                  <input 
+                    type="text" 
+                    value={formData.logo_url}
+                    onChange={e => setFormData({...formData, logo_url: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
+                    placeholder="URL da imagem (https://...)"
+                  />
+                  <div className="relative">
+                    <input 
+                      type="file"
+                      accept="image/*"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          try {
+                            const base64 = await fileToBase64(file);
+                            setFormData({...formData, logo_url: base64});
+                          } catch (err) {
+                            console.error("Error converting file to base64", err);
+                          }
+                        }
+                      }}
+                      className="hidden"
+                      id="store-logo-upload"
+                    />
+                    <label 
+                      htmlFor="store-logo-upload"
+                      className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-white border-2 border-dashed border-zinc-200 rounded-xl cursor-pointer hover:border-black hover:bg-zinc-50 transition-all text-sm font-bold text-zinc-600"
+                    >
+                      <Upload size={18} /> Carregar Imagem Local
+                    </label>
+                  </div>
+                </div>
+                {formData.logo_url && (
+                  <div className="w-24 h-24 bg-zinc-100 rounded-2xl overflow-hidden border border-zinc-200 shrink-0">
+                    <img src={formData.logo_url} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  </div>
+                )}
+              </div>
             </div>
             {editingStore && (
               <div className="col-span-2">
@@ -3761,6 +3807,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
     name: '', 
     nif: '', 
     phone: '', 
+    email: '',
     address: '', 
     logo_url: '', 
     status: 'active',
@@ -3818,6 +3865,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
             name: data.store.name || '',
             nif: data.store.nif || '',
             phone: data.store.phone || '',
+            email: data.store.email || '',
             address: data.store.address || '',
             logo_url: data.store.logo_url || '',
             status: data.store.status || 'active',
@@ -4937,6 +4985,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
                       />
                     </div>
                     <div>
+                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email da Loja (Opcional)</label>
+                      <input 
+                        type="email" 
+                        value={settingsForm.email}
+                        onChange={e => setSettingsForm({...settingsForm, email: e.target.value})}
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
+                      />
+                    </div>
+                    <div>
                       <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
                       <input 
                         type="text" 
@@ -4946,14 +5003,48 @@ const StoreAdmin = ({ user }: { user: User }) => {
                       />
                     </div>
                     <div className="col-span-full">
-                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">URL do Logotipo</label>
-                      <input 
-                        type="text" 
-                        value={settingsForm.logo_url}
-                        onChange={e => setSettingsForm({...settingsForm, logo_url: e.target.value})}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
-                        placeholder="https://..."
-                      />
+                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Logotipo da Loja</label>
+                      <div className="flex flex-col md:flex-row gap-4">
+                        <div className="flex-1 space-y-2">
+                          <input 
+                            type="text" 
+                            value={settingsForm.logo_url}
+                            onChange={e => setSettingsForm({...settingsForm, logo_url: e.target.value})}
+                            className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
+                            placeholder="URL da imagem (https://...)"
+                          />
+                          <div className="relative">
+                            <input 
+                              type="file"
+                              accept="image/*"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  try {
+                                    const base64 = await fileToBase64(file);
+                                    setSettingsForm({...settingsForm, logo_url: base64});
+                                  } catch (err) {
+                                    console.error("Error converting file to base64", err);
+                                  }
+                                }
+                              }}
+                              className="hidden"
+                              id="settings-logo-upload"
+                            />
+                            <label 
+                              htmlFor="settings-logo-upload"
+                              className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-white border-2 border-dashed border-zinc-200 rounded-xl cursor-pointer hover:border-black hover:bg-zinc-50 transition-all text-sm font-bold text-zinc-600"
+                            >
+                              <Upload size={18} /> Carregar Imagem Local
+                            </label>
+                          </div>
+                        </div>
+                        {settingsForm.logo_url && (
+                          <div className="w-24 h-24 bg-zinc-100 rounded-2xl overflow-hidden border border-zinc-200 shrink-0">
+                            <img src={settingsForm.logo_url} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="col-span-full space-y-4">
@@ -5686,14 +5777,48 @@ const StoreAdmin = ({ user }: { user: User }) => {
             </div>
           </div>
           <div>
-            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">URL da Imagem</label>
-            <input 
-              type="text"
-              value={productForm.image_url}
-              onChange={e => setProductForm({...productForm, image_url: e.target.value})}
-              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-              placeholder="https://exemplo.com/imagem.jpg"
-            />
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Imagem do Produto</label>
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1 space-y-2">
+                <input 
+                  type="text"
+                  value={productForm.image_url}
+                  onChange={e => setProductForm({...productForm, image_url: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none text-sm" 
+                  placeholder="URL da imagem (https://...)"
+                />
+                <div className="relative">
+                  <input 
+                    type="file"
+                    accept="image/*"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        try {
+                          const base64 = await fileToBase64(file);
+                          setProductForm({...productForm, image_url: base64});
+                        } catch (err) {
+                          console.error("Error converting file to base64", err);
+                        }
+                      }
+                    }}
+                    className="hidden"
+                    id="product-image-upload"
+                  />
+                  <label 
+                    htmlFor="product-image-upload"
+                    className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-white border-2 border-dashed border-zinc-200 rounded-xl cursor-pointer hover:border-black hover:bg-zinc-50 transition-all text-sm font-bold text-zinc-600"
+                  >
+                    <Upload size={18} /> Carregar Imagem Local
+                  </label>
+                </div>
+              </div>
+              {productForm.image_url && (
+                <div className="w-24 h-24 bg-zinc-100 rounded-2xl overflow-hidden border border-zinc-200 shrink-0">
+                  <img src={productForm.image_url} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                </div>
+              )}
+            </div>
           </div>
           <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold">
             {editingProduct ? "Guardar Alterações" : "Adicionar Produto"}
@@ -6508,11 +6633,14 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
             <div>
               <h2 className="text-2xl font-black uppercase tracking-tight">{store.name}</h2>
               <p className="text-sm text-zinc-500 max-w-xs">{store.address}</p>
-              <p className="text-sm font-bold mt-1">NIF: {store.nif} | TEL: {store.phone}</p>
+              <p className="text-sm font-bold mt-1">
+                NIF: {store.nif} | TEL: {store.phone}
+                {store.email && ` | EMAIL: ${store.email}`}
+              </p>
             </div>
           </div>
           <div className="text-right">
-            <h1 className="text-4xl font-black text-zinc-200 uppercase mb-2">PROFORMA</h1>
+            <h1 className="text-4xl font-black text-orange-500 uppercase mb-2">PROFORMA</h1>
             <div className="space-y-1 text-sm text-zinc-600">
               <p><span className="font-bold">Nº:</span> {proforma.id.toString().padStart(6, '0')}</p>
               <p><span className="font-bold">Data:</span> {new Date(proforma.created_at).toLocaleDateString()}</p>
@@ -6540,7 +6668,7 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
         <div className="flex-grow">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left border-b-2 border-zinc-900">
+              <tr className="text-left border-b-2 border-orange-500">
                 <th className="pb-4 font-black uppercase tracking-widest text-[10px]">Descrição</th>
                 <th className="pb-4 text-center font-black uppercase tracking-widest text-[10px]">Qtd</th>
                 <th className="pb-4 text-right font-black uppercase tracking-widest text-[10px]">Preço Unit.</th>
@@ -6589,9 +6717,9 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
                 <span className="text-zinc-500">Imposto (0%)</span>
                 <span className="font-bold">Kz 0</span>
               </div>
-              <div className="flex justify-between text-xl pt-3 border-t-2 border-zinc-900">
+              <div className="flex justify-between text-xl pt-3 border-t-2 border-orange-500">
                 <span className="font-black uppercase tracking-tight">Total</span>
-                <span className="font-black">Kz {proforma.total_amount.toLocaleString()}</span>
+                <span className="font-black text-orange-600">Kz {proforma.total_amount.toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -6652,7 +6780,10 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
           )}
           <h2 className="text-base font-black uppercase tracking-tight">{store.name}</h2>
           <p className="text-[8px] leading-tight text-zinc-500">{store.address}</p>
-          <p className="text-[8px] font-bold mt-1">NIF: {store.nif} | TEL: {store.phone}</p>
+          <p className="text-[8px] font-bold mt-1">
+            NIF: {store.nif} | TEL: {store.phone}
+            {store.email && ` | EMAIL: ${store.email}`}
+          </p>
         </div>
 
         <div className="space-y-0.5 mb-4 text-[8px] text-zinc-600">
@@ -8253,6 +8384,15 @@ const SellerSettings = ({ user, onUpdate }: { user: User, onUpdate: (u: User) =>
 };
 
 // --- Main App ---
+
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = error => reject(error);
+  });
+};
 
 const generateProformaPDF = async (proforma: any, store: any, user: any) => {
   const doc = new jsPDF();

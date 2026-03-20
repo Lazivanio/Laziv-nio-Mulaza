@@ -22,6 +22,7 @@ export interface Store {
   name: string;
   address: string;
   phone?: string;
+  email?: string;
   nif?: string;
   logo_url?: string;
   status: 'active' | 'inactive';

@@ -51,6 +51,14 @@ try {
   console.error("Migration error (users):", e);
 }
 
+// Migration: Add missing columns to stores
+try {
+  const columns = db.prepare("PRAGMA table_info(stores)").all() as any[];
+  if (!columns.some(col => col.name === 'email')) db.exec("ALTER TABLE stores ADD COLUMN email TEXT");
+} catch (e) {
+  console.error("Migration error (stores):", e);
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS licenses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,6 +129,7 @@ db.exec(`
     name TEXT,
     address TEXT,
     phone TEXT,
+    email TEXT,
     nif TEXT,
     logo_url TEXT,
     status TEXT DEFAULT 'active', -- 'active' or 'inactive'
@@ -416,7 +425,8 @@ db.exec("DELETE FROM products WHERE store_id = 1 AND name IN ('Cuca Garrafa 33cl
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
   const PORT = 3000;
 
   // --- API Routes ---
@@ -1077,7 +1087,7 @@ async function startServer() {
   });
 
   app.post("/api/owner/stores", (req, res) => {
-    const { owner_id, name, address, phone, nif, logo_url, bank_accounts } = req.body;
+    const { owner_id, name, address, phone, email, nif, logo_url, bank_accounts } = req.body;
     
     try {
       // Check limits
@@ -1108,9 +1118,9 @@ async function startServer() {
       }
 
       db.prepare(`
-        INSERT INTO stores (owner_id, name, address, phone, nif, logo_url, license_expiry, bank_accounts) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(owner_id, name, address, phone, nif, logo_url, "2026-12-31", JSON.stringify(bank_accounts || []));
+        INSERT INTO stores (owner_id, name, address, phone, email, nif, logo_url, license_expiry, bank_accounts) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(owner_id, name, address, phone, email, nif, logo_url, "2026-12-31", JSON.stringify(bank_accounts || []));
       
       res.json({ success: true });
     } catch (error: any) {
@@ -1119,12 +1129,12 @@ async function startServer() {
   });
 
   app.put("/api/owner/stores/:storeId", (req, res) => {
-    const { name, address, phone, nif, logo_url, status, bank_accounts } = req.body;
+    const { name, address, phone, email, nif, logo_url, status, bank_accounts } = req.body;
     db.prepare(`
       UPDATE stores 
-      SET name = ?, address = ?, phone = ?, nif = ?, logo_url = ?, status = ?, bank_accounts = ? 
+      SET name = ?, address = ?, phone = ?, email = ?, nif = ?, logo_url = ?, status = ?, bank_accounts = ? 
       WHERE id = ?
-    `).run(name, address, phone, nif, logo_url, status, JSON.stringify(bank_accounts || []), req.params.storeId);
+    `).run(name, address, phone, email, nif, logo_url, status, JSON.stringify(bank_accounts || []), req.params.storeId);
     res.json({ success: true });
   });
 
@@ -1628,12 +1638,12 @@ async function startServer() {
   });
 
   app.put("/api/owner/store-settings/:id", (req, res) => {
-    const { name, nif, phone, address, logo_url, status, bank_accounts } = req.body;
+    const { name, nif, phone, email, address, logo_url, status, bank_accounts } = req.body;
     db.prepare(`
       UPDATE stores 
-      SET name = ?, nif = ?, phone = ?, address = ?, logo_url = ?, status = ?, bank_accounts = ?
+      SET name = ?, nif = ?, phone = ?, email = ?, address = ?, logo_url = ?, status = ?, bank_accounts = ?
       WHERE id = ?
-    `).run(name, nif, phone, address, logo_url, status, JSON.stringify(bank_accounts || []), req.params.id);
+    `).run(name, nif, phone, email, address, logo_url, status, JSON.stringify(bank_accounts || []), req.params.id);
     res.json({ success: true });
   });
 
