@@ -39,6 +39,7 @@ export interface HRSalaryPayment {
   id: number;
   salary_id: number;
   amount: number;
+  bonus: number;
   type: 'base' | 'bonus' | 'discount' | 'full_payment' | 'advance' | 'commission';
   description?: string;
   month: string;
@@ -133,4 +134,17 @@ export interface License {
   price: number;
   start_date: string;
   end_date: string;
+}
+
+export interface Service {
+  id: number;
+  owner_id: number;
+  store_id: number;
+  name: string;
+  code: string;
+  description: string;
+  price: number;
+  availability_condition: 'always' | 'product_purchased';
+  show_in_pos: number;
+  created_at: string;
 }

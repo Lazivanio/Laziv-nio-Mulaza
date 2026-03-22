@@ -53,6 +53,7 @@ try {
   if (!columns.some(col => col.name === 'role_id')) db.exec("ALTER TABLE users ADD COLUMN role_id INTEGER");
   if (!columns.some(col => col.name === 'custom_permissions')) db.exec("ALTER TABLE users ADD COLUMN custom_permissions TEXT");
   if (!columns.some(col => col.name === 'store_id')) db.exec("ALTER TABLE users ADD COLUMN store_id INTEGER");
+  if (!columns.some(col => col.name === 'bonus')) db.exec("ALTER TABLE hr_salary_payments ADD COLUMN bonus REAL DEFAULT 0");
 } catch (e) {
   console.error("Migration error (users):", e);
 }
@@ -302,6 +303,7 @@ db.exec(`
     user_id INTEGER,
     salary REAL,
     shift_info TEXT,
+    UNIQUE(store_id, user_id),
     FOREIGN KEY(store_id) REFERENCES stores(id),
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
@@ -397,7 +399,7 @@ db.exec(`
   db.exec(`
   CREATE TABLE IF NOT EXISTS hr_salaries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
+    user_id INTEGER UNIQUE,
     base_salary REAL DEFAULT 0,
     bonuses REAL DEFAULT 0,
     discounts REAL DEFAULT 0,
@@ -424,6 +426,23 @@ db.exec(`
   } catch (e) {
     // Column might already exist
   }
+
+  db.exec(`
+  CREATE TABLE IF NOT EXISTS services (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER,
+    store_id INTEGER,
+    name TEXT,
+    code TEXT,
+    description TEXT,
+    price REAL,
+    availability_condition TEXT, -- 'always' or 'product_purchased'
+    show_in_pos INTEGER DEFAULT 1, -- 0 for NO, 1 for YES
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(owner_id) REFERENCES users(id),
+    FOREIGN KEY(store_id) REFERENCES stores(id)
+  );
+  `);
 
   db.exec(`
   CREATE TABLE IF NOT EXISTS hr_attendance (
@@ -595,17 +614,20 @@ async function startServer() {
         return res.status(403).json({ error: "A sua conta está suspensa. Contacte o administrador." });
       }
 
-      let storeId = null;
+      let storeId = user.store_id;
       let ownerId = user.id;
 
-      if (user.role === 'seller') {
-        const staff = db.prepare("SELECT store_id FROM staff WHERE user_id = ?").get(user.id) as any;
-        if (staff) {
-          storeId = staff.store_id;
+      if (user.role === 'seller' || user.role === 'manager') {
+        if (!storeId) {
+          const staff = db.prepare("SELECT store_id FROM staff WHERE user_id = ?").get(user.id) as any;
+          if (staff) storeId = staff.store_id;
+        }
+        
+        if (storeId) {
           const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(storeId) as any;
           if (store) ownerId = store.owner_id;
-        } else {
-          return res.status(403).json({ error: "Esta conta de vendedor foi desativada." });
+        } else if (user.role === 'seller') {
+          return res.status(403).json({ error: "Esta conta de vendedor foi desativada ou não está vinculada a nenhuma loja." });
         }
       }
 
@@ -1476,6 +1498,46 @@ async function startServer() {
     }
   });
 
+  // Services Routes
+  app.get("/api/owner/services/:ownerId", (req, res) => {
+    const services = db.prepare(`
+      SELECT s.*, st.name as store_name 
+      FROM services s 
+      LEFT JOIN stores st ON s.store_id = st.id 
+      WHERE s.owner_id = ?
+    `).all(req.params.ownerId);
+    res.json(services);
+  });
+
+  app.post("/api/owner/services", (req, res) => {
+    const { owner_id, store_id, name, code, description, price, availability_condition, show_in_pos } = req.body;
+    db.prepare(`
+      INSERT INTO services (owner_id, store_id, name, code, description, price, availability_condition, show_in_pos) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(owner_id, store_id, name, code, description, price, availability_condition, show_in_pos);
+    res.json({ success: true });
+  });
+
+  app.put("/api/owner/services/:id", (req, res) => {
+    const { store_id, name, code, description, price, availability_condition, show_in_pos } = req.body;
+    db.prepare(`
+      UPDATE services 
+      SET store_id = ?, name = ?, code = ?, description = ?, price = ?, availability_condition = ?, show_in_pos = ? 
+      WHERE id = ?
+    `).run(store_id, name, code, description, price, availability_condition, show_in_pos, req.params.id);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/owner/services/:id", (req, res) => {
+    db.prepare("DELETE FROM services WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/seller/services/:storeId", (req, res) => {
+    const services = db.prepare("SELECT * FROM services WHERE store_id = ? AND show_in_pos = 1").all(req.params.storeId);
+    res.json(services);
+  });
+
   // HR Routes
   app.get("/api/owner/hr/roles/:ownerId", (req, res) => {
     const roles = db.prepare("SELECT * FROM hr_roles WHERE owner_id = ?").all(req.params.ownerId);
@@ -1525,9 +1587,10 @@ async function startServer() {
           name, email, username, password, finalRole, store_id, role_id, JSON.stringify(custom_permissions), 'active'
         );
         const userId = result.lastInsertRowid;
-        db.prepare("INSERT INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(userId, base_salary || 0);
+        const salary = Number(base_salary) || 0;
+        db.prepare("INSERT OR REPLACE INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(userId, salary);
         if (store_id) {
-          db.prepare("INSERT INTO staff (store_id, user_id, salary) VALUES (?, ?, ?)").run(store_id, userId, base_salary || 0);
+          db.prepare("INSERT OR REPLACE INTO staff (store_id, user_id, salary) VALUES (?, ?, ?)").run(store_id, userId, salary);
         }
       })();
       res.json({ success: true });
@@ -1549,9 +1612,10 @@ async function startServer() {
         db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, store_id = ?, role_id = ?, custom_permissions = ?, status = ? WHERE id = ?").run(
           name, email, username, finalRole, store_id, role_id, JSON.stringify(custom_permissions), status, req.params.id
         );
-        db.prepare("UPDATE hr_salaries SET base_salary = ? WHERE user_id = ?").run(base_salary || 0, req.params.id);
+        const salary = Number(base_salary) || 0;
+        db.prepare("INSERT OR REPLACE INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(req.params.id, salary);
         if (store_id) {
-          db.prepare("INSERT OR REPLACE INTO staff (store_id, user_id, salary) VALUES (?, ?, ?)").run(store_id, req.params.id, base_salary || 0);
+          db.prepare("INSERT OR REPLACE INTO staff (store_id, user_id, salary) VALUES (?, ?, ?)").run(store_id, req.params.id, salary);
         }
       })();
       res.json({ success: true });
@@ -1610,12 +1674,29 @@ async function startServer() {
   });
 
   app.post("/api/owner/hr/salaries/payment", (req, res) => {
-    const { salary_id, amount, type, description, month } = req.body;
-    db.prepare("INSERT INTO hr_salary_payments (salary_id, amount, type, description, month) VALUES (?, ?, ?, ?, ?)").run(salary_id, amount, type, description, month);
-    if (type === 'full_payment') {
-      db.prepare("UPDATE hr_salaries SET last_payment_date = CURRENT_TIMESTAMP WHERE id = ?").run(salary_id);
+    const { salary_id, amount, bonus, type, description, month } = req.body;
+    
+    try {
+      // Check for duplicate payment for the same month
+      const existingPayment = db.prepare("SELECT id FROM hr_salary_payments WHERE salary_id = ? AND month = ?").get(salary_id, month);
+      if (existingPayment) {
+        return res.status(400).json({ error: "Já existe um pagamento registado para este mês." });
+      }
+
+      // Check if amount is at least the base salary
+      const salary = db.prepare("SELECT base_salary FROM hr_salaries WHERE id = ?").get(salary_id) as any;
+      if (salary && amount < salary.base_salary) {
+        return res.status(400).json({ error: `O valor do pagamento não pode ser inferior ao salário base (${salary.base_salary} Kz).` });
+      }
+
+      db.prepare("INSERT INTO hr_salary_payments (salary_id, amount, bonus, type, description, month) VALUES (?, ?, ?, ?, ?, ?)").run(salary_id, amount, bonus || 0, type, description, month);
+      if (type === 'full_payment') {
+        db.prepare("UPDATE hr_salaries SET last_payment_date = CURRENT_TIMESTAMP WHERE id = ?").run(salary_id);
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
-    res.json({ success: true });
   });
 
   app.get("/api/owner/hr/attendance/:ownerId", (req, res) => {

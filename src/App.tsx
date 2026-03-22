@@ -85,6 +85,8 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { User, Store as StoreType, Product, Transaction, BankAccount } from './types';
 import { OwnerRH } from './components/OwnerRH';
+import { OwnerServices } from './components/OwnerServices';
+import { Service } from './types';
 
 // --- Utilities ---
 function cn(...inputs: ClassValue[]) {
@@ -378,6 +380,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
                 <SidebarItem icon={Users} label="Clientes" to="/owner/clients" onClick={closeSidebar} />
                 <SidebarItem icon={Briefcase} label="Fornecedores" to="/owner/suppliers" onClick={closeSidebar} />
                 <SidebarItem icon={ShoppingCart} label="Compras" to="/owner/purchases" onClick={closeSidebar} />
+                <SidebarItem icon={Sparkles} label="Serviços" to="/owner/services" onClick={closeSidebar} />
                 <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
                 <SidebarItem icon={Settings} label="Configurações" to="/owner/settings" onClick={closeSidebar} />
               </>
@@ -4296,6 +4299,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
   };
 
   if (!storeData) return <div className="p-8 text-center text-zinc-500">Carregando dados da loja...</div>;
+  if (!storeData.store) return <div className="p-8 text-center text-zinc-500">Loja não encontrada ou acesso negado.</div>;
 
   const { store, dashboard } = storeData;
 
@@ -8125,13 +8129,15 @@ const SellerPOS = ({ user }: { user: User }) => {
   }
 
   const [products, setProducts] = useState<Product[]>([]);
-  const [cart, setCart] = useState<{ product: Product, quantity: number }[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+  const [cart, setCart] = useState<{ item: Product | Service, type: 'product' | 'service', quantity: number }[]>([]);
   const [category, setCategory] = useState('Geral');
   const [search, setSearch] = useState('');
   const [discount, setDiscount] = useState(0);
   const [client, setClient] = useState({ name: 'Consumidor Final', nif: '999999999' });
   const [clients, setClients] = useState<any[]>([]);
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
   const [clientSearch, setClientSearch] = useState('');
   const [lastSale, setLastSale] = useState<any>(null);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
@@ -8154,10 +8160,13 @@ const SellerPOS = ({ user }: { user: User }) => {
   useEffect(() => {
     const storeId = user.store_id || 1;
     fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
+    fetch(`/api/seller/services/${storeId}`).then(res => res.json()).then(setServices);
     fetch(`/api/seller/clients/${storeId}`).then(res => res.json()).then(setClients);
     fetch(`/api/admin/stores`).then(res => res.json()).then(stores => {
-      const currentStore = stores.find((s: any) => s.id === storeId);
-      setStoreInfo(currentStore);
+      if (Array.isArray(stores)) {
+        const currentStore = stores.find((s: any) => s.id === storeId);
+        setStoreInfo(currentStore);
+      }
     });
 
     // Check for active session
@@ -8166,35 +8175,35 @@ const SellerPOS = ({ user }: { user: User }) => {
       .then(data => setHasActiveSession(!!data));
   }, [user.store_id]);
 
-  const addToCart = (product: Product) => {
+  const addToCart = (item: Product | Service, type: 'product' | 'service' = 'product') => {
     setCart(prev => {
-      const existing = prev.find(item => item.product.id === product.id);
+      const existing = prev.find(i => i.item.id === item.id && i.type === type);
       if (existing) {
-        return prev.map(item => item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+        return prev.map(i => (i.item.id === item.id && i.type === type) ? { ...i, quantity: i.quantity + 1 } : i);
       }
-      return [...prev, { product, quantity: 1 }];
+      return [...prev, { item, type, quantity: 1 }];
     });
   };
 
-  const updateQuantity = (productId: number, delta: number) => {
-    setCart(prev => prev.map(item => {
-      if (item.product.id === productId) {
-        const newQty = Math.max(1, item.quantity + delta);
-        return { ...item, quantity: newQty };
+  const updateQuantity = (id: number, type: 'product' | 'service', delta: number) => {
+    setCart(prev => prev.map(i => {
+      if (i.item.id === id && i.type === type) {
+        const newQty = Math.max(1, i.quantity + delta);
+        return { ...i, quantity: newQty };
       }
-      return item;
+      return i;
     }));
   };
 
-  const removeFromCart = (productId: number) => {
-    setCart(prev => prev.filter(item => item.product.id !== productId));
+  const removeFromCart = (id: number, type: 'product' | 'service') => {
+    setCart(prev => prev.filter(i => !(i.item.id === id && i.type === type)));
   };
 
-  const subtotal = cart.reduce((acc, item) => {
-    const price = item.product.discount_percent 
-      ? item.product.price * (1 - item.product.discount_percent / 100) 
-      : item.product.price;
-    return acc + (price * item.quantity);
+  const subtotal = cart.reduce((acc, i) => {
+    const price = i.type === 'product' 
+      ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
+      : i.item.price;
+    return acc + (price * i.quantity);
   }, 0);
   
   const discountAmount = discount;
@@ -8228,7 +8237,7 @@ const SellerPOS = ({ user }: { user: User }) => {
 
   const handleCreateProforma = async (e: FormEvent) => {
     e.preventDefault();
-    if (cart.length === 0) return;
+    if (cart.length === 0 || !storeInfo) return;
 
     try {
       const storeId = user.store_id || 1;
@@ -8240,13 +8249,15 @@ const SellerPOS = ({ user }: { user: User }) => {
           store_id: storeId,
           owner_id: user.id,
           total_amount: total,
-          items: cart.map(item => ({
-            product_id: item.product.id,
-            name: item.product.name,
-            price: item.product.discount_percent 
-              ? item.product.price * (1 - item.product.discount_percent / 100) 
-              : item.product.price,
-            quantity: item.quantity
+          items: cart.map(i => ({
+            product_id: i.type === 'product' ? i.item.id : null,
+            service_id: i.type === 'service' ? i.item.id : null,
+            type: i.type,
+            name: i.item.name,
+            price: i.type === 'product' 
+              ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
+              : i.item.price,
+            quantity: i.quantity
           }))
         })
       });
@@ -8264,8 +8275,8 @@ const SellerPOS = ({ user }: { user: User }) => {
   };
 
   const finalizeSale = async () => {
-    if (cart.length === 0) {
-      alert('O carrinho está vazio!');
+    if (cart.length === 0 || !storeInfo) {
+      alert('O carrinho está vazio ou informações da loja não carregadas!');
       return;
     }
 
@@ -8309,14 +8320,15 @@ const SellerPOS = ({ user }: { user: User }) => {
           tax_amount: tax,
           cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : (paymentMethod === 'split' ? (parseFloat(splitAmounts.cash) || 0) : total),
           split_details: paymentMethod === 'split' ? { cash: parseFloat(splitAmounts.cash) || 0, card: parseFloat(splitAmounts.card) || 0 } : null,
-          items: cart.map(item => {
-            const price = item.product.discount_percent 
-              ? item.product.price * (1 - item.product.discount_percent / 100) 
-              : item.product.price;
+          items: cart.map(i => {
+            const price = i.type === 'product' 
+              ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
+              : i.item.price;
             return { 
-              id: item.product.id, 
-              name: item.product.name,
-              quantity: item.quantity,
+              id: i.item.id, 
+              type: i.type,
+              name: i.item.name,
+              quantity: i.quantity,
               price: price
             };
           })
@@ -8453,6 +8465,15 @@ const SellerPOS = ({ user }: { user: User }) => {
                   {cat.name}
                 </button>
               ))}
+              {services.length > 0 && (
+                <button
+                  onClick={() => setIsServiceModalOpen(true)}
+                  className="flex items-center gap-2 px-6 py-3 rounded-2xl text-sm font-bold whitespace-nowrap transition-all shadow-sm border-2 bg-zinc-900 border-zinc-900 text-white hover:bg-zinc-800"
+                >
+                  <Sparkles size={18} />
+                  Serviços
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -8528,42 +8549,46 @@ const SellerPOS = ({ user }: { user: User }) => {
               </div>
             ) : (
               <div className="space-y-4">
-                {cart.map(item => (
-                  <div key={item.product.id} className="flex items-center gap-3 group">
-                    <div className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-100 flex-shrink-0">
-                      <img src={item.product.image_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                {cart.map(i => (
+                  <div key={`${i.type}-${i.item.id}`} className="flex items-center gap-3 group">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-100 flex-shrink-0 flex items-center justify-center">
+                      {i.type === 'product' ? (
+                        <img src={(i.item as Product).image_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <Tag size={20} className="text-orange-500" />
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-zinc-800 truncate">{item.product.name}</p>
+                      <p className="text-xs font-bold text-zinc-800 truncate">{i.item.name}</p>
                       <div className="flex items-center gap-2 mt-1">
                         <button 
-                          onClick={() => updateQuantity(item.product.id, -1)}
+                          onClick={() => updateQuantity(i.item.id, i.type, -1)}
                           className="w-5 h-5 flex items-center justify-center bg-zinc-100 rounded text-zinc-600 hover:bg-zinc-200"
                         >
                           -
                         </button>
-                        <span className="text-[10px] font-bold w-4 text-center">{item.quantity}</span>
+                        <span className="text-[10px] font-bold w-4 text-center">{i.quantity}</span>
                         <button 
-                          onClick={() => updateQuantity(item.product.id, 1)}
+                          onClick={() => updateQuantity(i.item.id, i.type, 1)}
                           className="w-5 h-5 flex items-center justify-center bg-zinc-100 rounded text-zinc-600 hover:bg-zinc-200"
                         >
                           +
                         </button>
                         <span className="text-[10px] text-zinc-400 ml-1">
-                          x Kz {(item.product.discount_percent 
-                            ? item.product.price * (1 - item.product.discount_percent / 100) 
-                            : item.product.price).toLocaleString()}
+                          x Kz {(i.type === 'product' 
+                            ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
+                            : i.item.price).toLocaleString()}
                         </span>
                       </div>
                     </div>
                     <div className="text-right">
                       <p className="text-xs font-black text-zinc-900">
-                        Kz {((item.product.discount_percent 
-                          ? item.product.price * (1 - item.product.discount_percent / 100) 
-                          : item.product.price) * item.quantity).toLocaleString()}
+                        Kz {((i.type === 'product' 
+                          ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
+                          : i.item.price) * i.quantity).toLocaleString()}
                       </p>
                       <button 
-                        onClick={() => removeFromCart(item.product.id)}
+                        onClick={() => removeFromCart(i.item.id, i.type)}
                         className="text-rose-400 hover:text-rose-600 p-1 transition-colors"
                       >
                         <X size={14} />
@@ -8665,11 +8690,11 @@ const SellerPOS = ({ user }: { user: User }) => {
             <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3">Resumo dos Itens</h4>
             <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
               {cart.map(item => (
-                <div key={item.product.id} className="flex justify-between text-xs">
-                  <span className="text-zinc-600">{item.quantity}x {item.product.name}</span>
-                  <span className="font-bold">Kz {((item.product.discount_percent 
-                    ? item.product.price * (1 - item.product.discount_percent / 100) 
-                    : item.product.price) * item.quantity).toLocaleString()}</span>
+                <div key={`${item.type}-${item.item.id}`} className="flex justify-between text-xs">
+                  <span className="text-zinc-600">{item.quantity}x {item.item.name}</span>
+                  <span className="font-bold">Kz {((item.type === 'product' && (item.item as Product).discount_percent 
+                    ? item.item.price * (1 - (item.item as Product).discount_percent! / 100) 
+                    : item.item.price) * item.quantity).toLocaleString()}</span>
                 </div>
               ))}
             </div>
@@ -8951,6 +8976,62 @@ const SellerPOS = ({ user }: { user: User }) => {
       <Modal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} title="Fatura Gerada">
         <Invoice sale={lastSale} store={storeInfo} user={user} />
       </Modal>
+
+      {/* Services Modal */}
+      <Modal isOpen={isServiceModalOpen} onClose={() => setIsServiceModalOpen(false)} title="Serviços Disponíveis">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {services.map(service => {
+              const needsProduct = service.availability_condition === 'product_purchased';
+              const hasProductInCart = cart.some(i => i.type === 'product');
+              const isDisabled = needsProduct && !hasProductInCart;
+
+              return (
+                <button
+                  key={service.id}
+                  disabled={isDisabled}
+                  onClick={() => {
+                    addToCart(service, 'service');
+                    setIsServiceModalOpen(false);
+                  }}
+                  className={cn(
+                    "flex flex-col p-4 rounded-2xl border-2 transition-all text-left group relative overflow-hidden",
+                    isDisabled 
+                      ? "border-zinc-100 bg-zinc-50 opacity-60 cursor-not-allowed" 
+                      : "border-zinc-100 bg-white hover:border-orange-500 hover:bg-orange-50"
+                  )}
+                >
+                  <div className="flex justify-between items-start mb-2">
+                    <div className={cn(
+                      "p-2 rounded-lg transition-colors",
+                      isDisabled ? "bg-zinc-200 text-zinc-400" : "bg-orange-100 text-orange-600 group-hover:bg-orange-500 group-hover:text-white"
+                    )}>
+                      <Tag size={18} />
+                    </div>
+                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">{service.code}</span>
+                  </div>
+                  <h4 className="font-bold text-zinc-800 leading-tight mb-1">{service.name}</h4>
+                  <p className="text-[10px] text-zinc-500 line-clamp-2 mb-3">{service.description}</p>
+                  <div className="mt-auto flex items-center justify-between">
+                    <p className="font-black text-orange-600">Kz {service.price.toLocaleString()}</p>
+                    {needsProduct && (
+                      <div className="flex items-center gap-1 text-[8px] font-bold text-rose-500 uppercase">
+                        <AlertCircle size={10} /> Requer Produto
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {services.length === 0 && (
+            <div className="text-center py-8 text-zinc-400">
+              <Package size={32} className="mx-auto mb-2 opacity-20" />
+              <p className="text-sm">Nenhum serviço disponível para esta loja.</p>
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 };
@@ -8964,8 +9045,10 @@ const SellerHistory = ({ user }: { user: User }) => {
   useEffect(() => {
     fetch(`/api/seller/sales/${user.id}`).then(res => res.json()).then(setSales);
     fetch(`/api/admin/stores`).then(res => res.json()).then(stores => {
-      const currentStore = stores.find((s: any) => s.id === (user.store_id || 1));
-      setStoreInfo(currentStore);
+      if (Array.isArray(stores)) {
+        const currentStore = stores.find((s: any) => s.id === (user.store_id || 1));
+        setStoreInfo(currentStore);
+      }
     });
   }, [user.id, user.store_id]);
 
@@ -9615,6 +9698,10 @@ const fileToBase64 = (file: File): Promise<string> => {
 };
 
 const generateProformaPDF = async (proforma: any, store: any, user: any) => {
+  if (!store) {
+    console.error('Store info missing for PDF generation');
+    return;
+  }
   const doc = new jsPDF();
   const orange = [249, 115, 22]; // #f97316
   const black = [0, 0, 0];
@@ -9623,13 +9710,25 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
   const zinc500 = [113, 113, 122];
 
   // Parse items and bank accounts
-  const items = typeof proforma.items === 'string' 
-    ? JSON.parse(proforma.items) 
-    : proforma.items || [];
+  let items = [];
+  try {
+    items = typeof proforma.items === 'string' 
+      ? JSON.parse(proforma.items) 
+      : proforma.items || [];
+  } catch (e) {
+    console.error('Error parsing proforma items:', e);
+    items = [];
+  }
     
-  const bankAccounts = typeof proforma.bank_accounts === 'string' 
-    ? JSON.parse(proforma.bank_accounts) 
-    : proforma.bank_accounts || [];
+  let bankAccounts = [];
+  try {
+    bankAccounts = typeof proforma.bank_accounts === 'string' 
+      ? JSON.parse(proforma.bank_accounts) 
+      : proforma.bank_accounts || [];
+  } catch (e) {
+    console.error('Error parsing bank accounts:', e);
+    bankAccounts = [];
+  }
 
   // Background accent (top orange bar)
   doc.setFillColor(orange[0], orange[1], orange[2]);
@@ -9921,6 +10020,7 @@ export default function App() {
                 <Route path="/owner/clients" element={<OwnerClients user={user} />} />
                 <Route path="/owner/suppliers" element={<OwnerSuppliers user={user} />} />
                 <Route path="/owner/purchases" element={<OwnerPurchases user={user} />} />
+                <Route path="/owner/services" element={<OwnerServices user={user} />} />
                 <Route path="/owner/rh" element={<OwnerRH user={user} />} />
                 <Route path="/owner/reports" element={<OwnerReports user={user} />} />
                 <Route path="/owner/settings" element={<OwnerSettings user={user} />} />

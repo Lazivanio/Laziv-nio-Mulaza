@@ -111,10 +111,12 @@ export const OwnerRH = ({ user }: { user: User }) => {
   const [roleForm, setRoleForm] = useState({ name: '', base_role: 'seller' as 'seller' | 'manager', permissions: [] as string[] });
   const [salaryPaymentForm, setSalaryPaymentForm] = useState({ 
     amount: '', 
+    bonus: '0',
     type: 'full_payment', 
     description: '',
     month: new Date().toISOString().slice(0, 7)
   });
+  const [salaryError, setSalaryError] = useState<string | null>(null);
   const [attendanceForm, setAttendanceForm] = useState({ user_id: '', store_id: '', entry_time: '', exit_time: '', status: 'present' as any, date: new Date().toISOString().split('T')[0], notes: '' });
   const [vacationForm, setVacationForm] = useState({ user_id: '', start_date: '', end_date: '', notes: '' });
 
@@ -160,6 +162,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...employeeForm,
+          base_salary: Number(employeeForm.base_salary) || 0,
           owner_id: user.id
         })
       });
@@ -200,6 +203,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
   const handleSalaryPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSalary) return;
+    setSalaryError(null);
     
     try {
       const res = await fetch('/api/owner/hr/salaries/payment', {
@@ -214,9 +218,13 @@ export const OwnerRH = ({ user }: { user: User }) => {
         setIsSalaryPaymentModalOpen(false);
         setSelectedSalary(null);
         fetchData();
+      } else {
+        const errorData = await res.json();
+        setSalaryError(errorData.error || "Erro ao processar pagamento.");
       }
     } catch (error) {
       console.error("Error processing payment:", error);
+      setSalaryError("Erro de conexão ao processar pagamento.");
     }
   };
 
@@ -631,9 +639,11 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                 setSalaryPaymentForm(prev => ({ 
                                   ...prev, 
                                   amount: sal.base_salary.toString(), 
+                                  bonus: '0',
                                   type: 'full_payment', 
                                   description: '' 
                                 }));
+                                setSalaryError(null);
                                 setIsSalaryPaymentModalOpen(true);
                               }}
                               className="px-3 py-1.5 bg-emerald-500 text-white text-xs font-bold rounded-lg hover:bg-emerald-600 transition-all"
@@ -691,8 +701,11 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                   {payment.type === 'full_payment' ? 'Salário' : payment.type}
                                 </span>
                               </td>
-                              <td className="px-6 py-4 text-sm font-bold text-zinc-900">
-                                Kz {payment.amount.toLocaleString()}
+                              <td className="px-6 py-4">
+                                <div className="text-sm font-bold text-zinc-900">Kz {(Number(payment.amount) + Number(payment.bonus || 0)).toLocaleString()}</div>
+                                {Number(payment.bonus) > 0 && (
+                                  <div className="text-[10px] text-emerald-600 font-bold">Bónus: Kz {Number(payment.bonus).toLocaleString()}</div>
+                                )}
                               </td>
                             </tr>
                           ))
@@ -1081,6 +1094,13 @@ export const OwnerRH = ({ user }: { user: User }) => {
             <p className="text-xs text-zinc-500">Salário Base: Kz {selectedSalary?.base_salary.toLocaleString()}</p>
           </div>
 
+          {salaryError && (
+            <div className="p-3 bg-rose-50 border border-rose-100 rounded-xl flex items-center gap-2 text-rose-600 text-xs font-bold">
+              <AlertCircle size={16} />
+              {salaryError}
+            </div>
+          )}
+
           <div className="space-y-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-zinc-500 uppercase">Mês de Referência</label>
@@ -1092,15 +1112,27 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Valor do Pagamento (Kz)</label>
-              <input 
-                required
-                type="number" 
-                value={salaryPaymentForm.amount}
-                onChange={e => setSalaryPaymentForm({...salaryPaymentForm, amount: e.target.value})}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase">Valor Base (Kz)</label>
+                <input 
+                  required
+                  type="number" 
+                  value={salaryPaymentForm.amount}
+                  onChange={e => setSalaryPaymentForm({...salaryPaymentForm, amount: e.target.value})}
+                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase">Bónus (Kz)</label>
+                <input 
+                  required
+                  type="number" 
+                  value={salaryPaymentForm.bonus}
+                  onChange={e => setSalaryPaymentForm({...salaryPaymentForm, bonus: e.target.value})}
+                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-zinc-500 uppercase">Tipo de Pagamento</label>
