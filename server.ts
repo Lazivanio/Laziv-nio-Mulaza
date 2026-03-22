@@ -36,7 +36,10 @@ try {
   if (!columns.some(col => col.name === 'nif')) db.exec("ALTER TABLE users ADD COLUMN nif TEXT");
   if (!columns.some(col => col.name === 'address')) db.exec("ALTER TABLE users ADD COLUMN address TEXT");
   if (!columns.some(col => col.name === 'company_name')) db.exec("ALTER TABLE users ADD COLUMN company_name TEXT");
-  if (!columns.some(col => col.name === 'status')) db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
+  if (!columns.some(col => col.name === 'status')) {
+    db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
+  }
+  db.exec("UPDATE users SET status = 'active' WHERE status IS NULL");
   if (!columns.some(col => col.name === 'username')) {
     console.log("Adding username column...");
     db.exec("ALTER TABLE users ADD COLUMN username TEXT");
@@ -47,6 +50,9 @@ try {
     db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME");
     db.exec("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
   }
+  if (!columns.some(col => col.name === 'role_id')) db.exec("ALTER TABLE users ADD COLUMN role_id INTEGER");
+  if (!columns.some(col => col.name === 'custom_permissions')) db.exec("ALTER TABLE users ADD COLUMN custom_permissions TEXT");
+  if (!columns.some(col => col.name === 'store_id')) db.exec("ALTER TABLE users ADD COLUMN store_id INTEGER");
 } catch (e) {
   console.error("Migration error (users):", e);
 }
@@ -266,6 +272,12 @@ db.exec(`
     if (!columns.some(col => col.name === 'to_store_id')) {
       db.exec("ALTER TABLE stock_movements ADD COLUMN to_store_id INTEGER");
     }
+    if (!columns.some(col => col.name === 'supplier_id')) {
+      db.exec("ALTER TABLE stock_movements ADD COLUMN supplier_id INTEGER");
+    }
+    if (!columns.some(col => col.name === 'purchase_id')) {
+      db.exec("ALTER TABLE stock_movements ADD COLUMN purchase_id INTEGER");
+    }
   } catch (e) {
     console.error("Migration error (stock_movements):", e);
   }
@@ -365,6 +377,123 @@ db.exec(`
     address TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(store_id) REFERENCES stores(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS hr_roles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER,
+    name TEXT,
+    base_role TEXT DEFAULT 'seller', -- 'seller' or 'manager'
+    permissions TEXT, -- JSON string
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(owner_id) REFERENCES users(id)
+  );
+  `);
+
+  try {
+    db.prepare("ALTER TABLE hr_roles ADD COLUMN base_role TEXT DEFAULT 'seller'").run();
+  } catch (e) {}
+
+  db.exec(`
+  CREATE TABLE IF NOT EXISTS hr_salaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    base_salary REAL DEFAULT 0,
+    bonuses REAL DEFAULT 0,
+    discounts REAL DEFAULT 0,
+    vacation_days_per_year INTEGER DEFAULT 22,
+    last_payment_date TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS hr_salary_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    salary_id INTEGER,
+    amount REAL,
+    type TEXT, -- 'base', 'bonus', 'discount', 'full_payment'
+    description TEXT,
+    month TEXT, -- Format: YYYY-MM
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(salary_id) REFERENCES hr_salaries(id)
+  );
+  `);
+
+  try {
+    db.prepare("ALTER TABLE hr_salary_payments ADD COLUMN month TEXT").run();
+  } catch (e) {
+    // Column might already exist
+  }
+
+  db.exec(`
+  CREATE TABLE IF NOT EXISTS hr_attendance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    store_id INTEGER,
+    entry_time DATETIME,
+    exit_time DATETIME,
+    status TEXT, -- 'present', 'late', 'absent', 'half_day'
+    date TEXT, -- YYYY-MM-DD
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id),
+    FOREIGN KEY(store_id) REFERENCES stores(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS hr_vacations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    start_date TEXT,
+    end_date TEXT,
+    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+    days_count INTEGER,
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS suppliers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER,
+    name TEXT NOT NULL,
+    company_name TEXT,
+    nif TEXT,
+    phone TEXT,
+    email TEXT,
+    country TEXT,
+    city TEXT,
+    address TEXT,
+    responsible_person TEXT,
+    payment_method TEXT,
+    payment_term TEXT,
+    observations TEXT,
+    status TEXT DEFAULT 'active', -- 'active', 'inactive'
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(owner_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    supplier_id INTEGER,
+    total_amount REAL,
+    paid_amount REAL DEFAULT 0,
+    status TEXT DEFAULT 'pending', -- 'pending', 'partial', 'paid'
+    invoice_number TEXT,
+    items TEXT, -- JSON string of items purchased
+    due_date DATETIME,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(supplier_id) REFERENCES suppliers(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS purchase_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    purchase_id INTEGER,
+    amount REAL,
+    payment_method TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(purchase_id) REFERENCES purchases(id)
   );
 `);
 
@@ -503,7 +632,35 @@ async function startServer() {
         }
       }
       
-      res.json({ id: user.id, email: user.email, username: user.username, name: user.name, role: user.role, store_id: storeId });
+      // Get effective permissions
+      let effectivePermissions: string[] = [];
+      if (user.role_id) {
+        const role = db.prepare("SELECT permissions FROM hr_roles WHERE id = ?").get(user.role_id) as any;
+        if (role && role.permissions) {
+          try {
+            effectivePermissions = JSON.parse(role.permissions);
+          } catch (e) {}
+        }
+      }
+      if (user.custom_permissions) {
+        try {
+          const custom = JSON.parse(user.custom_permissions);
+          effectivePermissions = Array.from(new Set([...effectivePermissions, ...custom]));
+        } catch (e) {}
+      }
+
+      res.json({ 
+        id: user.id, 
+        email: user.email, 
+        username: user.username, 
+        name: user.name, 
+        role: user.role, 
+        store_id: storeId,
+        role_id: user.role_id,
+        custom_permissions: user.custom_permissions,
+        permissions: effectivePermissions,
+        status: user.status
+      });
     } else {
       res.status(401).json({ error: "Credenciais inválidas" });
     }
@@ -1319,6 +1476,191 @@ async function startServer() {
     }
   });
 
+  // HR Routes
+  app.get("/api/owner/hr/roles/:ownerId", (req, res) => {
+    const roles = db.prepare("SELECT * FROM hr_roles WHERE owner_id = ?").all(req.params.ownerId);
+    res.json(roles);
+  });
+
+  app.post("/api/owner/hr/roles", (req, res) => {
+    const { owner_id, name, base_role, permissions } = req.body;
+    db.prepare("INSERT INTO hr_roles (owner_id, name, base_role, permissions) VALUES (?, ?, ?, ?)").run(owner_id, name, base_role || 'seller', JSON.stringify(permissions));
+    res.json({ success: true });
+  });
+
+  app.put("/api/owner/hr/roles/:id", (req, res) => {
+    const { name, base_role, permissions } = req.body;
+    db.prepare("UPDATE hr_roles SET name = ?, base_role = ?, permissions = ? WHERE id = ?").run(name, base_role || 'seller', JSON.stringify(permissions), req.params.id);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/owner/hr/roles/:id", (req, res) => {
+    db.prepare("DELETE FROM hr_roles WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/owner/hr/employees/:ownerId", (req, res) => {
+    const employees = db.prepare(`
+      SELECT u.*, r.name as role_name, s.base_salary, s.bonuses, s.discounts, st.name as store_name
+      FROM users u
+      LEFT JOIN hr_roles r ON u.role_id = r.id
+      LEFT JOIN hr_salaries s ON u.id = s.user_id
+      LEFT JOIN stores st ON u.store_id = st.id
+      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE store_id IN (SELECT id FROM stores WHERE owner_id = ?)) OR u.store_id IN (SELECT id FROM stores WHERE owner_id = ?))
+    `).all(req.params.ownerId, req.params.ownerId);
+    res.json(employees);
+  });
+
+  app.post("/api/owner/hr/employees", (req, res) => {
+    const { name, email, username, password, role: bodyRole, store_id, role_id, custom_permissions, base_salary } = req.body;
+    try {
+      db.transaction(() => {
+        let finalRole = bodyRole || 'seller';
+        if (role_id) {
+          const hrRole = db.prepare("SELECT base_role FROM hr_roles WHERE id = ?").get(role_id) as any;
+          if (hrRole) finalRole = hrRole.base_role;
+        }
+
+        const result = db.prepare("INSERT INTO users (name, email, username, password, role, store_id, role_id, custom_permissions, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+          name, email, username, password, finalRole, store_id, role_id, JSON.stringify(custom_permissions), 'active'
+        );
+        const userId = result.lastInsertRowid;
+        db.prepare("INSERT INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(userId, base_salary || 0);
+        if (store_id) {
+          db.prepare("INSERT INTO staff (store_id, user_id, salary) VALUES (?, ?, ?)").run(store_id, userId, base_salary || 0);
+        }
+      })();
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/owner/hr/employees/:id", (req, res) => {
+    const { name, email, username, role: bodyRole, store_id, role_id, custom_permissions, base_salary, status } = req.body;
+    try {
+      db.transaction(() => {
+        let finalRole = bodyRole || 'seller';
+        if (role_id) {
+          const hrRole = db.prepare("SELECT base_role FROM hr_roles WHERE id = ?").get(role_id) as any;
+          if (hrRole) finalRole = hrRole.base_role;
+        }
+
+        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, store_id = ?, role_id = ?, custom_permissions = ?, status = ? WHERE id = ?").run(
+          name, email, username, finalRole, store_id, role_id, JSON.stringify(custom_permissions), status, req.params.id
+        );
+        db.prepare("UPDATE hr_salaries SET base_salary = ? WHERE user_id = ?").run(base_salary || 0, req.params.id);
+        if (store_id) {
+          db.prepare("INSERT OR REPLACE INTO staff (store_id, user_id, salary) VALUES (?, ?, ?)").run(store_id, req.params.id, base_salary || 0);
+        }
+      })();
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/owner/hr/employees/:id", (req, res) => {
+    try {
+      db.transaction(() => {
+        db.prepare("DELETE FROM staff WHERE user_id = ?").run(req.params.id);
+        db.prepare("DELETE FROM hr_salary_payments WHERE salary_id IN (SELECT id FROM hr_salaries WHERE user_id = ?)").run(req.params.id);
+        db.prepare("DELETE FROM hr_salaries WHERE user_id = ?").run(req.params.id);
+        db.prepare("DELETE FROM hr_attendance WHERE user_id = ?").run(req.params.id);
+        db.prepare("DELETE FROM hr_vacations WHERE user_id = ?").run(req.params.id);
+        db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
+      })();
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/owner/hr/employees/:id/status", (req, res) => {
+    const { status } = req.body;
+    try {
+      db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status, req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/owner/hr/salaries/:ownerId", (req, res) => {
+    const salaries = db.prepare(`
+      SELECT s.*, u.name as employee_name, r.name as role_name
+      FROM hr_salaries s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN hr_roles r ON u.role_id = r.id
+      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE store_id IN (SELECT id FROM stores WHERE owner_id = ?)) OR u.store_id IN (SELECT id FROM stores WHERE owner_id = ?))
+    `).all(req.params.ownerId, req.params.ownerId);
+    res.json(salaries);
+  });
+
+  app.get("/api/owner/hr/salaries/payments/:ownerId", (req, res) => {
+    const payments = db.prepare(`
+      SELECT p.*, u.name as employee_name, s.base_salary
+      FROM hr_salary_payments p
+      JOIN hr_salaries s ON p.salary_id = s.id
+      JOIN users u ON s.user_id = u.id
+      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE store_id IN (SELECT id FROM stores WHERE owner_id = ?)) OR u.store_id IN (SELECT id FROM stores WHERE owner_id = ?))
+      ORDER BY p.timestamp DESC
+    `).all(req.params.ownerId, req.params.ownerId);
+    res.json(payments);
+  });
+
+  app.post("/api/owner/hr/salaries/payment", (req, res) => {
+    const { salary_id, amount, type, description, month } = req.body;
+    db.prepare("INSERT INTO hr_salary_payments (salary_id, amount, type, description, month) VALUES (?, ?, ?, ?, ?)").run(salary_id, amount, type, description, month);
+    if (type === 'full_payment') {
+      db.prepare("UPDATE hr_salaries SET last_payment_date = CURRENT_TIMESTAMP WHERE id = ?").run(salary_id);
+    }
+    res.json({ success: true });
+  });
+
+  app.get("/api/owner/hr/attendance/:ownerId", (req, res) => {
+    const attendance = db.prepare(`
+      SELECT a.*, u.name as employee_name, st.name as store_name
+      FROM hr_attendance a
+      JOIN users u ON a.user_id = u.id
+      JOIN stores st ON a.store_id = st.id
+      WHERE st.owner_id = ?
+    `).all(req.params.ownerId);
+    res.json(attendance);
+  });
+
+  app.post("/api/owner/hr/attendance", (req, res) => {
+    const { user_id, store_id, entry_time, exit_time, status, date, notes } = req.body;
+    db.prepare("INSERT INTO hr_attendance (user_id, store_id, entry_time, exit_time, status, date, notes) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+      user_id, store_id, entry_time, exit_time, status, date, notes
+    );
+    res.json({ success: true });
+  });
+
+  app.get("/api/owner/hr/vacations/:ownerId", (req, res) => {
+    const vacations = db.prepare(`
+      SELECT v.*, u.name as employee_name
+      FROM hr_vacations v
+      JOIN users u ON v.user_id = u.id
+      WHERE u.id IN (SELECT user_id FROM staff WHERE store_id IN (SELECT id FROM stores WHERE owner_id = ?))
+    `).all(req.params.ownerId);
+    res.json(vacations);
+  });
+
+  app.post("/api/owner/hr/vacations", (req, res) => {
+    const { user_id, start_date, end_date, days_count, notes } = req.body;
+    db.prepare("INSERT INTO hr_vacations (user_id, start_date, end_date, days_count, notes) VALUES (?, ?, ?, ?, ?)").run(
+      user_id, start_date, end_date, days_count, notes
+    );
+    res.json({ success: true });
+  });
+
+  app.put("/api/owner/hr/vacations/:id/status", (req, res) => {
+    const { status } = req.body;
+    db.prepare("UPDATE hr_vacations SET status = ? WHERE id = ?").run(status, req.params.id);
+    res.json({ success: true });
+  });
+
   app.get("/api/owner/staff-performance/:storeId", (req, res) => {
     const performance = db.prepare(`
       SELECT 
@@ -1687,6 +2029,147 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Supplier Routes
+  app.get("/api/owner/suppliers/:ownerId", (req, res) => {
+    const suppliers = db.prepare("SELECT * FROM suppliers WHERE owner_id = ? ORDER BY name ASC").all(req.params.ownerId);
+    res.json(suppliers);
+  });
+
+  app.post("/api/owner/suppliers", (req, res) => {
+    const { 
+      owner_id, name, company_name, nif, phone, email, 
+      country, city, address, responsible_person, 
+      payment_method, payment_term, observations, status 
+    } = req.body;
+    db.prepare(`
+      INSERT INTO suppliers (
+        owner_id, name, company_name, nif, phone, email, 
+        country, city, address, responsible_person, 
+        payment_method, payment_term, observations, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      owner_id, name, company_name, nif, phone, email, 
+      country, city, address, responsible_person, 
+      payment_method, payment_term, observations, status || 'active'
+    );
+    res.json({ success: true });
+  });
+
+  app.put("/api/owner/suppliers/:id", (req, res) => {
+    const { 
+      name, company_name, nif, phone, email, 
+      country, city, address, responsible_person, 
+      payment_method, payment_term, observations, status 
+    } = req.body;
+    db.prepare(`
+      UPDATE suppliers SET 
+        name = ?, company_name = ?, nif = ?, phone = ?, email = ?, 
+        country = ?, city = ?, address = ?, responsible_person = ?, 
+        payment_method = ?, payment_term = ?, observations = ?, status = ?
+      WHERE id = ?
+    `).run(
+      name, company_name, nif, phone, email, 
+      country, city, address, responsible_person, 
+      payment_method, payment_term, observations, status,
+      req.params.id
+    );
+    res.json({ success: true });
+  });
+
+  // Purchase Routes
+  app.get("/api/owner/purchases/:storeId", (req, res) => {
+    const purchases = db.prepare(`
+      SELECT p.*, s.name as supplier_name 
+      FROM purchases p
+      JOIN suppliers s ON p.supplier_id = s.id
+      WHERE p.store_id = ?
+      ORDER BY p.timestamp DESC
+    `).all(req.params.storeId);
+    res.json(purchases.map((p: any) => ({ ...p, items: JSON.parse(p.items) })));
+  });
+
+  app.get("/api/owner/suppliers/:id/purchases", (req, res) => {
+    const purchases = db.prepare(`
+      SELECT p.*, st.name as store_name
+      FROM purchases p
+      JOIN stores st ON p.store_id = st.id
+      WHERE p.supplier_id = ?
+      ORDER BY p.timestamp DESC
+    `).all(req.params.id);
+    res.json(purchases.map((p: any) => ({ ...p, items: JSON.parse(p.items) })));
+  });
+
+  app.post("/api/owner/purchases", (req, res) => {
+    const { store_id, supplier_id, total_amount, paid_amount, invoice_number, items, due_date, user_id } = req.body;
+    
+    const transaction = db.transaction(() => {
+      const status = paid_amount >= total_amount ? 'paid' : (paid_amount > 0 ? 'partial' : 'pending');
+      
+      const purchaseResult = db.prepare(`
+        INSERT INTO purchases (store_id, supplier_id, total_amount, paid_amount, status, invoice_number, items, due_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(store_id, supplier_id, total_amount, paid_amount, status, invoice_number, JSON.stringify(items), due_date);
+      
+      const purchaseId = purchaseResult.lastInsertRowid;
+
+      if (paid_amount > 0) {
+        db.prepare(`
+          INSERT INTO purchase_payments (purchase_id, amount, payment_method)
+          VALUES (?, ?, ?)
+        `).run(purchaseId, paid_amount, 'Initial Payment');
+      }
+
+      // Create stock movements for each item
+      for (const item of items) {
+        db.prepare(`
+          UPDATE products SET stock = stock + ? WHERE id = ?
+        `).run(item.quantity, item.product_id);
+
+        db.prepare(`
+          INSERT INTO stock_movements (store_id, product_id, user_id, type, quantity, reason, supplier_id, purchase_id)
+          VALUES (?, ?, ?, 'in', ?, ?, ?, ?)
+        `).run(store_id, item.product_id, user_id, item.quantity, `Compra - Fatura ${invoice_number}`, supplier_id, purchaseId);
+      }
+
+      return purchaseId;
+    });
+
+    try {
+      const id = transaction();
+      res.json({ success: true, id });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/owner/purchase-payments", (req, res) => {
+    const { purchase_id, amount, payment_method } = req.body;
+    
+    const transaction = db.transaction(() => {
+      db.prepare(`
+        INSERT INTO purchase_payments (purchase_id, amount, payment_method)
+        VALUES (?, ?, ?)
+      `).run(purchase_id, amount, payment_method);
+
+      db.prepare(`
+        UPDATE purchases 
+        SET paid_amount = paid_amount + ?,
+            status = CASE 
+              WHEN paid_amount + ? >= total_amount THEN 'paid'
+              ELSE 'partial'
+            END
+        WHERE id = ?
+      `).run(amount, amount, purchase_id);
+    });
+
+    try {
+      transaction();
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/seller/clients/:storeId", (req, res) => {
     const clients = db.prepare("SELECT * FROM clients WHERE store_id = ? ORDER BY name ASC").all(req.params.storeId);
     res.json(clients);
@@ -1949,7 +2432,7 @@ async function startServer() {
   });
 
   app.post("/api/owner/stock/movement", (req, res) => {
-    const { store_id, product_id, user_id, type, quantity, reason } = req.body;
+    const { store_id, product_id, user_id, type, quantity, reason, supplier_id } = req.body;
     
     try {
       db.transaction(() => {
@@ -1960,9 +2443,9 @@ async function startServer() {
         }
         
         db.prepare(`
-          INSERT INTO stock_movements (store_id, product_id, user_id, type, quantity, reason)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(store_id, product_id, user_id, type, quantity, reason);
+          INSERT INTO stock_movements (store_id, product_id, user_id, type, quantity, reason, supplier_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(store_id, product_id, user_id, type, quantity, reason, supplier_id || null);
       })();
       res.json({ success: true });
     } catch (error: any) {
@@ -2043,7 +2526,7 @@ async function startServer() {
   });
 
   app.post("/api/owner/proforma", (req, res) => {
-    const { store_id, owner_id, client_name, client_nif, client_address, total_amount, items } = req.body;
+    const { store_id, owner_id, client_name = 'Consumidor Final', client_nif, client_address, total_amount, items } = req.body;
     try {
       // Fetch store bank accounts to include in the proforma
       const store = db.prepare("SELECT bank_accounts FROM stores WHERE id = ?").get(store_id) as any;

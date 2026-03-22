@@ -76,16 +76,26 @@ import {
   Database,
   Server,
   Clock,
-  Zap
+  Zap,
+  AlertCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { User, Store as StoreType, Product, Transaction, BankAccount } from './types';
+import { OwnerRH } from './components/OwnerRH';
 
 // --- Utilities ---
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+function hasPermission(user: User | null, permissionId: string): boolean {
+  if (!user) return false;
+  if (user.role === 'admin' || user.role === 'owner') return true;
+  if (!user.permissions) return false;
+  return user.permissions.includes(permissionId);
 }
 
 // --- Components ---
@@ -364,7 +374,10 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Visão Geral" to="/owner" onClick={closeSidebar} />
                 <SidebarItem icon={Store} label="Minhas Lojas" to="/owner/stores" onClick={closeSidebar} />
+                <SidebarItem icon={Users} label="RH" to="/owner/rh" onClick={closeSidebar} />
                 <SidebarItem icon={Users} label="Clientes" to="/owner/clients" onClick={closeSidebar} />
+                <SidebarItem icon={Briefcase} label="Fornecedores" to="/owner/suppliers" onClick={closeSidebar} />
+                <SidebarItem icon={ShoppingCart} label="Compras" to="/owner/purchases" onClick={closeSidebar} />
                 <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
                 <SidebarItem icon={Settings} label="Configurações" to="/owner/settings" onClick={closeSidebar} />
               </>
@@ -377,6 +390,16 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
                 <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />
                 <SidebarItem icon={History} label="Histórico" to="/seller/history" onClick={closeSidebar} />
                 <SidebarItem icon={Settings} label="Configurações" to="/seller/settings" onClick={closeSidebar} />
+              </>
+            )}
+            {user.role === 'manager' && (
+              <>
+                <SidebarItem icon={LayoutDashboard} label="Dashboard" to="/manager" onClick={closeSidebar} />
+                {hasPermission(user, 'stock_view') && <SidebarItem icon={Package} label="Produtos" to="/manager/products" onClick={closeSidebar} />}
+                {hasPermission(user, 'stock_view') && <SidebarItem icon={Barcode} label="Stock" to="/manager/stock" onClick={closeSidebar} />}
+                {hasPermission(user, 'pos_access') && <SidebarItem icon={FileText} label="Proformas" to="/manager/proformas" onClick={closeSidebar} />}
+                {hasPermission(user, 'reports_view') && <SidebarItem icon={TrendingUp} label="Relatórios" to="/manager/reports" onClick={closeSidebar} />}
+                <SidebarItem icon={Settings} label="Configurações" to="/manager/settings" onClick={closeSidebar} />
               </>
             )}
           </nav>
@@ -411,7 +434,8 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             </button>
             <h2 className="font-bold text-lg hidden md:block">
               {location.pathname.includes('admin') ? 'Painel Administrador' : 
-               location.pathname.includes('owner') ? 'Painel Proprietário' : 'Painel Vendedor'}
+               location.pathname.includes('owner') ? 'Painel Proprietário' : 
+               location.pathname.includes('manager') ? 'Painel Gerente' : 'Painel Vendedor'}
             </h2>
           </div>
           
@@ -3787,8 +3811,22 @@ const OwnerClients = ({ user }: { user: User }) => {
 };
 
 const StoreAdmin = ({ user }: { user: User }) => {
-  const { storeId } = useParams();
+  const { storeId: paramStoreId } = useParams();
+  const storeId = paramStoreId || user.store_id?.toString();
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'products' | 'promotions' | 'stock' | 'staff' | 'reports' | 'settings' | 'support'>('dashboard');
+
+  useEffect(() => {
+    if (user.role === 'manager') {
+      const path = location.pathname;
+      if (path.includes('/manager/products')) setActiveTab('products');
+      else if (path.includes('/manager/stock')) setActiveTab('stock');
+      else if (path.includes('/manager/proformas')) setActiveTab('proformas');
+      else if (path.includes('/manager/reports')) setActiveTab('reports');
+      else if (path.includes('/manager/settings')) setActiveTab('settings');
+      else setActiveTab('dashboard');
+    }
+  }, [location.pathname, user.role]);
   const [storeData, setStoreData] = useState<any>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [staff, setStaff] = useState<any[]>([]);
@@ -3822,6 +3860,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isProformaModalOpen, setIsProformaModalOpen] = useState(false);
   const [proformas, setProformas] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
   const [selectedProforma, setSelectedProforma] = useState<any>(null);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -3844,6 +3883,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
     quantity: '', 
     reason: '', 
     to_store_id: '',
+    supplier_id: '',
     isBulk: false,
     bulkType: 'grade',
     bulkQuantity: '',
@@ -3905,6 +3945,9 @@ const StoreAdmin = ({ user }: { user: User }) => {
     fetch(`/api/owner/support/${user.id}`)
       .then(res => res.json())
       .then(setSupportTickets);
+    fetch(`/api/owner/suppliers/${user.id}`)
+      .then(res => res.json())
+      .then(setSuppliers);
   };
 
   useEffect(fetchData, [storeId]);
@@ -4078,7 +4121,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
       user_id: user.id,
       type: stockForm.type,
       quantity: stockForm.type === 'in' ? finalQuantity : -finalQuantity,
-      reason: stockForm.reason
+      reason: stockForm.reason,
+      supplier_id: stockForm.supplier_id ? Number(stockForm.supplier_id) : null
     };
 
     const res = await fetch(endpoint, {
@@ -4095,6 +4139,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
         quantity: '', 
         reason: '', 
         to_store_id: '',
+        supplier_id: '',
         isBulk: false,
         bulkType: 'grade',
         bulkQuantity: '',
@@ -4258,12 +4303,14 @@ const StoreAdmin = ({ user }: { user: User }) => {
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden p-4 md:p-6 space-y-6">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 shrink-0">
         <div className="flex items-center gap-4">
-          <button 
-            onClick={() => navigate('/owner/stores')}
-            className="p-2 hover:bg-zinc-100 rounded-xl transition-colors text-zinc-400 hover:text-black"
-          >
-            <ChevronLeft size={24} />
-          </button>
+          {user.role === 'owner' && (
+            <button 
+              onClick={() => navigate('/owner/stores')}
+              className="p-2 hover:bg-zinc-100 rounded-xl transition-colors text-zinc-400 hover:text-black"
+            >
+              <ChevronLeft size={24} />
+            </button>
+          )}
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 md:w-12 md:h-12 bg-black text-white rounded-2xl flex items-center justify-center overflow-hidden shrink-0">
               {store.logo_url ? (
@@ -4284,16 +4331,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
 
         <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-xl overflow-x-auto no-scrollbar">
           {[
-            { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-            { id: 'products', icon: Package, label: 'Produtos' },
-            { id: 'proformas', icon: FileText, label: 'Proformas' },
-            { id: 'promotions', icon: Tag, label: 'Promoções' },
-            { id: 'stock', icon: Barcode, label: 'Stock' },
-            { id: 'staff', icon: Users, label: 'Pessoas' },
-            { id: 'reports', icon: BarChart3, label: 'Relatórios' },
-            { id: 'settings', icon: Settings2, label: 'Configurações' },
+            { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard', perm: 'reports_view' },
+            { id: 'products', icon: Package, label: 'Produtos', perm: 'stock_view' },
+            { id: 'proformas', icon: FileText, label: 'Proformas', perm: 'pos_access' },
+            { id: 'promotions', icon: Tag, label: 'Promoções', perm: 'stock_edit' },
+            { id: 'stock', icon: Barcode, label: 'Stock', perm: 'stock_view' },
+            { id: 'reports', icon: BarChart3, label: 'Relatórios', perm: 'reports_view' },
+            { id: 'settings', icon: Settings2, label: 'Configurações', perm: 'reports_view' },
             { id: 'support', icon: LifeBuoy, label: 'Suporte' },
-          ].map(tab => (
+          ].filter(tab => !tab.perm || hasPermission(user, tab.perm)).map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
@@ -6014,6 +6060,22 @@ const StoreAdmin = ({ user }: { user: User }) => {
             </div>
           </div>
 
+          {stockForm.type === 'in' && (
+            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Fornecedor (Opcional)</label>
+              <select 
+                value={stockForm.supplier_id}
+                onChange={e => setStockForm({...stockForm, supplier_id: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+              >
+                <option value="">Selecionar Fornecedor</option>
+                {suppliers.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} {s.company_name ? `(${s.company_name})` : ''}</option>
+                ))}
+              </select>
+            </motion.div>
+          )}
+
           {stockForm.type === 'transfer' && (
             <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Loja de Destino</label>
@@ -6164,6 +6226,1009 @@ const StoreAdmin = ({ user }: { user: User }) => {
 };
 
 import * as XLSX from 'xlsx';
+
+const OwnerSuppliers = ({ user }: { user: User }) => {
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingSupplier, setEditingSupplier] = useState<any>(null);
+  const [viewingHistory, setViewingHistory] = useState<any>(null);
+  const [history, setHistory] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  const [formData, setFormData] = useState({
+    name: '',
+    company_name: '',
+    nif: '',
+    phone: '',
+    email: '',
+    country: 'Angola',
+    city: '',
+    address: '',
+    responsible_person: '',
+    payment_method: 'transfer',
+    payment_term: '7',
+    observations: '',
+    status: 'active'
+  });
+
+  useEffect(() => {
+    fetchSuppliers();
+  }, [user.id]);
+
+  const fetchSuppliers = async () => {
+    try {
+      const res = await fetch(`/api/owner/suppliers/${user.id}`);
+      const data = await res.json();
+      setSuppliers(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+      setSuppliers([]);
+    }
+  };
+
+  const fetchHistory = async (supplierId: number) => {
+    try {
+      const res = await fetch(`/api/owner/suppliers/${supplierId}/purchases`);
+      const data = await res.json();
+      setHistory(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+      setHistory([]);
+    }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const url = editingSupplier ? `/api/owner/suppliers/${editingSupplier.id}` : '/api/owner/suppliers';
+    const method = editingSupplier ? 'PUT' : 'POST';
+
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...formData, owner_id: user.id })
+      });
+
+      if (res.ok) {
+        setIsModalOpen(false);
+        setEditingSupplier(null);
+        resetForm();
+        fetchSuppliers();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      name: '',
+      company_name: '',
+      nif: '',
+      phone: '',
+      email: '',
+      country: 'Angola',
+      city: '',
+      address: '',
+      responsible_person: '',
+      payment_method: 'transfer',
+      payment_term: '7',
+      observations: '',
+      status: 'active'
+    });
+  };
+
+  const filteredSuppliers = suppliers.filter(s => 
+    s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (s.company_name && s.company_name.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-black tracking-tight">Gestão de Fornecedores</h2>
+          <p className="text-zinc-500">Gira os seus fornecedores e histórico de compras.</p>
+        </div>
+        <div className="flex w-full md:w-auto gap-2">
+          <div className="relative flex-1 md:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+            <input 
+              type="text" 
+              placeholder="Procurar fornecedor..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+            />
+          </div>
+          <button 
+            onClick={() => {
+              setEditingSupplier(null);
+              resetForm();
+              setIsModalOpen(true);
+            }}
+            className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
+          >
+            <Plus size={20} />
+            Novo Fornecedor
+          </button>
+        </div>
+      </div>
+
+      <Card className="overflow-hidden border-zinc-100 shadow-sm rounded-2xl">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left min-w-[800px]">
+            <thead className="bg-zinc-50 border-b border-zinc-100">
+              <tr>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Fornecedor</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Empresa / NIF</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Contacto</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Status</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {filteredSuppliers.map(supplier => (
+                <tr key={supplier.id} className="hover:bg-zinc-50/50 transition-colors">
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold">
+                        {supplier.name.charAt(0)}
+                      </div>
+                      <div>
+                        <p className="font-bold text-zinc-800">{supplier.name}</p>
+                        <p className="text-xs text-zinc-500">{supplier.responsible_person || 'Sem responsável'}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="text-sm font-medium text-zinc-700">{supplier.company_name || '-'}</p>
+                    <p className="text-xs text-zinc-400">{supplier.nif || '-'}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="text-sm text-zinc-600">{supplier.phone}</p>
+                    <p className="text-xs text-zinc-400">{supplier.email}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={cn(
+                      "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                      supplier.status === 'active' ? "bg-emerald-100 text-emerald-600" : "bg-rose-100 text-rose-600"
+                    )}>
+                      {supplier.status === 'active' ? 'Ativo' : 'Inativo'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <button 
+                        onClick={() => {
+                          setViewingHistory(supplier);
+                          fetchHistory(supplier.id);
+                        }}
+                        className="p-2 text-zinc-400 hover:text-black transition-colors"
+                        title="Ver Histórico"
+                      >
+                        <History size={18} />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setEditingSupplier(supplier);
+                          setFormData({
+                            name: supplier.name,
+                            company_name: supplier.company_name || '',
+                            nif: supplier.nif || '',
+                            phone: supplier.phone || '',
+                            email: supplier.email || '',
+                            country: supplier.country || 'Angola',
+                            city: supplier.city || '',
+                            address: supplier.address || '',
+                            responsible_person: supplier.responsible_person || '',
+                            payment_method: supplier.payment_method || 'transfer',
+                            payment_term: supplier.payment_term || '7',
+                            observations: supplier.observations || '',
+                            status: supplier.status || 'active'
+                          });
+                          setIsModalOpen(true);
+                        }}
+                        className="p-2 text-zinc-400 hover:text-orange-500 transition-colors"
+                        title="Editar"
+                      >
+                        <Edit2 size={18} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* Modal Cadastro/Edição */}
+      <Modal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+        title={editingSupplier ? "Editar Fornecedor" : "Novo Fornecedor"}
+        maxWidth="max-w-2xl"
+      >
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 pb-2">Dados Principais</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Fornecedor *</label>
+                <input 
+                  required
+                  type="text" 
+                  value={formData.name}
+                  onChange={e => setFormData({...formData, name: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome da Empresa</label>
+                <input 
+                  type="text" 
+                  value={formData.company_name}
+                  onChange={e => setFormData({...formData, company_name: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF</label>
+                <input 
+                  type="text" 
+                  value={formData.nif}
+                  onChange={e => setFormData({...formData, nif: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Telefone</label>
+                <input 
+                  type="text" 
+                  value={formData.phone}
+                  onChange={e => setFormData({...formData, phone: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email</label>
+                <input 
+                  type="email" 
+                  value={formData.email}
+                  onChange={e => setFormData({...formData, email: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 pb-2">Localização</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">País</label>
+                <input 
+                  type="text" 
+                  value={formData.country}
+                  onChange={e => setFormData({...formData, country: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Cidade</label>
+                <input 
+                  type="text" 
+                  value={formData.city}
+                  onChange={e => setFormData({...formData, city: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
+                <input 
+                  type="text" 
+                  value={formData.address}
+                  onChange={e => setFormData({...formData, address: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 pb-2">Dados Comerciais</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Pessoa Responsável</label>
+                <input 
+                  type="text" 
+                  value={formData.responsible_person}
+                  onChange={e => setFormData({...formData, responsible_person: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Forma de Pagamento</label>
+                <select 
+                  value={formData.payment_method}
+                  onChange={e => setFormData({...formData, payment_method: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                >
+                  <option value="cash">Dinheiro</option>
+                  <option value="transfer">Transferência</option>
+                  <option value="multicaixa">Multicaixa</option>
+                  <option value="check">Cheque</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Prazo de Pagamento</label>
+                <select 
+                  value={formData.payment_term}
+                  onChange={e => setFormData({...formData, payment_term: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                >
+                  <option value="0">Pronto Pagamento</option>
+                  <option value="7">7 Dias</option>
+                  <option value="15">15 Dias</option>
+                  <option value="30">30 Dias</option>
+                  <option value="60">60 Dias</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 pb-2">Informações Extras</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Observações</label>
+                <textarea 
+                  value={formData.observations}
+                  onChange={e => setFormData({...formData, observations: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all h-24 resize-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Status</label>
+                <div className="flex gap-2 p-1 bg-zinc-100 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({...formData, status: 'active'})}
+                    className={cn(
+                      "flex-1 py-2 rounded-lg text-xs font-bold transition-all",
+                      formData.status === 'active' ? "bg-white shadow-sm text-emerald-600" : "text-zinc-500"
+                    )}
+                  >
+                    Ativo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({...formData, status: 'inactive'})}
+                    className={cn(
+                      "flex-1 py-2 rounded-lg text-xs font-bold transition-all",
+                      formData.status === 'inactive' ? "bg-white shadow-sm text-rose-600" : "text-zinc-500"
+                    )}
+                  >
+                    Inativo
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold text-lg shadow-lg shadow-black/10 active:scale-95 transition-all">
+            {editingSupplier ? "Guardar Alterações" : "Criar Fornecedor"}
+          </button>
+        </form>
+      </Modal>
+
+      {/* Modal Histórico */}
+      <Modal 
+        isOpen={!!viewingHistory} 
+        onClose={() => setViewingHistory(null)} 
+        title={`Histórico: ${viewingHistory?.name}`}
+        maxWidth="max-w-4xl"
+      >
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <StatCard 
+              label="Total Comprado" 
+              value={`Kz ${history.reduce((acc, p) => acc + p.total_amount, 0).toLocaleString()}`} 
+              icon={ShoppingCart} 
+              color="blue" 
+            />
+            <StatCard 
+              label="Dívida Atual" 
+              value={`Kz ${history.reduce((acc, p) => acc + (p.total_amount - p.paid_amount), 0).toLocaleString()}`} 
+              icon={AlertTriangle} 
+              color="rose" 
+            />
+            <StatCard 
+              label="Última Compra" 
+              value={history[0] ? new Date(history[0].timestamp).toLocaleDateString() : '-'} 
+              icon={Calendar} 
+              color="emerald" 
+            />
+          </div>
+
+          <Card className="overflow-hidden border-zinc-100">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-zinc-50 border-b border-zinc-100">
+                  <tr>
+                    <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Data</th>
+                    <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Fatura</th>
+                    <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Total</th>
+                    <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Pago</th>
+                    <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {history.map(purchase => (
+                    <tr key={purchase.id}>
+                      <td className="px-6 py-4 text-sm text-zinc-600">{new Date(purchase.timestamp).toLocaleDateString()}</td>
+                      <td className="px-6 py-4 text-sm font-bold text-zinc-800">{purchase.invoice_number}</td>
+                      <td className="px-6 py-4 text-sm font-bold">Kz {purchase.total_amount.toLocaleString()}</td>
+                      <td className="px-6 py-4 text-sm text-emerald-600 font-medium">Kz {purchase.paid_amount.toLocaleString()}</td>
+                      <td className="px-6 py-4">
+                        <span className={cn(
+                          "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                          purchase.status === 'paid' ? "bg-emerald-100 text-emerald-600" : 
+                          purchase.status === 'partial' ? "bg-amber-100 text-amber-600" : "bg-rose-100 text-rose-600"
+                        )}>
+                          {purchase.status === 'paid' ? 'Pago' : purchase.status === 'partial' ? 'Parcial' : 'Pendente'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {history.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-8 text-center text-zinc-400 italic">Nenhuma compra registada.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+
+const OwnerPurchases = ({ user }: { user: User }) => {
+  const [purchases, setPurchases] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [stores, setStores] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [selectedPurchase, setSelectedPurchase] = useState<any>(null);
+  const [selectedStoreId, setSelectedStoreId] = useState<string>('all');
+  const [loading, setLoading] = useState(false);
+
+  const [formData, setFormData] = useState({
+    store_id: '',
+    supplier_id: '',
+    invoice_number: '',
+    due_date: '',
+    items: [] as any[],
+    paid_amount: 0,
+  });
+
+  const [paymentData, setPaymentData] = useState({
+    amount: 0,
+    payment_method: 'transfer'
+  });
+
+  useEffect(() => {
+    fetchStores();
+    fetchSuppliers();
+  }, [user.id]);
+
+  useEffect(() => {
+    if (selectedStoreId !== 'all') {
+      fetchPurchases(selectedStoreId);
+      fetchProducts(selectedStoreId);
+    } else if (stores.length > 0) {
+      setSelectedStoreId(stores[0].id.toString());
+    }
+  }, [selectedStoreId, stores]);
+
+  const fetchStores = async () => {
+    try {
+      const res = await fetch(`/api/owner/stores/${user.id}`);
+      const data = await res.json();
+      setStores(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchSuppliers = async () => {
+    try {
+      const res = await fetch(`/api/owner/suppliers/${user.id}`);
+      const data = await res.json();
+      setSuppliers(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchPurchases = async (storeId: string) => {
+    try {
+      const res = await fetch(`/api/owner/purchases/${storeId}`);
+      const data = await res.json();
+      setPurchases(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchProducts = async (storeId: string) => {
+    try {
+      const res = await fetch(`/api/owner/products/${storeId}`);
+      const data = await res.json();
+      setProducts(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddProduct = (productId: string) => {
+    const product = products.find(p => p.id.toString() === productId);
+    if (!product) return;
+    
+    if (formData.items.find(item => item.product_id === product.id)) return;
+
+    setFormData({
+      ...formData,
+      items: [...formData.items, {
+        product_id: product.id,
+        name: product.name,
+        quantity: 1,
+        price: product.cost_price || 0
+      }]
+    });
+  };
+
+  const handleUpdateItem = (index: number, field: string, value: any) => {
+    const newItems = [...formData.items];
+    newItems[index] = { ...newItems[index], [field]: value };
+    setFormData({ ...formData, items: newItems });
+  };
+
+  const handleRemoveItem = (index: number) => {
+    setFormData({
+      ...formData,
+      items: formData.items.filter((_, i) => i !== index)
+    });
+  };
+
+  const calculateTotal = () => {
+    return formData.items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (formData.items.length === 0) {
+      alert("Adicione pelo menos um produto.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const total_amount = calculateTotal();
+      const res = await fetch('/api/owner/purchases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...formData,
+          total_amount,
+          user_id: user.id
+        })
+      });
+
+      if (res.ok) {
+        setIsModalOpen(false);
+        resetForm();
+        fetchPurchases(selectedStoreId);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePayment = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedPurchase) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/owner/purchase-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          purchase_id: selectedPurchase.id,
+          amount: paymentData.amount,
+          payment_method: paymentData.payment_method
+        })
+      });
+
+      if (res.ok) {
+        setIsPaymentModalOpen(false);
+        fetchPurchases(selectedStoreId);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      store_id: selectedStoreId,
+      supplier_id: '',
+      invoice_number: '',
+      due_date: '',
+      items: [],
+      paid_amount: 0,
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-black tracking-tight">Compras e Faturas</h2>
+          <p className="text-zinc-500">Gira as suas compras, faturas e dívidas a fornecedores.</p>
+        </div>
+        <div className="flex w-full md:w-auto gap-2">
+          <select 
+            value={selectedStoreId}
+            onChange={e => setSelectedStoreId(e.target.value)}
+            className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all font-bold"
+          >
+            {stores.map(s => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+          <button 
+            onClick={() => {
+              resetForm();
+              setIsModalOpen(true);
+            }}
+            className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
+          >
+            <Plus size={20} />
+            Nova Compra
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <StatCard 
+          label="Total em Dívida" 
+          value={`Kz ${purchases.reduce((sum, p) => sum + (p.total_amount - p.paid_amount), 0).toLocaleString()}`}
+          icon={AlertTriangle}
+          color="text-rose-600"
+        />
+        <StatCard 
+          label="Compras este Mês" 
+          value={purchases.length.toString()}
+          icon={ShoppingCart}
+          color="text-blue-600"
+        />
+        <StatCard 
+          label="Total Comprado" 
+          value={`Kz ${purchases.reduce((sum, p) => sum + p.total_amount, 0).toLocaleString()}`}
+          icon={DollarSign}
+          color="text-emerald-600"
+        />
+      </div>
+
+      <Card className="overflow-hidden border-zinc-100 shadow-sm rounded-2xl">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left min-w-[800px]">
+            <thead className="bg-zinc-50 border-b border-zinc-100">
+              <tr>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Fatura / Data</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Fornecedor</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Valor Total</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Pago / Restante</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Status</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {purchases.map(purchase => (
+                <tr key={purchase.id} className="hover:bg-zinc-50/50 transition-colors">
+                  <td className="px-6 py-4">
+                    <p className="font-bold text-zinc-800">#{purchase.invoice_number}</p>
+                    <p className="text-xs text-zinc-500">{new Date(purchase.timestamp).toLocaleDateString()}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="text-sm font-medium text-zinc-700">{purchase.supplier_name}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="text-sm font-black text-zinc-900">Kz {purchase.total_amount.toLocaleString()}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <p className="text-xs text-emerald-600 font-bold">Pago: Kz {purchase.paid_amount.toLocaleString()}</p>
+                    <p className="text-xs text-rose-600 font-bold">Falta: Kz {(purchase.total_amount - purchase.paid_amount).toLocaleString()}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={cn(
+                      "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                      purchase.status === 'paid' ? "bg-emerald-100 text-emerald-600" : 
+                      purchase.status === 'partial' ? "bg-orange-100 text-orange-600" : "bg-rose-100 text-rose-600"
+                    )}>
+                      {purchase.status === 'paid' ? 'Liquidado' : 
+                       purchase.status === 'partial' ? 'Parcial' : 'Pendente'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      {purchase.status !== 'paid' && (
+                        <button 
+                          onClick={() => {
+                            setSelectedPurchase(purchase);
+                            setPaymentData({
+                              amount: purchase.total_amount - purchase.paid_amount,
+                              payment_method: 'transfer'
+                            });
+                            setIsPaymentModalOpen(true);
+                          }}
+                          className="p-2 text-zinc-400 hover:text-emerald-600 transition-colors"
+                          title="Registar Pagamento"
+                        >
+                          <DollarSign size={18} />
+                        </button>
+                      )}
+                      <button 
+                        className="p-2 text-zinc-400 hover:text-black transition-colors"
+                        title="Ver Detalhes"
+                      >
+                        <Eye size={18} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Modal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+        title="Registar Nova Compra"
+        maxWidth="max-w-4xl"
+      >
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Loja de Destino</label>
+              <select 
+                required
+                value={formData.store_id}
+                onChange={e => setFormData({...formData, store_id: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+              >
+                <option value="">Seleccione a Loja</option>
+                {stores.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Fornecedor</label>
+              <select 
+                required
+                value={formData.supplier_id}
+                onChange={e => setFormData({...formData, supplier_id: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+              >
+                <option value="">Seleccione o Fornecedor</option>
+                {suppliers.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nº da Fatura</label>
+              <input 
+                required
+                type="text" 
+                value={formData.invoice_number}
+                onChange={e => setFormData({...formData, invoice_number: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                placeholder="Ex: FAT/2024/001"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">Produtos Comprados</h3>
+              <select 
+                onChange={e => handleAddProduct(e.target.value)}
+                value=""
+                className="px-4 py-2 bg-zinc-100 border-none rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-black"
+              >
+                <option value="">+ Adicionar Produto</option>
+                {products.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="border border-zinc-100 rounded-2xl overflow-hidden">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-zinc-50">
+                  <tr>
+                    <th className="px-4 py-3 font-bold text-zinc-500">Produto</th>
+                    <th className="px-4 py-3 font-bold text-zinc-500 w-24">Qtd</th>
+                    <th className="px-4 py-3 font-bold text-zinc-500 w-32">Preço Custo</th>
+                    <th className="px-4 py-3 font-bold text-zinc-500 w-32">Subtotal</th>
+                    <th className="px-4 py-3 text-right"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {formData.items.map((item, index) => (
+                    <tr key={item.product_id}>
+                      <td className="px-4 py-3 font-medium">{item.name}</td>
+                      <td className="px-4 py-3">
+                        <input 
+                          type="number" 
+                          min="1"
+                          value={item.quantity}
+                          onChange={e => handleUpdateItem(index, 'quantity', parseInt(e.target.value))}
+                          className="w-full px-2 py-1 bg-white border border-zinc-200 rounded-lg outline-none focus:ring-2 focus:ring-black"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input 
+                          type="number" 
+                          min="0"
+                          value={item.price}
+                          onChange={e => handleUpdateItem(index, 'price', parseFloat(e.target.value))}
+                          className="w-full px-2 py-1 bg-white border border-zinc-200 rounded-lg outline-none focus:ring-2 focus:ring-black"
+                        />
+                      </td>
+                      <td className="px-4 py-3 font-bold">
+                        Kz {(item.quantity * item.price).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button 
+                          type="button"
+                          onClick={() => handleRemoveItem(index)}
+                          className="text-rose-500 hover:bg-rose-50 p-1 rounded-lg transition-colors"
+                        >
+                          <X size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {formData.items.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-zinc-400 italic">
+                        Nenhum produto adicionado.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Valor Pago Inicialmente</label>
+                <input 
+                  type="number" 
+                  min="0"
+                  max={calculateTotal()}
+                  value={formData.paid_amount}
+                  onChange={e => setFormData({...formData, paid_amount: parseFloat(e.target.value)})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all font-black text-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Data de Vencimento (se pendente)</label>
+                <input 
+                  type="date" 
+                  value={formData.due_date}
+                  onChange={e => setFormData({...formData, due_date: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="bg-zinc-900 text-white p-6 rounded-[2rem] space-y-2">
+              <div className="flex justify-between items-center opacity-60">
+                <span className="text-sm font-bold uppercase tracking-widest">Total da Compra</span>
+                <span className="font-bold">Kz {calculateTotal().toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-bold uppercase tracking-widest">Restante em Dívida</span>
+                <span className="text-2xl font-black text-rose-400">Kz {(calculateTotal() - formData.paid_amount).toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full bg-black text-white py-4 rounded-2xl font-black text-lg hover:bg-zinc-800 transition-all active:scale-95 disabled:opacity-50"
+          >
+            {loading ? 'Processando...' : 'Confirmar Compra e Entrada de Stock'}
+          </button>
+        </form>
+      </Modal>
+
+      <Modal 
+        isOpen={isPaymentModalOpen} 
+        onClose={() => setIsPaymentModalOpen(false)} 
+        title="Registar Pagamento a Fornecedor"
+      >
+        <form onSubmit={handlePayment} className="space-y-6">
+          {selectedPurchase && (
+            <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100">
+              <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Resumo da Dívida</p>
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-medium">Fatura: {selectedPurchase.invoice_number}</span>
+                <span className="text-lg font-black text-rose-600">Kz {(selectedPurchase.total_amount - selectedPurchase.paid_amount).toLocaleString()}</span>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Valor do Pagamento</label>
+              <input 
+                required
+                type="number" 
+                min="1"
+                max={selectedPurchase ? selectedPurchase.total_amount - selectedPurchase.paid_amount : undefined}
+                value={paymentData.amount}
+                onChange={e => setPaymentData({...paymentData, amount: parseFloat(e.target.value)})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all font-black text-2xl"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Forma de Pagamento</label>
+              <select 
+                value={paymentData.payment_method}
+                onChange={e => setPaymentData({...paymentData, payment_method: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all font-bold"
+              >
+                <option value="cash">Dinheiro</option>
+                <option value="transfer">Transferência</option>
+                <option value="multicaixa">Multicaixa</option>
+                <option value="check">Cheque</option>
+              </select>
+            </div>
+          </div>
+
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black text-lg hover:bg-emerald-700 transition-all active:scale-95 disabled:opacity-50"
+          >
+            {loading ? 'Processando...' : 'Confirmar Pagamento'}
+          </button>
+        </form>
+      </Modal>
+    </div>
+  );
+};
 
 const OwnerReports = ({ user }: { user: User }) => {
   const [data, setData] = useState<any>(null);
@@ -6783,7 +7848,7 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
                 <div className="bg-zinc-50 p-6 rounded-2xl">
                   <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-4">Dados do Cliente</h4>
                   <div className="space-y-1">
-                    <p className="font-bold text-lg">{proforma.client_name.toUpperCase()}</p>
+                    <p className="font-bold text-lg">{(proforma.client_name || 'Consumidor Final').toUpperCase()}</p>
                     <p className="text-sm text-zinc-600">{proforma.client_address}</p>
                     <p className="text-sm font-bold mt-2">NIF: {proforma.client_nif}</p>
                   </div>
@@ -7047,6 +8112,18 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
 };
 
 const SellerPOS = ({ user }: { user: User }) => {
+  if (!hasPermission(user, 'pos_access')) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-zinc-500 space-y-4 p-8 text-center">
+        <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center text-rose-500 mb-4">
+          <ShieldAlert size={40} />
+        </div>
+        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
+        <p className="max-w-md">Você não tem permissão para aceder ao Ponto de Venda (PDV). Por favor, contacte o administrador para solicitar acesso.</p>
+      </div>
+    );
+  }
+
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<{ product: Product, quantity: number }[]>([]);
   const [category, setCategory] = useState('Geral');
@@ -7516,9 +8593,13 @@ const SellerPOS = ({ user }: { user: User }) => {
                       <input 
                         type="number"
                         min="0"
+                        disabled={!hasPermission(user, 'pos_discount')}
                         value={discount}
                         onChange={e => setDiscount(Number(e.target.value))}
-                        className="w-full pl-8 pr-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-orange-500 text-xs font-bold"
+                        className={cn(
+                          "w-full pl-8 pr-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-orange-500 text-xs font-bold",
+                          !hasPermission(user, 'pos_discount') && "opacity-50 cursor-not-allowed"
+                        )}
                         placeholder="0.00"
                       />
                       <div className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px] font-bold">Kz</div>
@@ -8640,7 +9721,7 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
   doc.setTextColor(black[0], black[1], black[2]);
-  doc.text(proforma.client_name.toUpperCase(), 25, 113);
+  doc.text((proforma.client_name || 'Consumidor Final').toUpperCase(), 25, 113);
   
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
@@ -8838,6 +9919,9 @@ export default function App() {
                 <Route path="/owner/stores" element={<MyStores user={user} />} />
                 <Route path="/owner/stores/:storeId" element={<StoreAdmin user={user} />} />
                 <Route path="/owner/clients" element={<OwnerClients user={user} />} />
+                <Route path="/owner/suppliers" element={<OwnerSuppliers user={user} />} />
+                <Route path="/owner/purchases" element={<OwnerPurchases user={user} />} />
+                <Route path="/owner/rh" element={<OwnerRH user={user} />} />
                 <Route path="/owner/reports" element={<OwnerReports user={user} />} />
                 <Route path="/owner/settings" element={<OwnerSettings user={user} />} />
                 <Route path="*" element={<Navigate to="/owner" replace />} />
@@ -8852,6 +9936,17 @@ export default function App() {
                 <Route path="/seller/history" element={<SellerHistory user={user} />} />
                 <Route path="/seller/settings" element={<SellerSettings user={user} onUpdate={handleLogin} />} />
                 <Route path="*" element={<Navigate to="/seller" replace />} />
+              </>
+            )}
+            {user.role === 'manager' && (
+              <>
+                <Route path="/manager" element={<StoreAdmin user={user} />} />
+                <Route path="/manager/products" element={<StoreAdmin user={user} />} />
+                <Route path="/manager/stock" element={<StoreAdmin user={user} />} />
+                <Route path="/manager/proformas" element={<StoreAdmin user={user} />} />
+                <Route path="/manager/reports" element={<StoreAdmin user={user} />} />
+                <Route path="/manager/settings" element={<StoreAdmin user={user} />} />
+                <Route path="*" element={<Navigate to="/manager" replace />} />
               </>
             )}
             <Route path="/" element={<Navigate to={`/${user.role}`} replace />} />

@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'owner' | 'seller';
+export type UserRole = 'admin' | 'owner' | 'seller' | 'manager';
 
 export interface User {
   id: number;
@@ -7,6 +7,68 @@ export interface User {
   name: string;
   role: UserRole;
   store_id?: number | null;
+  role_id?: number | null;
+  custom_permissions?: string | null; // JSON string
+  permissions?: string[];
+  status?: 'active' | 'suspended';
+}
+
+export interface HRRole {
+  id: number;
+  owner_id: number;
+  name: string;
+  base_role: 'seller' | 'manager';
+  permissions: string; // JSON string
+  created_at: string;
+}
+
+export interface HRSalary {
+  id: number;
+  user_id: number;
+  base_salary: number;
+  bonuses: number;
+  discounts: number;
+  vacation_days_per_year: number;
+  last_payment_date?: string;
+  created_at: string;
+  employee_name?: string;
+  role_name?: string;
+}
+
+export interface HRSalaryPayment {
+  id: number;
+  salary_id: number;
+  amount: number;
+  type: 'base' | 'bonus' | 'discount' | 'full_payment' | 'advance' | 'commission';
+  description?: string;
+  month: string;
+  timestamp: string;
+  employee_name?: string;
+  base_salary?: number;
+}
+
+export interface HRAttendance {
+  id: number;
+  user_id: number;
+  store_id: number;
+  entry_time: string;
+  exit_time?: string;
+  status: 'present' | 'late' | 'absent' | 'half_day';
+  date: string;
+  notes?: string;
+  employee_name?: string;
+  store_name?: string;
+}
+
+export interface HRVacation {
+  id: number;
+  user_id: number;
+  start_date: string;
+  end_date: string;
+  status: 'pending' | 'approved' | 'rejected';
+  days_count: number;
+  notes?: string;
+  employee_name?: string;
 }
 
 export interface BankAccount {
