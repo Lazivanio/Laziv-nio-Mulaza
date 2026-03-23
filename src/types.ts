@@ -1,5 +1,34 @@
 export type UserRole = 'admin' | 'owner' | 'seller' | 'manager';
 
+export interface CashRegister {
+  id: number;
+  store_id: number;
+  name: string;
+  code: string;
+  default_initial_balance: number;
+  max_limit: number;
+  created_at: string;
+}
+
+export interface CashSession {
+  id: number;
+  store_id: number;
+  cash_register_id: number;
+  seller_id: number;
+  opening_amount: number;
+  closing_amount?: number;
+  physical_amount?: number;
+  opening_time: string;
+  closing_time?: string;
+  status: 'open' | 'closed';
+  totals?: {
+    sales: number;
+    in: number;
+    out: number;
+    expected: number;
+  };
+}
+
 export interface User {
   id: number;
   email: string;
@@ -8,6 +37,7 @@ export interface User {
   role: UserRole;
   store_id?: number | null;
   role_id?: number | null;
+  cash_register_id?: number | null;
   custom_permissions?: string | null; // JSON string
   permissions?: string[];
   status?: 'active' | 'suspended';

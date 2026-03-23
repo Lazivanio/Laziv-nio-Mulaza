@@ -83,7 +83,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { User, Store as StoreType, Product, Transaction, BankAccount } from './types';
+import { User, Store as StoreType, Product, Transaction, BankAccount, CashRegister } from './types';
 import { OwnerRH } from './components/OwnerRH';
 import { OwnerServices } from './components/OwnerServices';
 import { Service } from './types';
@@ -1245,8 +1245,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     {financeData.pendingPayments.length === 0 ? (
                       <p className="text-sm text-zinc-400 text-center py-4">Nenhum pagamento pendente.</p>
                     ) : (
-                      financeData.pendingPayments.map((pending: any, idx: number) => (
-                        <div key={idx} className="p-4 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-3">
+                      financeData.pendingPayments.map((pending: any) => (
+                        <div key={pending.store_id} className="p-4 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-3">
                           <AlertTriangle className="text-amber-600 mt-0.5" size={18} />
                           <div>
                             <p className="text-sm font-bold text-amber-900">{pending.client_name}</p>
@@ -2125,8 +2125,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   </div>
                   <div className="p-6">
                     <div className="space-y-6">
-                      {monitoring.recentActivity.map((activity: any, idx: number) => (
-                        <div key={idx} className="flex items-start gap-4 group">
+                      {monitoring.recentActivity.map((activity: any) => (
+                        <div key={activity.id} className="flex items-start gap-4 group">
                           <div className="w-10 h-10 bg-zinc-50 rounded-xl flex items-center justify-center text-zinc-400 group-hover:bg-black group-hover:text-white transition-all">
                             <ShoppingCart size={18} />
                           </div>
@@ -2157,8 +2157,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       <h3 className="font-bold">Alertas do Sistema</h3>
                     </div>
                     <div className="p-6 space-y-4">
-                      {monitoring.systemAlerts.map((alert: any, idx: number) => (
-                        <div key={idx} className={cn(
+                      {monitoring.systemAlerts.map((alert: any) => (
+                        <div key={alert.message} className={cn(
                           "p-4 rounded-xl border flex gap-3",
                           alert.level === 'danger' ? "bg-rose-50 border-rose-100 text-rose-700" : "bg-amber-50 border-amber-100 text-amber-700"
                         )}>
@@ -3817,7 +3817,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const { storeId: paramStoreId } = useParams();
   const storeId = paramStoreId || user.store_id?.toString();
   const location = useLocation();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'products' | 'promotions' | 'stock' | 'staff' | 'reports' | 'settings' | 'support'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'products' | 'promotions' | 'stock' | 'staff' | 'reports' | 'settings' | 'support' | 'cash-registers'>('dashboard');
 
   useEffect(() => {
     if (user.role === 'manager') {
@@ -3878,8 +3878,23 @@ const StoreAdmin = ({ user }: { user: User }) => {
     onConfirm: () => {},
   });
   const [productForm, setProductForm] = useState({ name: '', price: '', stock: '', category: '', image_url: '', min_stock: '5' });
-  const [staffForm, setStaffForm] = useState({ name: '', email: '', username: '', password: '', salary: '', shift_info: '' });
+  const [staffForm, setStaffForm] = useState({ 
+    name: '', 
+    email: '', 
+    username: '', 
+    password: '', 
+    salary: '', 
+    shift_info: '',
+    role: 'seller',
+    cash_register_id: ''
+  });
   const [promoForm, setPromoForm] = useState({ name: '', start_date: '', end_date: '', discount_percent: '', product_ids: [] as number[] });
+  const [proformaForm, setProformaForm] = useState({ 
+    client_name: '', 
+    client_nif: '', 
+    client_address: '', 
+    items: [] as { product_id: number; name: string; price: number; quantity: number }[] 
+  });
   const [stockForm, setStockForm] = useState({ 
     product_id: '', 
     type: 'in', 
@@ -3892,11 +3907,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
     bulkQuantity: '',
     unitsPerBulk: '24'
   });
-  const [proformaForm, setProformaForm] = useState({ 
-    client_name: '', 
-    client_nif: '', 
-    client_address: '', 
-    items: [] as { product_id: number, quantity: number, price: number, name: string }[] 
+  const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
+  const [isCashRegisterModalOpen, setIsCashRegisterModalOpen] = useState(false);
+  const [editingCashRegister, setEditingCashRegister] = useState<CashRegister | null>(null);
+  const [cashRegisterForm, setCashRegisterForm] = useState({ 
+    name: '', 
+    default_initial_balance: '0', 
+    max_limit: '0' 
   });
   const navigate = useNavigate();
 
@@ -3942,6 +3959,9 @@ const StoreAdmin = ({ user }: { user: User }) => {
     fetch(`/api/owner/proforma/${storeId}`)
       .then(res => res.json())
       .then(setProformas);
+    fetch(`/api/owner/stores/${storeId}/cash-registers`)
+      .then(res => res.json())
+      .then(setCashRegisters);
     fetch('/api/admin/stores')
       .then(res => res.json())
       .then(setStores);
@@ -3954,6 +3974,35 @@ const StoreAdmin = ({ user }: { user: User }) => {
   };
 
   useEffect(fetchData, [storeId]);
+
+  const handleSaveCashRegister = async (e: FormEvent) => {
+    e.preventDefault();
+    const url = editingCashRegister ? `/api/owner/stores/cash-registers/${editingCashRegister.id}` : `/api/owner/stores/${storeId}/cash-registers`;
+    const method = editingCashRegister ? 'PUT' : 'POST';
+
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...cashRegisterForm,
+        default_initial_balance: Number(cashRegisterForm.default_initial_balance),
+        max_limit: Number(cashRegisterForm.max_limit)
+      })
+    });
+
+    if (res.ok) {
+      setIsCashRegisterModalOpen(false);
+      setEditingCashRegister(null);
+      setCashRegisterForm({ name: '', default_initial_balance: '0', max_limit: '0' });
+      fetchData();
+    }
+  };
+
+  const handleDeleteCashRegister = async (id: number) => {
+    if (!confirm('Tem certeza que deseja eliminar este caixa?')) return;
+    const res = await fetch(`/api/owner/stores/cash-registers/${id}`, { method: 'DELETE' });
+    if (res.ok) fetchData();
+  };
 
   const handleAddProduct = async (e: FormEvent) => {
     e.preventDefault();
@@ -4003,12 +4052,26 @@ const StoreAdmin = ({ user }: { user: User }) => {
     const res = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...staffForm, store_id: Number(storeId), salary: Number(staffForm.salary) })
+      body: JSON.stringify({ 
+        ...staffForm, 
+        store_id: Number(storeId), 
+        salary: Number(staffForm.salary),
+        cash_register_id: staffForm.cash_register_id ? Number(staffForm.cash_register_id) : null
+      })
     });
     if (res.ok) {
       setIsStaffModalOpen(false);
       setEditingStaff(null);
-      setStaffForm({ name: '', email: '', username: '', password: '', salary: '', shift_info: '' });
+      setStaffForm({ 
+        name: '', 
+        email: '', 
+        username: '', 
+        password: '', 
+        salary: '', 
+        shift_info: '',
+        role: 'seller',
+        cash_register_id: ''
+      });
       fetchData();
     }
   };
@@ -4050,7 +4113,9 @@ const StoreAdmin = ({ user }: { user: User }) => {
       username: member.username || '',
       password: '', // Don't show password
       salary: member.salary.toString(),
-      shift_info: member.shift_info
+      shift_info: member.shift_info,
+      role: member.role || 'seller',
+      cash_register_id: member.cash_register_id ? member.cash_register_id.toString() : ''
     });
     setIsStaffModalOpen(true);
   };
@@ -4340,6 +4405,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
             { id: 'proformas', icon: FileText, label: 'Proformas', perm: 'pos_access' },
             { id: 'promotions', icon: Tag, label: 'Promoções', perm: 'stock_edit' },
             { id: 'stock', icon: Barcode, label: 'Stock', perm: 'stock_view' },
+            { id: 'cash-registers', icon: Wallet, label: 'Caixas', perm: 'reports_view' },
             { id: 'reports', icon: BarChart3, label: 'Relatórios', perm: 'reports_view' },
             { id: 'settings', icon: Settings2, label: 'Configurações', perm: 'reports_view' },
             { id: 'support', icon: LifeBuoy, label: 'Suporte' },
@@ -4771,8 +4837,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
                     <h3 className="font-bold">Desempenho de Vendas</h3>
                   </div>
                   <div className="p-4 space-y-4">
-                    {staffPerformance.map((perf: any, idx: number) => (
-                      <div key={idx} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                    {staffPerformance.map((perf: any) => (
+                      <div key={perf.id} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
                         <div className="flex justify-between items-start mb-2">
                           <p className="font-bold text-sm">{perf.name}</p>
                           <span className="text-[10px] font-black bg-black text-white px-2 py-0.5 rounded-full">
@@ -4849,7 +4915,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   <h3 className="font-bold mb-6">Top 5 Produtos</h3>
                   <div className="space-y-4">
                     {reportsData?.topProducts?.map((product: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl">
+                      <div key={product.id || `top-prod-${idx}`} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl">
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="w-8 h-8 bg-black text-white rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0">
                             #{idx + 1}
@@ -5245,6 +5311,133 @@ const StoreAdmin = ({ user }: { user: User }) => {
           </div>
           )}
           
+          {activeTab === 'cash-registers' && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <Card className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shrink-0">
+                  <div>
+                    <h3 className="font-bold">Gestão de Caixas</h3>
+                    <p className="text-xs text-zinc-500">Configure os pontos de venda da sua loja.</p>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setEditingCashRegister(null);
+                      setCashRegisterForm({ name: '', default_initial_balance: '0', max_limit: '0' });
+                      setIsCashRegisterModalOpen(true);
+                    }}
+                    className="w-full md:w-auto bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+                  >
+                    <Plus size={16} /> Novo Caixa
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  <div className="hidden md:block">
+                    <table className="w-full text-left min-w-[600px]">
+                      <thead>
+                        <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
+                          <th className="px-6 py-4 font-semibold">Nome</th>
+                          <th className="px-6 py-4 font-semibold">Código</th>
+                          <th className="px-6 py-4 font-semibold">Saldo Inicial Padrão</th>
+                          <th className="px-6 py-4 font-semibold">Limite Máximo</th>
+                          <th className="px-6 py-4 font-semibold text-right">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100">
+                        {cashRegisters.map(register => (
+                          <tr key={register.id} className="hover:bg-zinc-50 transition-colors">
+                            <td className="px-6 py-4 font-bold text-sm">{register.name}</td>
+                            <td className="px-6 py-4">
+                              <span className="font-mono text-xs bg-zinc-100 px-2 py-1 rounded border border-zinc-200">{register.code}</span>
+                            </td>
+                            <td className="px-6 py-4 text-sm font-medium">Kz {register.default_initial_balance.toLocaleString()}</td>
+                            <td className="px-6 py-4 text-sm font-medium text-rose-600">Kz {register.max_limit.toLocaleString()}</td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="flex justify-end gap-2">
+                                <button 
+                                  onClick={() => {
+                                    setEditingCashRegister(register);
+                                    setCashRegisterForm({
+                                      name: register.name,
+                                      default_initial_balance: register.default_initial_balance.toString(),
+                                      max_limit: register.max_limit.toString()
+                                    });
+                                    setIsCashRegisterModalOpen(true);
+                                  }}
+                                  className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteCashRegister(register.id)}
+                                  className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {cashRegisters.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="px-6 py-12 text-center text-zinc-400">Nenhum caixa registado.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="md:hidden divide-y divide-zinc-100">
+                    {cashRegisters.map(register => (
+                      <div key={register.id} className="p-4 space-y-3">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-bold text-sm">{register.name}</p>
+                            <p className="text-[10px] font-mono text-zinc-400">{register.code}</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => {
+                                setEditingCashRegister(register);
+                                setCashRegisterForm({
+                                  name: register.name,
+                                  default_initial_balance: register.default_initial_balance.toString(),
+                                  max_limit: register.max_limit.toString()
+                                });
+                                setIsCashRegisterModalOpen(true);
+                              }}
+                              className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteCashRegister(register.id)}
+                              className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 pt-2 border-t border-zinc-50">
+                          <div>
+                            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Saldo Inicial</p>
+                            <p className="text-xs font-bold">Kz {register.default_initial_balance.toLocaleString()}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Limite Máximo</p>
+                            <p className="text-xs font-bold text-rose-600">Kz {register.max_limit.toLocaleString()}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {cashRegisters.length === 0 && (
+                      <div className="p-12 text-center text-zinc-400 text-sm">Nenhum caixa registado.</div>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            </div>
+          )}
+
           {activeTab === 'stock' && (
             <div className="flex-1 overflow-y-auto pr-2 space-y-6">
               {/* Stock Overview Cards */}
@@ -5896,6 +6089,70 @@ const StoreAdmin = ({ user }: { user: User }) => {
         </form>
       </Modal>
 
+      <Modal 
+        isOpen={isCashRegisterModalOpen} 
+        onClose={() => { setIsCashRegisterModalOpen(false); setEditingCashRegister(null); }} 
+        title={editingCashRegister ? "Editar Caixa" : "Novo Caixa"}
+      >
+        <form onSubmit={handleSaveCashRegister} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Caixa</label>
+            <input 
+              type="text" required
+              value={cashRegisterForm.name}
+              onChange={e => setCashRegisterForm({...cashRegisterForm, name: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
+              placeholder="Ex: Caixa Principal, Caixa 02..."
+            />
+          </div>
+          {editingCashRegister && (
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Código do Caixa</label>
+              <input 
+                type="text" readOnly
+                value={editingCashRegister.code}
+                className="w-full px-4 py-3 bg-zinc-100 border border-zinc-200 rounded-xl outline-none text-zinc-500 font-mono" 
+              />
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Saldo Inicial Padrão (Kz)</label>
+              <input 
+                type="number" required
+                value={cashRegisterForm.default_initial_balance}
+                onChange={e => setCashRegisterForm({...cashRegisterForm, default_initial_balance: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Limite Máximo (Kz)</label>
+              <input 
+                type="number" required
+                value={cashRegisterForm.max_limit}
+                onChange={e => setCashRegisterForm({...cashRegisterForm, max_limit: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
+              />
+            </div>
+          </div>
+          <div className="pt-4 flex gap-3">
+            <button 
+              type="button"
+              onClick={() => setIsCashRegisterModalOpen(false)}
+              className="flex-1 py-3 bg-zinc-100 text-zinc-600 rounded-xl font-bold hover:bg-zinc-200 transition-all"
+            >
+              Cancelar
+            </button>
+            <button 
+              type="submit"
+              className="flex-1 py-3 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-black/10"
+            >
+              {editingCashRegister ? "Guardar Alterações" : "Criar Caixa"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
       <Modal isOpen={isStaffModalOpen} onClose={() => { setIsStaffModalOpen(false); setEditingStaff(null); }} title={editingStaff ? "Editar Colaborador" : "Novo Colaborador"}>
         <form onSubmit={handleAddStaff} className="space-y-4">
           <div>
@@ -5933,6 +6190,33 @@ const StoreAdmin = ({ user }: { user: User }) => {
               onChange={e => setStaffForm({...staffForm, password: e.target.value})}
               className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
             />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Cargo</label>
+              <select 
+                value={staffForm.role}
+                onChange={e => setStaffForm({...staffForm, role: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none"
+              >
+                <option value="seller">Vendedor</option>
+                <option value="cashier">Caixa</option>
+                <option value="manager">Gerente</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Caixa Associado</label>
+              <select 
+                value={staffForm.cash_register_id}
+                onChange={e => setStaffForm({...staffForm, cash_register_id: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none"
+              >
+                <option value="">Nenhum</option>
+                {cashRegisters.map(register => (
+                  <option key={register.id} value={register.id}>{register.name} ({register.code})</option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -8029,8 +8313,8 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-50">
-              {sale.items.map((item: any, idx: number) => (
-                <tr key={idx}>
+              {sale.items.map((item: any) => (
+                <tr key={item.id || item.product_id}>
                   <td className="py-1.5 leading-tight">
                     <p className="font-bold">{item.name.toUpperCase()}</p>
                     <p className="text-[7px] text-zinc-500">{item.price.toLocaleString()} x {item.quantity}</p>
@@ -8170,10 +8454,15 @@ const SellerPOS = ({ user }: { user: User }) => {
     });
 
     // Check for active session
-    fetch(`/api/seller/active-session/${storeId}`)
+    let url = `/api/seller/active-session/${storeId}`;
+    if (user.cash_register_id) {
+      url += `?cash_register_id=${user.cash_register_id}`;
+    }
+
+    fetch(url)
       .then(res => res.json())
       .then(data => setHasActiveSession(!!data));
-  }, [user.store_id]);
+  }, [user.store_id, user.cash_register_id]);
 
   const addToCart = (item: Product | Service, type: 'product' | 'service' = 'product') => {
     setCart(prev => {
@@ -8217,7 +8506,11 @@ const SellerPOS = ({ user }: { user: User }) => {
     setIsProcessing(true);
     try {
       const storeId = user.store_id || 1;
-      const res = await fetch(`/api/seller/active-session/${storeId}`);
+      let url = `/api/seller/active-session/${storeId}`;
+      if (user.cash_register_id) {
+        url += `?cash_register_id=${user.cash_register_id}`;
+      }
+      const res = await fetch(url);
       const data = await res.json();
       
       if (data && data.status === 'open') {
@@ -8311,6 +8604,7 @@ const SellerPOS = ({ user }: { user: User }) => {
         body: JSON.stringify({
           store_id: storeId,
           seller_id: user.id,
+          cash_register_id: user.cash_register_id,
           total_amount: total,
           payment_method: paymentMethod,
           client_name: client.name || 'Consumidor Final',
@@ -9131,10 +9425,15 @@ const SellerDashboard = ({ user }: { user: User }) => {
       .then(res => res.json())
       .then(setStats);
     
-    fetch(`/api/seller/active-session/${storeId}`)
+    let url = `/api/seller/active-session/${storeId}`;
+    if (user.cash_register_id) {
+      url += `?cash_register_id=${user.cash_register_id}`;
+    }
+
+    fetch(url)
       .then(res => res.json())
       .then(data => setHasActiveSession(!!data));
-  }, [user.id]);
+  }, [user.id, user.cash_register_id]);
 
   return (
     <div className="space-y-6">
@@ -9191,8 +9490,8 @@ const SellerDashboard = ({ user }: { user: User }) => {
             { title: 'Upselling', desc: 'Sugira complementos aos produtos principais.', icon: Plus },
             { title: 'Fidelização', desc: 'Peça o contacto para futuras promoções.', icon: Users },
             { title: 'Agilidade', desc: 'Mantenha o checkout rápido e eficiente.', icon: ShoppingCart },
-          ].map((tip, i) => (
-            <div key={i} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+          ].map((tip) => (
+            <div key={tip.title} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
               <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center mb-3 shadow-sm text-orange-500">
                 <tip.icon size={20} />
               </div>
@@ -9240,6 +9539,7 @@ const SellerCashMovements = ({ user }: { user: User }) => {
       body: JSON.stringify({
         store_id: storeId,
         seller_id: user.id,
+        cash_register_id: user.cash_register_id,
         type,
         amount: parseFloat(amount),
         description
@@ -9381,37 +9681,66 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
   const [physicalAmount, setPhysicalAmount] = useState('');
   const [openingAmount, setOpeningAmount] = useState('');
   const [loading, setLoading] = useState(true);
+  const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
+  const [selectedRegisterId, setSelectedRegisterId] = useState<string>(user.cash_register_id?.toString() || '');
 
   const fetchSession = () => {
     setLoading(true);
     const storeId = user.store_id || 1;
-    fetch(`/api/seller/active-session/${storeId}`)
+    const registerId = selectedRegisterId || user.cash_register_id;
+    
+    let url = `/api/seller/active-session/${storeId}`;
+    if (registerId) {
+      url += `?cash_register_id=${registerId}`;
+    }
+
+    fetch(url)
       .then(res => res.json())
       .then(data => {
         setSession(data);
         setLoading(false);
-      });
+      })
+      .catch(() => setLoading(false));
+  };
+
+  const fetchRegisters = () => {
+    const storeId = user.store_id || 1;
+    fetch(`/api/owner/stores/${storeId}/cash-registers`)
+      .then(res => res.json())
+      .then(setCashRegisters);
   };
 
   useEffect(() => {
     fetchSession();
-  }, [user.store_id]);
+    fetchRegisters();
+  }, [user.store_id, selectedRegisterId]);
 
   const handleOpenSession = async (e: FormEvent) => {
     e.preventDefault();
     const storeId = user.store_id || 1;
+    const registerId = selectedRegisterId || user.cash_register_id;
+
+    if (!registerId) {
+      alert('Por favor, selecione um caixa.');
+      return;
+    }
+
     const res = await fetch('/api/seller/open-session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         store_id: storeId,
         seller_id: user.id,
+        cash_register_id: Number(registerId),
         opening_amount: parseFloat(openingAmount)
       })
     });
     if (res.ok) {
       setOpeningAmount('');
       fetchSession();
+    } else {
+      const data = await res.json();
+      alert(data.error || 'Erro ao abrir caixa.');
     }
   };
 
@@ -9446,6 +9775,20 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
           <p className="text-zinc-500 mb-8">Informe o valor inicial para começar as operações do dia.</p>
           
           <form onSubmit={handleOpenSession} className="space-y-6">
+            <div className="space-y-1 text-left">
+              <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Seleccionar Caixa</label>
+              <select
+                required
+                value={selectedRegisterId}
+                onChange={e => setSelectedRegisterId(e.target.value)}
+                className="w-full px-6 py-4 bg-zinc-50 border border-zinc-100 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 font-bold"
+              >
+                <option value="">Seleccione o Caixa</option>
+                {cashRegisters.map(register => (
+                  <option key={register.id} value={register.id}>{register.name} ({register.code})</option>
+                ))}
+              </select>
+            </div>
             <div className="space-y-1 text-left">
               <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Valor de Abertura (Kz)</label>
               <input
@@ -9485,13 +9828,13 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {[
-          { label: 'Abertura', val: session.opening_amount, color: 'text-zinc-600' },
-          { label: 'Vendas', val: session.totals.sales, color: 'text-emerald-600' },
-          { label: 'Entradas', val: session.totals.in, color: 'text-emerald-600' },
-          { label: 'Saídas', val: session.totals.out, color: 'text-rose-600' },
-        ].map((item, i) => (
-          <Card key={i} className="p-4 border-zinc-100 shadow-sm rounded-2xl">
+          {[
+            { label: 'Abertura', val: session.opening_amount, color: 'text-zinc-600' },
+            { label: 'Vendas', val: session.totals.sales, color: 'text-emerald-600' },
+            { label: 'Entradas', val: session.totals.in, color: 'text-emerald-600' },
+            { label: 'Saídas', val: session.totals.out, color: 'text-rose-600' },
+          ].map((item) => (
+            <Card key={item.label} className="p-4 border-zinc-100 shadow-sm rounded-2xl">
             <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">{item.label}</p>
             <p className={cn("text-lg font-black", item.color)}>Kz {item.val.toLocaleString()}</p>
           </Card>

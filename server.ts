@@ -53,6 +53,7 @@ try {
   if (!columns.some(col => col.name === 'role_id')) db.exec("ALTER TABLE users ADD COLUMN role_id INTEGER");
   if (!columns.some(col => col.name === 'custom_permissions')) db.exec("ALTER TABLE users ADD COLUMN custom_permissions TEXT");
   if (!columns.some(col => col.name === 'store_id')) db.exec("ALTER TABLE users ADD COLUMN store_id INTEGER");
+  if (!columns.some(col => col.name === 'cash_register_id')) db.exec("ALTER TABLE users ADD COLUMN cash_register_id INTEGER");
   if (!columns.some(col => col.name === 'bonus')) db.exec("ALTER TABLE hr_salary_payments ADD COLUMN bonus REAL DEFAULT 0");
 } catch (e) {
   console.error("Migration error (users):", e);
@@ -320,9 +321,21 @@ db.exec(`
     FOREIGN KEY(seller_id) REFERENCES users(id)
   );
 
+  CREATE TABLE IF NOT EXISTS cash_registers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    name TEXT,
+    code TEXT UNIQUE,
+    default_initial_balance REAL DEFAULT 0,
+    max_limit REAL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id)
+  );
+
   CREATE TABLE IF NOT EXISTS cashier_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     store_id INTEGER,
+    cash_register_id INTEGER,
     seller_id INTEGER,
     opening_amount REAL,
     closing_amount REAL,
@@ -331,6 +344,7 @@ db.exec(`
     closing_time DATETIME,
     status TEXT DEFAULT 'open', -- 'open' or 'closed'
     FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(cash_register_id) REFERENCES cash_registers(id),
     FOREIGN KEY(seller_id) REFERENCES users(id)
   );
 
@@ -396,7 +410,34 @@ db.exec(`
     db.prepare("ALTER TABLE hr_roles ADD COLUMN base_role TEXT DEFAULT 'seller'").run();
   } catch (e) {}
 
-  db.exec(`
+  try {
+    const columns = db.prepare("PRAGMA table_info(cashier_sessions)").all() as any[];
+    if (!columns.some(col => col.name === 'cash_register_id')) {
+      db.exec("ALTER TABLE cashier_sessions ADD COLUMN cash_register_id INTEGER");
+    }
+  } catch (e) {
+    console.error("Migration error (cashier_sessions):", e);
+  }
+
+  try {
+    const columns = db.prepare("PRAGMA table_info(transactions)").all() as any[];
+    if (!columns.some(col => col.name === 'cash_register_id')) {
+      db.exec("ALTER TABLE transactions ADD COLUMN cash_register_id INTEGER");
+    }
+  } catch (e) {
+    console.error("Migration error (transactions):", e);
+  }
+
+  try {
+    const columns = db.prepare("PRAGMA table_info(cash_movements)").all() as any[];
+    if (!columns.some(col => col.name === 'cash_register_id')) {
+      db.exec("ALTER TABLE cash_movements ADD COLUMN cash_register_id INTEGER");
+    }
+  } catch (e) {
+    console.error("Migration error (cash_movements):", e);
+  }
+
+db.exec(`
   CREATE TABLE IF NOT EXISTS hr_salaries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER UNIQUE,
@@ -1028,7 +1069,7 @@ async function startServer() {
     const totalStores = db.prepare("SELECT count(*) as count FROM stores").get() as any;
     
     const recentActivity = db.prepare(`
-      SELECT 'venda' as type, total_amount as value, timestamp, s.name as store_name
+      SELECT t.id, 'venda' as type, total_amount as value, timestamp, s.name as store_name
       FROM transactions t
       JOIN stores s ON t.store_id = s.id
       ORDER BY timestamp DESC LIMIT 15
@@ -1171,7 +1212,7 @@ async function startServer() {
     };
 
     const pendingPayments = db.prepare(`
-      SELECT u.name as client_name, s.name as store_name, s.license_expiry
+      SELECT u.id as user_id, s.id as store_id, u.name as client_name, s.name as store_name, s.license_expiry
       FROM users u
       JOIN stores s ON u.id = s.owner_id
       WHERE s.license_status = 'expired' OR s.license_expiry < date('now', '+7 days')
@@ -1267,6 +1308,39 @@ async function startServer() {
   });
 
   // Owner Routes
+  app.get("/api/owner/stores/:storeId/cash-registers", (req, res) => {
+    const { storeId } = req.params;
+    const registers = db.prepare("SELECT * FROM cash_registers WHERE store_id = ?").all(storeId);
+    res.json(registers);
+  });
+
+  app.post("/api/owner/stores/:storeId/cash-registers", (req, res) => {
+    const { storeId } = req.params;
+    const { name, default_initial_balance, max_limit } = req.body;
+    const code = `CX-${Math.floor(1000 + Math.random() * 9000)}`;
+    const result = db.prepare(`
+      INSERT INTO cash_registers (store_id, name, code, default_initial_balance, max_limit)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(storeId, name, code, default_initial_balance, max_limit);
+    res.json({ id: result.lastInsertRowid, code });
+  });
+
+  app.put("/api/owner/stores/cash-registers/:id", (req, res) => {
+    const { id } = req.params;
+    const { name, default_initial_balance, max_limit } = req.body;
+    db.prepare(`
+      UPDATE cash_registers SET name = ?, default_initial_balance = ?, max_limit = ?
+      WHERE id = ?
+    `).run(name, default_initial_balance, max_limit, id);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/owner/stores/cash-registers/:id", (req, res) => {
+    const { id } = req.params;
+    db.prepare("DELETE FROM cash_registers WHERE id = ?").run(id);
+    res.json({ success: true });
+  });
+
   app.get("/api/owner/stores/:ownerId", (req, res) => {
     const stores = db.prepare(`
       SELECT s.*, 
@@ -1574,7 +1648,7 @@ async function startServer() {
   });
 
   app.post("/api/owner/hr/employees", (req, res) => {
-    const { name, email, username, password, role: bodyRole, store_id, role_id, custom_permissions, base_salary } = req.body;
+    const { name, email, username, password, role: bodyRole, store_id, role_id, custom_permissions, base_salary, cash_register_id } = req.body;
     try {
       db.transaction(() => {
         let finalRole = bodyRole || 'seller';
@@ -1583,8 +1657,8 @@ async function startServer() {
           if (hrRole) finalRole = hrRole.base_role;
         }
 
-        const result = db.prepare("INSERT INTO users (name, email, username, password, role, store_id, role_id, custom_permissions, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-          name, email, username, password, finalRole, store_id, role_id, JSON.stringify(custom_permissions), 'active'
+        const result = db.prepare("INSERT INTO users (name, email, username, password, role, store_id, role_id, custom_permissions, status, cash_register_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+          name, email, username, password, finalRole, store_id, role_id, JSON.stringify(custom_permissions), 'active', cash_register_id
         );
         const userId = result.lastInsertRowid;
         const salary = Number(base_salary) || 0;
@@ -1600,7 +1674,7 @@ async function startServer() {
   });
 
   app.put("/api/owner/hr/employees/:id", (req, res) => {
-    const { name, email, username, role: bodyRole, store_id, role_id, custom_permissions, base_salary, status } = req.body;
+    const { name, email, username, role: bodyRole, store_id, role_id, custom_permissions, base_salary, status, cash_register_id } = req.body;
     try {
       db.transaction(() => {
         let finalRole = bodyRole || 'seller';
@@ -1609,8 +1683,8 @@ async function startServer() {
           if (hrRole) finalRole = hrRole.base_role;
         }
 
-        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, store_id = ?, role_id = ?, custom_permissions = ?, status = ? WHERE id = ?").run(
-          name, email, username, finalRole, store_id, role_id, JSON.stringify(custom_permissions), status, req.params.id
+        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, store_id = ?, role_id = ?, custom_permissions = ?, status = ?, cash_register_id = ? WHERE id = ?").run(
+          name, email, username, finalRole, store_id, role_id, JSON.stringify(custom_permissions), status, cash_register_id, req.params.id
         );
         const salary = Number(base_salary) || 0;
         db.prepare("INSERT OR REPLACE INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(req.params.id, salary);
@@ -1745,6 +1819,7 @@ async function startServer() {
   app.get("/api/owner/staff-performance/:storeId", (req, res) => {
     const performance = db.prepare(`
       SELECT 
+        u.id,
         u.name,
         COUNT(t.id) as total_sales,
         SUM(t.total_amount) as total_revenue
@@ -2041,13 +2116,13 @@ async function startServer() {
       SELECT items FROM transactions WHERE store_id IN (${placeholders})
     `).all(...storeIds);
     
-    const productSales: Record<string, { name: string, quantity: number, revenue: number }> = {};
+    const productSales: Record<string, { id: any, name: string, quantity: number, revenue: number }> = {};
     allTransactions.forEach((t: any) => {
       try {
         const items = JSON.parse(t.items);
         items.forEach((item: any) => {
           if (!productSales[item.id]) {
-            productSales[item.id] = { name: item.name, quantity: 0, revenue: 0 };
+            productSales[item.id] = { id: item.id, name: item.name, quantity: 0, revenue: 0 };
           }
           productSales[item.id].quantity += item.quantity;
           productSales[item.id].revenue += item.quantity * item.price;
@@ -2260,26 +2335,33 @@ async function startServer() {
   app.get("/api/seller/products/:storeId", (req, res) => {
     const products = db.prepare(`
       SELECT p.*, 
-        pr.discount_percent,
+        MAX(pr.discount_percent) as discount_percent,
         pr.name as promo_name
       FROM products p 
       LEFT JOIN promotion_products pp ON p.id = pp.product_id
       LEFT JOIN promotions pr ON pp.promotion_id = pr.id 
         AND date('now') BETWEEN date(pr.start_date) AND date(pr.end_date)
       WHERE p.store_id = ? AND p.stock > 0
+      GROUP BY p.id
     `).all(req.params.storeId);
     res.json(products);
   });
 
   app.post("/api/seller/sale", (req, res) => {
     const { 
-      store_id, seller_id, total_amount, items, payment_method, 
+      store_id, seller_id, cash_register_id, total_amount, items, payment_method, 
       cash_received, split_details, client_name, client_nif,
       discount_percent, discount_amount, tax_amount
     } = req.body;
 
     // Check for active cashier session
-    const activeSession = db.prepare("SELECT id FROM cashier_sessions WHERE store_id = ? AND status = 'open'").get(store_id);
+    let sessionQuery = "SELECT id FROM cashier_sessions WHERE store_id = ? AND status = 'open'";
+    let sessionParams: any[] = [store_id];
+    if (cash_register_id) {
+      sessionQuery += " AND cash_register_id = ?";
+      sessionParams.push(cash_register_id);
+    }
+    const activeSession = db.prepare(sessionQuery).get(...sessionParams);
     if (!activeSession) {
       return res.status(403).json({ error: "O caixa deve estar aberto para realizar vendas." });
     }
@@ -2298,13 +2380,14 @@ async function startServer() {
 
     const info = db.prepare(`
       INSERT INTO transactions (
-        store_id, seller_id, total_amount, items, payment_method, 
+        store_id, seller_id, cash_register_id, total_amount, items, payment_method, 
         cash_received, split_details, client_name, client_nif,
         discount_percent, discount_amount, tax_amount, invoice_number, agt_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       store_id, 
       seller_id, 
+      cash_register_id || null,
       total_amount, 
       JSON.stringify(items),
       payment_method || 'cash',
@@ -2431,25 +2514,38 @@ async function startServer() {
   });
 
   app.post("/api/seller/cash-movements", (req, res) => {
-    const { store_id, seller_id, type, amount, description } = req.body;
+    const { store_id, seller_id, cash_register_id, type, amount, description } = req.body;
     
     // Check for active cashier session
-    const activeSession = db.prepare("SELECT id FROM cashier_sessions WHERE store_id = ? AND status = 'open'").get(store_id);
+    let sessionQuery = "SELECT id FROM cashier_sessions WHERE store_id = ? AND status = 'open'";
+    let sessionParams: any[] = [store_id];
+    if (cash_register_id) {
+      sessionQuery += " AND cash_register_id = ?";
+      sessionParams.push(cash_register_id);
+    }
+    const activeSession = db.prepare(sessionQuery).get(...sessionParams);
     if (!activeSession) {
       return res.status(403).json({ error: "O caixa deve estar aberto para registar movimentos." });
     }
 
-    db.prepare("INSERT INTO cash_movements (store_id, seller_id, type, amount, description) VALUES (?, ?, ?, ?, ?)").run(store_id, seller_id, type, amount, description);
+    db.prepare("INSERT INTO cash_movements (store_id, seller_id, cash_register_id, type, amount, description) VALUES (?, ?, ?, ?, ?, ?)").run(store_id, seller_id, cash_register_id || null, type, amount, description);
     res.json({ success: true });
   });
 
   // Cashier Sessions
   app.get("/api/seller/active-session/:storeId", (req, res) => {
-    const session = db.prepare(`
-      SELECT * FROM cashier_sessions 
-      WHERE store_id = ? AND status = 'open'
-      ORDER BY opening_time DESC LIMIT 1
-    `).get(req.params.storeId) as any;
+    const { cash_register_id } = req.query;
+    let query = "SELECT * FROM cashier_sessions WHERE store_id = ? AND status = 'open'";
+    let params: any[] = [req.params.storeId];
+
+    if (cash_register_id) {
+      query += " AND cash_register_id = ?";
+      params.push(cash_register_id);
+    }
+
+    query += " ORDER BY opening_time DESC LIMIT 1";
+
+    const session = db.prepare(query).get(...params) as any;
 
     if (!session) return res.json(null);
 
@@ -2457,20 +2553,20 @@ async function startServer() {
     const sales = db.prepare(`
       SELECT SUM(total_amount) as total 
       FROM transactions 
-      WHERE store_id = ? AND timestamp >= ?
-    `).get(session.store_id, session.opening_time) as any;
+      WHERE store_id = ? AND timestamp >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+    `).get(session.store_id, session.opening_time, session.cash_register_id) as any;
 
     const cashIn = db.prepare(`
       SELECT SUM(amount) as total 
       FROM cash_movements 
-      WHERE store_id = ? AND type = 'in' AND timestamp >= ?
-    `).get(session.store_id, session.opening_time) as any;
+      WHERE store_id = ? AND type = 'in' AND timestamp >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+    `).get(session.store_id, session.opening_time, session.cash_register_id) as any;
 
     const cashOut = db.prepare(`
       SELECT SUM(amount) as total 
       FROM cash_movements 
-      WHERE store_id = ? AND type = 'out' AND timestamp >= ?
-    `).get(session.store_id, session.opening_time) as any;
+      WHERE store_id = ? AND type = 'out' AND timestamp >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+    `).get(session.store_id, session.opening_time, session.cash_register_id) as any;
 
     res.json({
       ...session,
@@ -2484,8 +2580,8 @@ async function startServer() {
   });
 
   app.post("/api/seller/open-session", (req, res) => {
-    const { store_id, seller_id, opening_amount } = req.body;
-    db.prepare("INSERT INTO cashier_sessions (store_id, seller_id, opening_amount) VALUES (?, ?, ?)").run(store_id, seller_id, opening_amount);
+    const { store_id, seller_id, opening_amount, cash_register_id } = req.body;
+    db.prepare("INSERT INTO cashier_sessions (store_id, seller_id, opening_amount, cash_register_id) VALUES (?, ?, ?, ?)").run(store_id, seller_id, opening_amount, cash_register_id);
     res.json({ success: true });
   });
 
