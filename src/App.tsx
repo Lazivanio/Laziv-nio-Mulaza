@@ -96,8 +96,9 @@ function cn(...inputs: ClassValue[]) {
 function hasPermission(user: User | null, permissionId: string): boolean {
   if (!user) return false;
   if (user.role === 'admin' || user.role === 'owner') return true;
-  if (!user.permissions) return false;
-  return user.permissions.includes(permissionId);
+  const perms = user.permissions;
+  if (!perms || !Array.isArray(perms)) return false;
+  return perms.includes(permissionId);
 }
 
 // --- Components ---
@@ -1194,9 +1195,9 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
             <div className="space-y-8">
               {/* 1️⃣ Resumo Financeiro */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <StatCard label="Total Ganho Hoje" value={`Kz ${financeData.stats.totalToday.toLocaleString()}`} icon={DollarSign} color="emerald" />
-                <StatCard label="Total Ganho no Mês" value={`Kz ${financeData.stats.totalMonth.toLocaleString()}`} icon={TrendingUp} color="blue" />
-                <StatCard label="Total Ganho no Ano" value={`Kz ${financeData.stats.totalYear.toLocaleString()}`} icon={Activity} color="indigo" />
+                <StatCard label="Total Ganho Hoje" value={`Kz ${(financeData.stats.totalToday || 0).toLocaleString()}`} icon={DollarSign} color="emerald" />
+                <StatCard label="Total Ganho no Mês" value={`Kz ${(financeData.stats.totalMonth || 0).toLocaleString()}`} icon={TrendingUp} color="blue" />
+                <StatCard label="Total Ganho no Ano" value={`Kz ${(financeData.stats.totalYear || 0).toLocaleString()}`} icon={Activity} color="indigo" />
                 <StatCard label="Pagamentos Recebidos" value={financeData.stats.count} icon={CreditCard} color="amber" />
               </div>
 
@@ -3106,7 +3107,7 @@ const OwnerOverview = ({ user }: { user: User }) => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <StatCard 
           label="Vendas Consolidadas (Hoje)" 
-          value={`Kz ${stats.todaySales.toLocaleString()}`} 
+          value={`Kz ${(stats.todaySales || 0).toLocaleString()}`} 
           icon={TrendingUp} 
           trend="+5.2%" 
           color="emerald" 
@@ -8725,9 +8726,28 @@ const SellerPOS = ({ user }: { user: User }) => {
 
           <div className="flex flex-col gap-4">
             {hasActiveSession === false && (
-              <div className="bg-rose-50 border border-rose-200 p-4 rounded-2xl flex items-center gap-3 text-rose-600 mb-2">
-                <ShieldAlert size={20} />
-                <p className="text-sm font-bold">O caixa está fechado. Abra o caixa para poder realizar vendas.</p>
+              <div className="bg-rose-50 border border-rose-200 p-6 rounded-[2rem] flex flex-col md:flex-row items-center justify-between gap-4 mb-4 shadow-sm">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center shrink-0">
+                    <Lock size={24} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-rose-900">Caixa Fechado</h3>
+                    <p className="text-sm text-rose-600">É necessário abrir o caixa para realizar vendas.</p>
+                  </div>
+                </div>
+                {hasPermission(user, 'pos_open_cashier') ? (
+                  <button 
+                    onClick={() => window.location.hash = '#/seller/close'}
+                    className="px-6 py-2 bg-rose-600 text-white rounded-xl text-sm font-bold hover:bg-rose-700 transition-all active:scale-95 shadow-lg shadow-rose-200"
+                  >
+                    Abrir Caixa Agora
+                  </button>
+                ) : (
+                  <div className="px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-bold border border-rose-200">
+                    Aguarde a abertura por um supervisor
+                  </div>
+                )}
               </div>
             )}
             <div className="flex items-center gap-3">
@@ -8799,12 +8819,12 @@ const SellerPOS = ({ user }: { user: User }) => {
                   <div className="mt-auto flex items-center justify-between gap-1">
                     <div className="flex flex-col">
                       {product.discount_percent && (
-                        <span className="text-[7px] text-zinc-400 line-through">Kz {product.price.toLocaleString()}</span>
+                        <span className="text-[7px] text-zinc-400 line-through">Kz {(product.price || 0).toLocaleString()}</span>
                       )}
                       <p className="font-black text-orange-600 text-[10px]">
                         Kz {(product.discount_percent 
-                          ? product.price * (1 - product.discount_percent / 100) 
-                          : product.price).toLocaleString()}
+                          ? (product.price || 0) * (1 - product.discount_percent / 100) 
+                          : (product.price || 0)).toLocaleString()}
                       </p>
                     </div>
                     <span className={cn(
@@ -8933,21 +8953,21 @@ const SellerPOS = ({ user }: { user: User }) => {
             <div className="space-y-2">
               <div className="flex justify-between text-xs text-zinc-500">
                 <span>Subtotal</span>
-                <span className="font-bold text-zinc-700">Kz {subtotal.toLocaleString()}</span>
+                <span className="font-bold text-zinc-700">Kz {(subtotal || 0).toLocaleString()}</span>
               </div>
               {discount > 0 && (
                 <div className="flex justify-between text-xs text-rose-500">
                   <span>Desconto</span>
-                  <span className="font-bold">- Kz {discountAmount.toLocaleString()}</span>
+                  <span className="font-bold">- Kz {(discountAmount || 0).toLocaleString()}</span>
                 </div>
               )}
               <div className="flex justify-between text-xs text-zinc-500">
                 <span>Imposto (14%)</span>
-                <span className="font-bold text-zinc-700">Kz {tax.toLocaleString()}</span>
+                <span className="font-bold text-zinc-700">Kz {(tax || 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-xl font-black pt-3 border-t border-zinc-200 text-zinc-900">
                 <span>Total</span>
-                <span className="text-orange-600">Kz {total.toLocaleString()}</span>
+                <span className="text-orange-600">Kz {(total || 0).toLocaleString()}</span>
               </div>
             </div>
             <div className="flex gap-2">
@@ -9054,7 +9074,7 @@ const SellerPOS = ({ user }: { user: User }) => {
         <div className="space-y-6">
           <div className="bg-zinc-50 p-6 rounded-2xl border border-zinc-100 text-center">
             <p className="text-sm text-zinc-500 font-medium uppercase tracking-wider mb-1">Total a Pagar</p>
-            <h3 className="text-4xl font-black text-zinc-900">Kz {total.toLocaleString()}</h3>
+            <h3 className="text-4xl font-black text-zinc-900">Kz {(total || 0).toLocaleString()}</h3>
           </div>
 
           <div className="space-y-3">
@@ -9118,7 +9138,7 @@ const SellerPOS = ({ user }: { user: User }) => {
                     {change >= 0 ? 'Troco a devolver' : 'Dinheiro insuficiente'}
                   </span>
                   <span className="font-black">
-                    Kz {Math.abs(change).toLocaleString()}
+                    Kz {(Math.abs(change) || 0).toLocaleString()}
                   </span>
                 </div>
               )}
@@ -9387,7 +9407,7 @@ const SellerHistory = ({ user }: { user: User }) => {
                       {sale.payment_method}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-right font-black text-sm">Kz {sale.total_amount.toLocaleString()}</td>
+                  <td className="px-6 py-4 text-right font-black text-sm">Kz {(sale.total_amount || 0).toLocaleString()}</td>
                   <td className="px-6 py-4 text-right">
                     <button 
                       onClick={() => openInvoice(sale)}
@@ -9416,6 +9436,18 @@ const SellerHistory = ({ user }: { user: User }) => {
 };
 
 const SellerDashboard = ({ user }: { user: User }) => {
+  if (!hasPermission(user, 'pos_access')) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-12rem)] text-zinc-500 space-y-4 p-8 text-center">
+        <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center text-rose-500 mb-4">
+          <ShieldAlert size={40} />
+        </div>
+        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
+        <p className="max-w-md">Você não tem permissão para aceder ao Painel de Vendas. Por favor, contacte o administrador para solicitar acesso.</p>
+      </div>
+    );
+  }
+
   const [stats, setStats] = useState({ today: 0, last7Days: 0 });
   const [hasActiveSession, setHasActiveSession] = useState<boolean | null>(null);
 
@@ -9443,9 +9475,16 @@ const SellerDashboard = ({ user }: { user: User }) => {
             <ShieldAlert size={20} />
             <p className="text-sm font-bold">O caixa está fechado. Abra o caixa para poder realizar vendas.</p>
           </div>
-          <Link to="/seller/close" className="bg-rose-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-rose-700 transition-all">
-            Abrir Caixa
-          </Link>
+          {hasPermission(user, 'pos_open_cashier') ? (
+            <button 
+              onClick={() => window.location.hash = '#/seller/close'}
+              className="px-4 py-1.5 bg-rose-600 text-white rounded-lg text-xs font-bold hover:bg-rose-700 transition-all active:scale-95"
+            >
+              Abrir Caixa
+            </button>
+          ) : (
+            <span className="text-xs font-bold bg-rose-100 px-3 py-1 rounded-lg">Aguarde Supervisor</span>
+          )}
         </div>
       )}
       <div className="flex items-center justify-between">
@@ -9468,7 +9507,7 @@ const SellerDashboard = ({ user }: { user: User }) => {
             <span className="text-xs font-bold bg-white/20 px-2 py-1 rounded-full uppercase tracking-wider">Hoje</span>
           </div>
           <p className="text-orange-100 text-sm font-medium">Vendas Realizadas</p>
-          <h3 className="text-4xl font-black mt-1">Kz {stats.today.toLocaleString()}</h3>
+          <h3 className="text-4xl font-black mt-1">Kz {(stats.today || 0).toLocaleString()}</h3>
         </Card>
 
         <Card className="p-8 border-zinc-100 shadow-sm rounded-[2rem] bg-zinc-900 text-white border-none">
@@ -9479,7 +9518,7 @@ const SellerDashboard = ({ user }: { user: User }) => {
             <span className="text-xs font-bold bg-white/10 px-2 py-1 rounded-full uppercase tracking-wider">7 Dias</span>
           </div>
           <p className="text-zinc-400 text-sm font-medium">Total da Semana</p>
-          <h3 className="text-4xl font-black mt-1">Kz {stats.last7Days.toLocaleString()}</h3>
+          <h3 className="text-4xl font-black mt-1">Kz {(stats.last7Days || 0).toLocaleString()}</h3>
         </Card>
       </div>
 
@@ -9528,6 +9567,10 @@ const SellerCashMovements = ({ user }: { user: User }) => {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!hasPermission(user, 'pos_withdraw')) {
+      alert('Você não tem permissão para registar movimentos de caixa.');
+      return;
+    }
     if (hasActiveSession === false) {
       alert('O caixa deve estar aberto para registar movimentos.');
       return;
@@ -9662,7 +9705,7 @@ const SellerCashMovements = ({ user }: { user: User }) => {
                         "px-6 py-4 text-sm font-black text-right",
                         m.type === 'in' ? "text-emerald-600" : "text-rose-600"
                       )}>
-                        {m.type === 'in' ? '+' : '-'} Kz {m.amount.toLocaleString()}
+                        {m.type === 'in' ? '+' : '-'} Kz {(m.amount || 0).toLocaleString()}
                       </td>
                     </tr>
                   ))
@@ -9676,7 +9719,7 @@ const SellerCashMovements = ({ user }: { user: User }) => {
   );
 };
 
-const SellerCloseCashier = ({ user }: { user: User }) => {
+const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void }) => {
   const [session, setSession] = useState<any>(null);
   const [physicalAmount, setPhysicalAmount] = useState('');
   const [openingAmount, setOpeningAmount] = useState('');
@@ -9689,10 +9732,13 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
     const storeId = user.store_id || 1;
     const registerId = selectedRegisterId || user.cash_register_id;
     
-    let url = `/api/seller/active-session/${storeId}`;
-    if (registerId) {
-      url += `?cash_register_id=${registerId}`;
+    if (!registerId) {
+      setSession(null);
+      setLoading(false);
+      return;
     }
+
+    let url = `/api/seller/active-session/${storeId}?cash_register_id=${registerId}`;
 
     fetch(url)
       .then(res => res.json())
@@ -9715,12 +9761,29 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
     fetchRegisters();
   }, [user.store_id, selectedRegisterId]);
 
-  const handleOpenSession = async (e: FormEvent) => {
-    e.preventDefault();
-    const storeId = user.store_id || 1;
-    const registerId = selectedRegisterId || user.cash_register_id;
+  const handleSelectRegister = async (registerId: number) => {
+    const res = await fetch('/api/seller/select-register', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: user.id, cash_register_id: registerId })
+    });
+    if (res.ok) {
+      onUpdate({ ...user, cash_register_id: registerId });
+      setSelectedRegisterId(registerId.toString());
+    }
+  };
 
-    if (!registerId) {
+  const handleOpenSession = async (e: FormEvent, registerId?: number, amount?: string) => {
+    e.preventDefault();
+    if (!hasPermission(user, 'pos_open_cashier')) {
+      alert('Você não tem permissão para abrir o caixa.');
+      return;
+    }
+    const storeId = user.store_id || 1;
+    const finalRegisterId = registerId || Number(selectedRegisterId) || user.cash_register_id;
+    const finalAmount = amount || openingAmount;
+
+    if (!finalRegisterId) {
       alert('Por favor, selecione um caixa.');
       return;
     }
@@ -9731,13 +9794,13 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
       body: JSON.stringify({
         store_id: storeId,
         seller_id: user.id,
-        cash_register_id: Number(registerId),
-        opening_amount: parseFloat(openingAmount)
+        cash_register_id: finalRegisterId,
+        opening_amount: parseFloat(finalAmount)
       })
     });
     if (res.ok) {
       setOpeningAmount('');
-      fetchSession();
+      handleSelectRegister(finalRegisterId);
     } else {
       const data = await res.json();
       alert(data.error || 'Erro ao abrir caixa.');
@@ -9746,18 +9809,24 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
 
   const handleCloseSession = async () => {
     if (!session) return;
+    if (!hasPermission(user, 'pos_close_cashier')) {
+      alert('Você não tem permissão para fechar o caixa.');
+      return;
+    }
     const res = await fetch('/api/seller/close-session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: session.id,
         physical_amount: parseFloat(physicalAmount),
-        closing_amount: session.totals.expected
+        closing_amount: session.totals.expected,
+        seller_id: user.id
       })
     });
     if (res.ok) {
       setPhysicalAmount('');
       fetchSession();
+      fetchRegisters();
       alert('Caixa fechado com sucesso!');
     }
   };
@@ -9766,48 +9835,70 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
 
   if (!session) {
     return (
-      <div className="max-w-md mx-auto mt-12">
-        <Card className="p-8 border-zinc-100 shadow-2xl rounded-[2.5rem] text-center">
-          <div className="w-20 h-20 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Wallet size={40} />
+      <div className="max-w-4xl mx-auto space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-black tracking-tight">Seleccionar Caixa</h2>
+            <p className="text-zinc-500">Escolha um caixa aberto ou abra um novo se tiver permissão.</p>
           </div>
-          <h2 className="text-2xl font-black mb-2">Abrir Caixa</h2>
-          <p className="text-zinc-500 mb-8">Informe o valor inicial para começar as operações do dia.</p>
-          
-          <form onSubmit={handleOpenSession} className="space-y-6">
-            <div className="space-y-1 text-left">
-              <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Seleccionar Caixa</label>
-              <select
-                required
-                value={selectedRegisterId}
-                onChange={e => setSelectedRegisterId(e.target.value)}
-                className="w-full px-6 py-4 bg-zinc-50 border border-zinc-100 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 font-bold"
-              >
-                <option value="">Seleccione o Caixa</option>
-                {cashRegisters.map(register => (
-                  <option key={register.id} value={register.id}>{register.name} ({register.code})</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1 text-left">
-              <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Valor de Abertura (Kz)</label>
-              <input
-                type="number"
-                required
-                value={openingAmount}
-                onChange={e => setOpeningAmount(e.target.value)}
-                placeholder="0.00"
-                className="w-full px-6 py-4 bg-zinc-50 border border-zinc-100 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 font-black text-xl"
-              />
-            </div>
-            <button
-              type="submit"
-              className="w-full bg-orange-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all active:scale-95"
-            >
-              Iniciar Sessão
-            </button>
-          </form>
-        </Card>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {cashRegisters.map(register => (
+            <Card key={register.id} className="p-6 border-zinc-100 shadow-sm rounded-3xl hover:border-orange-200 transition-all group">
+              <div className="flex items-start justify-between mb-4">
+                <div className={cn(
+                  "w-12 h-12 rounded-2xl flex items-center justify-center",
+                  register.session_status === 'open' ? "bg-emerald-100 text-emerald-600" : "bg-zinc-100 text-zinc-400"
+                )}>
+                  <Wallet size={24} />
+                </div>
+                <div className={cn(
+                  "px-3 py-1 rounded-full text-[10px] font-black uppercase",
+                  register.session_status === 'open' ? "bg-emerald-100 text-emerald-600" : "bg-zinc-100 text-zinc-400"
+                )}>
+                  {register.session_status === 'open' ? 'Aberto' : 'Fechado'}
+                </div>
+              </div>
+              
+              <h3 className="font-bold text-lg mb-1">{register.name}</h3>
+              <p className="text-xs text-zinc-400 mb-6">Código: {register.code}</p>
+
+              {register.session_status === 'open' ? (
+                <button
+                  onClick={() => handleSelectRegister(register.id)}
+                  className="w-full bg-emerald-500 text-white py-3 rounded-xl font-bold hover:bg-emerald-600 transition-all active:scale-95"
+                >
+                  Entrar no Caixa
+                </button>
+              ) : hasPermission(user, 'pos_open_cashier') ? (
+                <div className="space-y-3">
+                  <input
+                    type="number"
+                    placeholder="Valor de Abertura"
+                    onChange={e => {
+                      setSelectedRegisterId(register.id.toString());
+                      setOpeningAmount(e.target.value);
+                    }}
+                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-sm"
+                  />
+                  <button
+                    onClick={(e) => handleOpenSession(e, register.id, openingAmount)}
+                    className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-all active:scale-95"
+                  >
+                    Abrir Caixa
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl text-center">
+                  <Lock size={20} className="mx-auto mb-2 text-rose-400" />
+                  <p className="text-xs font-bold text-rose-600 uppercase tracking-wider">Caixa Fechado</p>
+                  <p className="text-[10px] text-rose-400 mt-1">Aguarde a abertura por um supervisor.</p>
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
       </div>
     );
   }
@@ -9829,10 +9920,10 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {[
-            { label: 'Abertura', val: session.opening_amount, color: 'text-zinc-600' },
-            { label: 'Vendas', val: session.totals.sales, color: 'text-emerald-600' },
-            { label: 'Entradas', val: session.totals.in, color: 'text-emerald-600' },
-            { label: 'Saídas', val: session.totals.out, color: 'text-rose-600' },
+            { label: 'Abertura', val: session.opening_amount || 0, color: 'text-zinc-600' },
+            { label: 'Vendas', val: session.totals.sales || 0, color: 'text-emerald-600' },
+            { label: 'Entradas', val: session.totals.in || 0, color: 'text-emerald-600' },
+            { label: 'Saídas', val: session.totals.out || 0, color: 'text-rose-600' },
           ].map((item) => (
             <Card key={item.label} className="p-4 border-zinc-100 shadow-sm rounded-2xl">
             <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">{item.label}</p>
@@ -9847,7 +9938,7 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
           <div className="space-y-4">
             <div className="flex justify-between items-center pb-4 border-b border-zinc-200">
               <span className="text-zinc-500 font-medium">Saldo Esperado</span>
-              <span className="text-2xl font-black text-zinc-900">Kz {session.totals.expected.toLocaleString()}</span>
+              <span className="text-2xl font-black text-zinc-900">Kz {(session.totals.expected || 0).toLocaleString()}</span>
             </div>
             
             <div className="space-y-2 pt-4">
@@ -9867,7 +9958,7 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
                 diff === 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
               )}>
                 <span className="text-sm font-bold">{diff === 0 ? 'Caixa Conferido' : 'Diferença de Caixa'}</span>
-                <span className="font-black">Kz {diff.toLocaleString()}</span>
+                <span className="font-black">Kz {(diff || 0).toLocaleString()}</span>
               </div>
             )}
           </div>
@@ -9881,13 +9972,21 @@ const SellerCloseCashier = ({ user }: { user: User }) => {
             <h4 className="font-bold text-xl mb-2">Encerrar Operações</h4>
             <p className="text-sm text-zinc-500">Ao fechar o caixa, você não poderá realizar novas vendas nesta sessão.</p>
           </div>
-          <button
-            onClick={handleCloseSession}
-            disabled={!physicalAmount}
-            className="w-full bg-zinc-900 text-white py-5 rounded-2xl font-black text-lg hover:bg-black transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed"
-          >
-            Fechar Caixa Agora
-          </button>
+          {hasPermission(user, 'pos_close_cashier') ? (
+            <button
+              onClick={handleCloseSession}
+              disabled={!physicalAmount}
+              className="w-full bg-zinc-900 text-white py-5 rounded-2xl font-black text-lg hover:bg-black transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed"
+            >
+              Fechar Caixa Agora
+            </button>
+          ) : (
+            <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl text-center">
+              <Lock size={20} className="mx-auto mb-2 text-rose-400" />
+              <p className="text-xs font-bold text-rose-600 uppercase tracking-wider">Sem Permissão</p>
+              <p className="text-[10px] text-rose-400 mt-1">Apenas supervisores podem fechar o caixa.</p>
+            </div>
+          )}
         </Card>
       </div>
     </div>
@@ -10375,7 +10474,7 @@ export default function App() {
                 <Route path="/seller" element={<SellerPOS user={user} />} />
                 <Route path="/seller/dashboard" element={<SellerDashboard user={user} />} />
                 <Route path="/seller/movements" element={<SellerCashMovements user={user} />} />
-                <Route path="/seller/close" element={<SellerCloseCashier user={user} />} />
+                <Route path="/seller/close" element={<SellerCloseCashier user={user} onUpdate={setUser} />} />
                 <Route path="/seller/history" element={<SellerHistory user={user} />} />
                 <Route path="/seller/settings" element={<SellerSettings user={user} onUpdate={handleLogin} />} />
                 <Route path="*" element={<Navigate to="/seller" replace />} />

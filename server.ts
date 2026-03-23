@@ -629,6 +629,47 @@ if (userCount.count === 0) {
 // Cleanup test products once
 db.exec("DELETE FROM products WHERE store_id = 1 AND name IN ('Cuca Garrafa 33cl', 'Nocal Garrafa 33cl', 'Eka Garrafa 33cl', 'Doppel Munich', 'Booster Cider', 'Coca-Cola Lata', 'Pão Francês', 'Morango Fresco', 'Perfume Chanel N5', 'Blue Polpa 33cl', 'Arroz Tio Lucas 1kg', 'Sabonete Dove', 'Leite Nido 400g', 'Massa Esparguete', 'Vinho Pera Doce', 'Detergente Omo 1kg', 'Óleo Alimentar 1L', 'N''Gola Garrafa', '33 Export', 'Bolachas Maria')");
 
+// --- Helper Functions ---
+function hasPermission(userId: number, permissionId: string): boolean {
+  const user = db.prepare(`
+    SELECT u.role, u.custom_permissions, r.permissions as role_permissions
+    FROM users u
+    LEFT JOIN hr_roles r ON u.role_id = r.id
+    WHERE u.id = ?
+  `).get(userId) as any;
+
+  if (!user) return false;
+  
+  // Admin and Owner always have all permissions
+  if (user.role === 'admin' || user.role === 'owner') {
+    return true;
+  }
+
+  // If custom_permissions is set (not null), it overrides role permissions
+  if (user.custom_permissions !== null && user.custom_permissions !== undefined) {
+    try {
+      const customPerms = JSON.parse(user.custom_permissions);
+      if (Array.isArray(customPerms)) {
+        return customPerms.includes(permissionId);
+      }
+    } catch (e) {
+      console.error("Error parsing custom_permissions:", e);
+    }
+  }
+
+  // Fallback to role permissions
+  try {
+    const rolePerms = user.role_permissions ? JSON.parse(user.role_permissions) : [];
+    if (Array.isArray(rolePerms)) {
+      return rolePerms.includes(permissionId);
+    }
+  } catch (e) {
+    console.error("Error parsing role_permissions:", e);
+  }
+  
+  return false;
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '50mb' }));
@@ -697,19 +738,27 @@ async function startServer() {
       
       // Get effective permissions
       let effectivePermissions: string[] = [];
-      if (user.role_id) {
+      const customRaw = user.custom_permissions;
+      
+      if (customRaw !== null && customRaw !== undefined) {
+        try {
+          let custom = typeof customRaw === 'string' ? JSON.parse(customRaw) : customRaw;
+          if (typeof custom === 'string') custom = JSON.parse(custom);
+          if (Array.isArray(custom)) {
+            effectivePermissions = custom;
+          }
+        } catch (e) {}
+      } else if (user.role_id) {
         const role = db.prepare("SELECT permissions FROM hr_roles WHERE id = ?").get(user.role_id) as any;
         if (role && role.permissions) {
           try {
-            effectivePermissions = JSON.parse(role.permissions);
+            let perms = typeof role.permissions === 'string' ? JSON.parse(role.permissions) : role.permissions;
+            if (typeof perms === 'string') perms = JSON.parse(perms);
+            if (Array.isArray(perms)) {
+              effectivePermissions = perms;
+            }
           } catch (e) {}
         }
-      }
-      if (user.custom_permissions) {
-        try {
-          const custom = JSON.parse(user.custom_permissions);
-          effectivePermissions = Array.from(new Set([...effectivePermissions, ...custom]));
-        } catch (e) {}
       }
 
       res.json({ 
@@ -1310,8 +1359,19 @@ async function startServer() {
   // Owner Routes
   app.get("/api/owner/stores/:storeId/cash-registers", (req, res) => {
     const { storeId } = req.params;
-    const registers = db.prepare("SELECT * FROM cash_registers WHERE store_id = ?").all(storeId);
+    const registers = db.prepare(`
+      SELECT cr.*, 
+             (SELECT status FROM cashier_sessions WHERE cash_register_id = cr.id AND status = 'open' LIMIT 1) as session_status
+      FROM cash_registers cr 
+      WHERE cr.store_id = ?
+    `).all(storeId);
     res.json(registers);
+  });
+
+  app.put("/api/seller/select-register", (req, res) => {
+    const { user_id, cash_register_id } = req.body;
+    db.prepare("UPDATE users SET cash_register_id = ? WHERE id = ?").run(cash_register_id, user_id);
+    res.json({ success: true });
   });
 
   app.post("/api/owner/stores/:storeId/cash-registers", (req, res) => {
@@ -2516,6 +2576,10 @@ async function startServer() {
   app.post("/api/seller/cash-movements", (req, res) => {
     const { store_id, seller_id, cash_register_id, type, amount, description } = req.body;
     
+    if (!hasPermission(seller_id, 'pos_withdraw')) {
+      return res.status(403).json({ error: "Você não tem permissão para registar movimentos de caixa." });
+    }
+
     // Check for active cashier session
     let sessionQuery = "SELECT id FROM cashier_sessions WHERE store_id = ? AND status = 'open'";
     let sessionParams: any[] = [store_id];
@@ -2581,12 +2645,22 @@ async function startServer() {
 
   app.post("/api/seller/open-session", (req, res) => {
     const { store_id, seller_id, opening_amount, cash_register_id } = req.body;
+    
+    if (!hasPermission(seller_id, 'pos_open_cashier')) {
+      return res.status(403).json({ error: "Você não tem permissão para abrir o caixa." });
+    }
+
     db.prepare("INSERT INTO cashier_sessions (store_id, seller_id, opening_amount, cash_register_id) VALUES (?, ?, ?, ?)").run(store_id, seller_id, opening_amount, cash_register_id);
     res.json({ success: true });
   });
 
   app.post("/api/seller/close-session", (req, res) => {
-    const { session_id, physical_amount, closing_amount } = req.body;
+    const { session_id, physical_amount, closing_amount, seller_id } = req.body;
+
+    if (!hasPermission(seller_id, 'pos_close_cashier')) {
+      return res.status(403).json({ error: "Você não tem permissão para fechar o caixa." });
+    }
+
     db.prepare(`
       UPDATE cashier_sessions 
       SET physical_amount = ?, closing_amount = ?, closing_time = CURRENT_TIMESTAMP, status = 'closed' 

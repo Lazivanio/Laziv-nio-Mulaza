@@ -8,6 +8,7 @@ export interface CashRegister {
   default_initial_balance: number;
   max_limit: number;
   created_at: string;
+  session_status?: 'open' | 'closed';
 }
 
 export interface CashSession {

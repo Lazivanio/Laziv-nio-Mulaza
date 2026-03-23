@@ -476,6 +476,9 @@ export const OwnerRH = ({ user }: { user: User }) => {
                               <button 
                                 onClick={() => {
                                   setEditingEmployee(emp);
+                                  const role = roles.find(r => r.id.toString() === emp.role_id?.toString());
+                                  const rolePerms = role ? (typeof role.permissions === 'string' ? JSON.parse(role.permissions) : role.permissions) : [];
+                                  
                                   setEmployeeForm({
                                     name: emp.name,
                                     email: emp.email,
@@ -484,7 +487,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                     role: emp.role,
                                     store_id: emp.store_id?.toString() || '',
                                     role_id: emp.role_id?.toString() || '',
-                                    custom_permissions: emp.custom_permissions ? JSON.parse(emp.custom_permissions) : [],
+                                    custom_permissions: emp.custom_permissions ? JSON.parse(emp.custom_permissions) : rolePerms,
                                     base_salary: (emp as any).base_salary?.toString() || '',
                                     status: emp.status || 'active'
                                   });
@@ -940,7 +943,16 @@ export const OwnerRH = ({ user }: { user: User }) => {
               <select 
                 required
                 value={employeeForm.role_id}
-                onChange={e => setEmployeeForm({...employeeForm, role_id: e.target.value})}
+                onChange={e => {
+                  const newRoleId = e.target.value;
+                  const role = roles.find(r => r.id.toString() === newRoleId);
+                  const rolePerms = role ? (typeof role.permissions === 'string' ? JSON.parse(role.permissions) : role.permissions) : [];
+                  setEmployeeForm({
+                    ...employeeForm, 
+                    role_id: newRoleId,
+                    custom_permissions: rolePerms // Reset permissions to role defaults when role changes
+                  });
+                }}
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
               >
                 <option value="">Selecionar Cargo</option>
@@ -961,8 +973,23 @@ export const OwnerRH = ({ user }: { user: User }) => {
 
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Permissões Específicas</label>
-              <span className="text-[10px] text-zinc-400 italic">Estas permissões sobrepõem as do cargo</span>
+              <div>
+                <label className="text-xs font-bold text-zinc-500 uppercase">Permissões Específicas</label>
+                <p className="text-[10px] text-zinc-400 italic">Estas permissões definem o acesso total do funcionário</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const role = roles.find(r => r.id.toString() === employeeForm.role_id);
+                  if (role) {
+                    const rolePerms = typeof role.permissions === 'string' ? JSON.parse(role.permissions) : role.permissions;
+                    setEmployeeForm({ ...employeeForm, custom_permissions: rolePerms });
+                  }
+                }}
+                className="text-[10px] font-bold text-orange-600 hover:text-orange-700 underline"
+              >
+                Resetar para Padrão do Cargo
+              </button>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {AVAILABLE_PERMISSIONS.map(perm => (
