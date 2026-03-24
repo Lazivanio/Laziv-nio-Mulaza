@@ -1361,7 +1361,8 @@ async function startServer() {
     const { storeId } = req.params;
     const registers = db.prepare(`
       SELECT cr.*, 
-             (SELECT status FROM cashier_sessions WHERE cash_register_id = cr.id AND status = 'open' LIMIT 1) as session_status
+             (SELECT status FROM cashier_sessions WHERE cash_register_id = cr.id AND status = 'open' LIMIT 1) as session_status,
+             (SELECT seller_id FROM cashier_sessions WHERE cash_register_id = cr.id AND status = 'open' LIMIT 1) as seller_id
       FROM cash_registers cr 
       WHERE cr.store_id = ?
     `).all(storeId);
@@ -2648,6 +2649,18 @@ async function startServer() {
     
     if (!hasPermission(seller_id, 'pos_open_cashier')) {
       return res.status(403).json({ error: "Você não tem permissão para abrir o caixa." });
+    }
+
+    // Check if seller already has an open session
+    const existingSellerSession = db.prepare("SELECT id FROM cashier_sessions WHERE seller_id = ? AND status = 'open'").get(seller_id);
+    if (existingSellerSession) {
+      return res.status(400).json({ error: "Você já possui uma sessão de caixa aberta. Feche-a antes de abrir outra." });
+    }
+
+    // Check if register already has an open session
+    const existingRegisterSession = db.prepare("SELECT id FROM cashier_sessions WHERE cash_register_id = ? AND status = 'open'").get(cash_register_id);
+    if (existingRegisterSession) {
+      return res.status(400).json({ error: "Este caixa já possui uma sessão aberta por outro funcionário." });
     }
 
     db.prepare("INSERT INTO cashier_sessions (store_id, seller_id, opening_amount, cash_register_id) VALUES (?, ?, ?, ?)").run(store_id, seller_id, opening_amount, cash_register_id);

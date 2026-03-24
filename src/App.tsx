@@ -79,6 +79,7 @@ import {
   Zap,
   AlertCircle,
   CheckCircle2,
+  CheckCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -389,9 +390,9 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             {user.role === 'seller' && (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Painel e Insights" to="/seller/dashboard" onClick={closeSidebar} />
-                <SidebarItem icon={ShoppingCart} label="Vendas (PDV)" to="/seller" onClick={closeSidebar} />
-                <SidebarItem icon={Wallet} label="Movimentos" to="/seller/movements" onClick={closeSidebar} />
-                <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />
+                {hasPermission(user, 'pos_access') && <SidebarItem icon={ShoppingCart} label="Vendas (PDV)" to="/seller" onClick={closeSidebar} />}
+                {hasPermission(user, 'pos_withdraw') && <SidebarItem icon={Wallet} label="Movimentos" to="/seller/movements" onClick={closeSidebar} />}
+                {hasPermission(user, 'pos_close_cashier') && <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />}
                 <SidebarItem icon={History} label="Histórico" to="/seller/history" onClick={closeSidebar} />
                 <SidebarItem icon={Settings} label="Configurações" to="/seller/settings" onClick={closeSidebar} />
               </>
@@ -8400,7 +8401,7 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
   );
 };
 
-const SellerPOS = ({ user }: { user: User }) => {
+const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void }) => {
   if (!hasPermission(user, 'pos_access')) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-zinc-500 space-y-4 p-8 text-center">
@@ -8441,6 +8442,36 @@ const SellerPOS = ({ user }: { user: User }) => {
   const [cashReceived, setCashReceived] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [hasActiveSession, setHasActiveSession] = useState<boolean | null>(null);
+  const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
+  const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
+
+  const checkActiveSession = async () => {
+    if (!user.cash_register_id) {
+      setHasActiveSession(false);
+      return false;
+    }
+
+    const storeId = user.store_id || 1;
+    let url = `/api/seller/active-session/${storeId}?cash_register_id=${user.cash_register_id}`;
+
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      setHasActiveSession(!!data);
+      return !!data;
+    } catch (error) {
+      console.error("Error checking session:", error);
+      setHasActiveSession(false);
+      return false;
+    }
+  };
+
+  const fetchRegisters = () => {
+    const storeId = user.store_id || 1;
+    fetch(`/api/owner/stores/${storeId}/cash-registers`)
+      .then(res => res.json())
+      .then(setCashRegisters);
+  };
 
   useEffect(() => {
     const storeId = user.store_id || 1;
@@ -8454,18 +8485,66 @@ const SellerPOS = ({ user }: { user: User }) => {
       }
     });
 
-    // Check for active session
-    let url = `/api/seller/active-session/${storeId}`;
-    if (user.cash_register_id) {
-      url += `?cash_register_id=${user.cash_register_id}`;
-    }
-
-    fetch(url)
-      .then(res => res.json())
-      .then(data => setHasActiveSession(!!data));
+    checkActiveSession();
+    fetchRegisters();
   }, [user.store_id, user.cash_register_id]);
 
+  const handleSelectRegister = async (registerId: number) => {
+    const res = await fetch('/api/seller/select-register', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: user.id, cash_register_id: registerId })
+    });
+    if (res.ok) {
+      onUpdate({ ...user, cash_register_id: registerId });
+      // The useEffect will trigger checkActiveSession
+    }
+  };
+
+  const handleOpenSession = async (e: FormEvent, registerId: number, amount: string) => {
+    e.preventDefault();
+    if (!hasPermission(user, 'pos_open_cashier')) {
+      alert('Você não tem permissão para abrir o caixa.');
+      return;
+    }
+
+    if (!amount || isNaN(parseFloat(amount))) {
+      alert('Por favor, insira um valor de abertura válido.');
+      return;
+    }
+
+    const storeId = user.store_id || 1;
+    
+    try {
+      const res = await fetch('/api/seller/open-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          store_id: storeId,
+          seller_id: user.id,
+          cash_register_id: registerId,
+          opening_amount: parseFloat(amount)
+        })
+      });
+
+      if (res.ok) {
+        setOpeningAmounts(prev => ({ ...prev, [registerId]: '' }));
+        await handleSelectRegister(registerId);
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Erro ao abrir caixa.');
+      }
+    } catch (error) {
+      console.error("Error opening session:", error);
+      alert('Erro de conexão ao abrir caixa.');
+    }
+  };
+
   const addToCart = (item: Product | Service, type: 'product' | 'service' = 'product') => {
+    if (!hasPermission(user, 'pos_sell')) {
+      alert('Você não tem permissão para realizar vendas.');
+      return;
+    }
     setCart(prev => {
       const existing = prev.find(i => i.item.id === item.id && i.type === type);
       if (existing) {
@@ -8489,6 +8568,110 @@ const SellerPOS = ({ user }: { user: User }) => {
     setCart(prev => prev.filter(i => !(i.item.id === id && i.type === type)));
   };
 
+  if (hasActiveSession === false) {
+    const userHasOpenSession = cashRegisters.some(r => r.session_status === 'open' && r.seller_id === user.id);
+
+    return (
+      <div className="flex-1 flex flex-col p-8 space-y-8 max-w-6xl mx-auto">
+        <div className="text-center space-y-2">
+          <div className="w-20 h-20 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Wallet size={40} />
+          </div>
+          <h2 className="text-3xl font-black text-zinc-900">Ativar Caixa para Trabalhar</h2>
+          <p className="text-zinc-500 max-w-lg mx-auto">
+            Para começar a vender, você precisa de selecionar um caixa aberto ou abrir um novo se tiver permissão.
+            {userHasOpenSession && (
+              <span className="block mt-2 text-rose-500 font-bold">
+                Atenção: Você já possui um caixa aberto. Feche-o antes de abrir outro.
+              </span>
+            )}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {cashRegisters.map(register => {
+            const isOpenedByMe = register.session_status === 'open' && register.seller_id === user.id;
+            const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id;
+
+            return (
+              <Card key={register.id} className="p-8 border-zinc-100 shadow-sm rounded-[2.5rem] hover:border-orange-200 transition-all group relative overflow-hidden">
+                <div className="flex items-start justify-between mb-6">
+                  <div className={cn(
+                    "w-14 h-14 rounded-2xl flex items-center justify-center",
+                    register.session_status === 'open' ? "bg-emerald-100 text-emerald-600" : "bg-zinc-100 text-zinc-400"
+                  )}>
+                    <Monitor size={28} />
+                  </div>
+                  <div className={cn(
+                    "px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider",
+                    register.session_status === 'open' ? "bg-emerald-100 text-emerald-600" : "bg-zinc-100 text-zinc-400"
+                  )}>
+                    {register.session_status === 'open' ? 'Aberto' : 'Fechado'}
+                  </div>
+                </div>
+                
+                <h3 className="font-black text-xl mb-1">{register.name}</h3>
+                <p className="text-sm text-zinc-400 mb-8">Código: {register.code}</p>
+
+                {register.session_status === 'open' ? (
+                  <div className="space-y-3">
+                    {isOpenedByOthers && (
+                      <div className="bg-zinc-50 p-3 rounded-xl text-center mb-2">
+                        <p className="text-[10px] uppercase font-bold text-zinc-400">Ocupado por outro funcionário</p>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => handleSelectRegister(register.id)}
+                      className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black text-lg hover:bg-emerald-600 transition-all active:scale-95 shadow-lg shadow-emerald-100 flex items-center justify-center gap-2"
+                    >
+                      <CheckCircle size={20} />
+                      {isOpenedByMe ? 'Continuar no Meu Caixa' : 'Ativar para Trabalhar'}
+                    </button>
+                  </div>
+                ) : hasPermission(user, 'pos_open_cashier') ? (
+                  <div className="space-y-4">
+                    {userHasOpenSession ? (
+                      <div className="bg-rose-50 border border-rose-100 p-6 rounded-3xl text-center">
+                        <Lock size={24} className="mx-auto mb-3 text-rose-400" />
+                        <p className="text-sm font-black text-rose-600 uppercase tracking-widest mb-1">Bloqueado</p>
+                        <p className="text-xs text-rose-400">Você já tem um caixa aberto.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="relative">
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 font-bold">Kz</span>
+                          <input
+                            type="number"
+                            placeholder="Valor de Abertura"
+                            value={openingAmounts[register.id] || ''}
+                            onChange={e => setOpeningAmounts(prev => ({ ...prev, [register.id]: e.target.value }))}
+                            className="w-full pl-12 pr-4 py-4 bg-zinc-50 border border-zinc-100 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-lg"
+                          />
+                        </div>
+                        <button
+                          onClick={(e) => handleOpenSession(e, register.id, openingAmounts[register.id] || '')}
+                          className="w-full bg-orange-500 text-white py-4 rounded-2xl font-black text-lg hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100"
+                        >
+                          Abrir e Ativar
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-rose-50 border border-rose-100 p-6 rounded-3xl text-center">
+                    <Lock size={24} className="mx-auto mb-3 text-rose-400" />
+                    <p className="text-sm font-black text-rose-600 uppercase tracking-widest mb-1">Caixa Fechado</p>
+                    <p className="text-xs text-rose-400">Aguarde a abertura por um supervisor.</p>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   const subtotal = cart.reduce((acc, i) => {
     const price = i.type === 'product' 
       ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
@@ -8502,6 +8685,10 @@ const SellerPOS = ({ user }: { user: User }) => {
   const total = Math.round((taxableAmount + tax) * 100) / 100;
 
   const handleCheckout = async () => {
+    if (!hasPermission(user, 'pos_sell')) {
+      alert('Você não tem permissão para realizar vendas.');
+      return;
+    }
     if (cart.length === 0) return;
     
     setIsProcessing(true);
@@ -8531,6 +8718,10 @@ const SellerPOS = ({ user }: { user: User }) => {
 
   const handleCreateProforma = async (e: FormEvent) => {
     e.preventDefault();
+    if (!hasPermission(user, 'pos_sell')) {
+      alert('Você não tem permissão para gerar proformas.');
+      return;
+    }
     if (cart.length === 0 || !storeInfo) return;
 
     try {
@@ -8973,7 +9164,7 @@ const SellerPOS = ({ user }: { user: User }) => {
             <div className="flex gap-2">
               <button 
                 onClick={() => setIsProformaModalOpen(true)}
-                disabled={cart.length === 0}
+                disabled={cart.length === 0 || !hasPermission(user, 'pos_sell')}
                 className="flex-1 bg-zinc-100 text-zinc-600 py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 hover:bg-zinc-200 disabled:opacity-50 transition-all active:scale-[0.98]"
               >
                 <FileText size={18} />
@@ -8981,7 +9172,7 @@ const SellerPOS = ({ user }: { user: User }) => {
               </button>
               <button 
                 onClick={handleCheckout}
-                disabled={cart.length === 0 || isProcessing || hasActiveSession === false}
+                disabled={cart.length === 0 || isProcessing || hasActiveSession === false || !hasPermission(user, 'pos_sell')}
                 className="flex-[2] bg-orange-500 text-white py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 hover:bg-orange-600 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed transition-all shadow-lg shadow-orange-500/20 active:scale-[0.98]"
               >
                 {isProcessing ? 'Processando...' : 'Finalizar Venda'}
@@ -9499,27 +9690,43 @@ const SellerDashboard = ({ user }: { user: User }) => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card className="p-8 border-zinc-100 shadow-sm rounded-[2rem] bg-gradient-to-br from-orange-500 to-orange-600 text-white border-none">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-white/20 rounded-2xl">
-              <TrendingUp size={24} />
-            </div>
-            <span className="text-xs font-bold bg-white/20 px-2 py-1 rounded-full uppercase tracking-wider">Hoje</span>
-          </div>
-          <p className="text-orange-100 text-sm font-medium">Vendas Realizadas</p>
-          <h3 className="text-4xl font-black mt-1">Kz {(stats.today || 0).toLocaleString()}</h3>
-        </Card>
+        {hasPermission(user, 'pos_sell') ? (
+          <>
+            <Card className="p-8 border-zinc-100 shadow-sm rounded-[2rem] bg-gradient-to-br from-orange-500 to-orange-600 text-white border-none">
+              <div className="flex items-center justify-between mb-4">
+                <div className="p-3 bg-white/20 rounded-2xl">
+                  <TrendingUp size={24} />
+                </div>
+                <span className="text-xs font-bold bg-white/20 px-2 py-1 rounded-full uppercase tracking-wider">Hoje</span>
+              </div>
+              <p className="text-orange-100 text-sm font-medium">Vendas Realizadas</p>
+              <h3 className="text-4xl font-black mt-1">Kz {(stats.today || 0).toLocaleString()}</h3>
+            </Card>
 
-        <Card className="p-8 border-zinc-100 shadow-sm rounded-[2rem] bg-zinc-900 text-white border-none">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-white/10 rounded-2xl">
-              <Calendar size={24} />
+            <Card className="p-8 border-zinc-100 shadow-sm rounded-[2rem] bg-zinc-900 text-white border-none">
+              <div className="flex items-center justify-between mb-4">
+                <div className="p-3 bg-white/10 rounded-2xl">
+                  <Calendar size={24} />
+                </div>
+                <span className="text-xs font-bold bg-white/10 px-2 py-1 rounded-full uppercase tracking-wider">7 Dias</span>
+              </div>
+              <p className="text-zinc-400 text-sm font-medium">Total da Semana</p>
+              <h3 className="text-4xl font-black mt-1">Kz {(stats.last7Days || 0).toLocaleString()}</h3>
+            </Card>
+          </>
+        ) : (
+          <Card className="p-8 border-zinc-100 shadow-sm rounded-[2rem] bg-zinc-50 border-dashed border-2 flex flex-col items-center justify-center text-center space-y-4 md:col-span-2">
+            <div className="w-16 h-16 bg-zinc-100 text-zinc-400 rounded-full flex items-center justify-center">
+              <ShieldAlert size={32} />
             </div>
-            <span className="text-xs font-bold bg-white/10 px-2 py-1 rounded-full uppercase tracking-wider">7 Dias</span>
-          </div>
-          <p className="text-zinc-400 text-sm font-medium">Total da Semana</p>
-          <h3 className="text-4xl font-black mt-1">Kz {(stats.last7Days || 0).toLocaleString()}</h3>
-        </Card>
+            <div>
+              <h3 className="text-lg font-black text-zinc-900">Módulo de Vendas Restrito</h3>
+              <p className="text-sm text-zinc-500 max-w-sm mx-auto mt-1">
+                Você tem permissão para operações de caixa, mas o acesso aos dados de vendas está restrito ao seu perfil.
+              </p>
+            </div>
+          </Card>
+        )}
       </div>
 
       <Card className="p-8 border-zinc-100 shadow-sm rounded-[2rem]">
@@ -9545,6 +9752,19 @@ const SellerDashboard = ({ user }: { user: User }) => {
 };
 
 const SellerCashMovements = ({ user }: { user: User }) => {
+  if (!hasPermission(user, 'pos_withdraw')) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mb-4">
+          <Lock size={40} />
+        </div>
+        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
+        <p className="text-zinc-500 max-w-md mx-auto mt-2">
+          Você não tem permissão para acessar os movimentos de caixa.
+        </p>
+      </div>
+    );
+  }
   const [movements, setMovements] = useState<any[]>([]);
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
@@ -9720,14 +9940,27 @@ const SellerCashMovements = ({ user }: { user: User }) => {
 };
 
 const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void }) => {
+  if (!hasPermission(user, 'pos_close_cashier')) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mb-4">
+          <Lock size={40} />
+        </div>
+        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
+        <p className="text-zinc-500 max-w-md mx-auto mt-2">
+          Você não tem permissão para fechar o caixa.
+        </p>
+      </div>
+    );
+  }
   const [session, setSession] = useState<any>(null);
   const [physicalAmount, setPhysicalAmount] = useState('');
-  const [openingAmount, setOpeningAmount] = useState('');
+  const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
   const [selectedRegisterId, setSelectedRegisterId] = useState<string>(user.cash_register_id?.toString() || '');
 
-  const fetchSession = () => {
+  const fetchSession = async () => {
     setLoading(true);
     const storeId = user.store_id || 1;
     const registerId = selectedRegisterId || user.cash_register_id;
@@ -9735,18 +9968,22 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
     if (!registerId) {
       setSession(null);
       setLoading(false);
-      return;
+      return null;
     }
 
     let url = `/api/seller/active-session/${storeId}?cash_register_id=${registerId}`;
 
-    fetch(url)
-      .then(res => res.json())
-      .then(data => {
-        setSession(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      setSession(data);
+      setLoading(false);
+      return data;
+    } catch (error) {
+      console.error("Error fetching session:", error);
+      setLoading(false);
+      return null;
+    }
   };
 
   const fetchRegisters = () => {
@@ -9773,37 +10010,45 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
     }
   };
 
-  const handleOpenSession = async (e: FormEvent, registerId?: number, amount?: string) => {
+  const handleOpenSession = async (e: FormEvent, registerId: number, amount: string) => {
     e.preventDefault();
     if (!hasPermission(user, 'pos_open_cashier')) {
       alert('Você não tem permissão para abrir o caixa.');
       return;
     }
-    const storeId = user.store_id || 1;
-    const finalRegisterId = registerId || Number(selectedRegisterId) || user.cash_register_id;
-    const finalAmount = amount || openingAmount;
 
-    if (!finalRegisterId) {
-      alert('Por favor, selecione um caixa.');
+    if (!amount || isNaN(parseFloat(amount))) {
+      alert('Por favor, insira um valor de abertura válido.');
       return;
     }
 
-    const res = await fetch('/api/seller/open-session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        store_id: storeId,
-        seller_id: user.id,
-        cash_register_id: finalRegisterId,
-        opening_amount: parseFloat(finalAmount)
-      })
-    });
-    if (res.ok) {
-      setOpeningAmount('');
-      handleSelectRegister(finalRegisterId);
-    } else {
-      const data = await res.json();
-      alert(data.error || 'Erro ao abrir caixa.');
+    const storeId = user.store_id || 1;
+    
+    try {
+      const res = await fetch('/api/seller/open-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          store_id: storeId,
+          seller_id: user.id,
+          cash_register_id: registerId,
+          opening_amount: parseFloat(amount)
+        })
+      });
+
+      if (res.ok) {
+        setOpeningAmounts(prev => ({ ...prev, [registerId]: '' }));
+        // First select the register to update global state
+        await handleSelectRegister(registerId);
+        // Then explicitly fetch the session to update local state immediately
+        await fetchSession();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Erro ao abrir caixa.');
+      }
+    } catch (error) {
+      console.error("Error opening session:", error);
+      alert('Erro de conexão ao abrir caixa.');
     }
   };
 
@@ -9813,91 +10058,129 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
       alert('Você não tem permissão para fechar o caixa.');
       return;
     }
-    const res = await fetch('/api/seller/close-session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: session.id,
-        physical_amount: parseFloat(physicalAmount),
-        closing_amount: session.totals.expected,
-        seller_id: user.id
-      })
-    });
-    if (res.ok) {
-      setPhysicalAmount('');
-      fetchSession();
-      fetchRegisters();
-      alert('Caixa fechado com sucesso!');
+
+    try {
+      const res = await fetch('/api/seller/close-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          physical_amount: parseFloat(physicalAmount),
+          closing_amount: session.totals.expected,
+          seller_id: user.id
+        })
+      });
+
+      if (res.ok) {
+        setPhysicalAmount('');
+        await fetchSession();
+        await fetchRegisters();
+        alert('Caixa fechado com sucesso!');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Erro ao fechar caixa.');
+      }
+    } catch (error) {
+      console.error("Error closing session:", error);
+      alert('Erro de conexão ao fechar caixa.');
     }
   };
 
   if (loading) return <div className="p-12 text-center text-zinc-400">Carregando sessão...</div>;
 
   if (!session) {
+    const userHasOpenSession = cashRegisters.some(r => r.session_status === 'open' && r.seller_id === user.id);
+
     return (
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-black tracking-tight">Seleccionar Caixa</h2>
-            <p className="text-zinc-500">Escolha um caixa aberto ou abra um novo se tiver permissão.</p>
+            <p className="text-zinc-500">
+              Escolha um caixa aberto ou abra um novo se tiver permissão.
+              {userHasOpenSession && (
+                <span className="block mt-1 text-rose-500 font-bold text-sm">
+                  Você já possui um caixa aberto. Feche-o antes de abrir outro.
+                </span>
+              )}
+            </p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {cashRegisters.map(register => (
-            <Card key={register.id} className="p-6 border-zinc-100 shadow-sm rounded-3xl hover:border-orange-200 transition-all group">
-              <div className="flex items-start justify-between mb-4">
-                <div className={cn(
-                  "w-12 h-12 rounded-2xl flex items-center justify-center",
-                  register.session_status === 'open' ? "bg-emerald-100 text-emerald-600" : "bg-zinc-100 text-zinc-400"
-                )}>
-                  <Wallet size={24} />
-                </div>
-                <div className={cn(
-                  "px-3 py-1 rounded-full text-[10px] font-black uppercase",
-                  register.session_status === 'open' ? "bg-emerald-100 text-emerald-600" : "bg-zinc-100 text-zinc-400"
-                )}>
-                  {register.session_status === 'open' ? 'Aberto' : 'Fechado'}
-                </div>
-              </div>
-              
-              <h3 className="font-bold text-lg mb-1">{register.name}</h3>
-              <p className="text-xs text-zinc-400 mb-6">Código: {register.code}</p>
+          {cashRegisters.map(register => {
+            const isOpenedByMe = register.session_status === 'open' && register.seller_id === user.id;
+            const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id;
 
-              {register.session_status === 'open' ? (
-                <button
-                  onClick={() => handleSelectRegister(register.id)}
-                  className="w-full bg-emerald-500 text-white py-3 rounded-xl font-bold hover:bg-emerald-600 transition-all active:scale-95"
-                >
-                  Entrar no Caixa
-                </button>
-              ) : hasPermission(user, 'pos_open_cashier') ? (
-                <div className="space-y-3">
-                  <input
-                    type="number"
-                    placeholder="Valor de Abertura"
-                    onChange={e => {
-                      setSelectedRegisterId(register.id.toString());
-                      setOpeningAmount(e.target.value);
-                    }}
-                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-sm"
-                  />
-                  <button
-                    onClick={(e) => handleOpenSession(e, register.id, openingAmount)}
-                    className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-all active:scale-95"
-                  >
-                    Abrir Caixa
-                  </button>
+            return (
+              <Card key={register.id} className="p-6 border-zinc-100 shadow-sm rounded-3xl hover:border-orange-200 transition-all group">
+                <div className="flex items-start justify-between mb-4">
+                  <div className={cn(
+                    "w-12 h-12 rounded-2xl flex items-center justify-center",
+                    register.session_status === 'open' ? "bg-emerald-100 text-emerald-600" : "bg-zinc-100 text-zinc-400"
+                  )}>
+                    <Wallet size={24} />
+                  </div>
+                  <div className={cn(
+                    "px-3 py-1 rounded-full text-[10px] font-black uppercase",
+                    register.session_status === 'open' ? "bg-emerald-100 text-emerald-600" : "bg-zinc-100 text-zinc-400"
+                  )}>
+                    {register.session_status === 'open' ? 'Aberto' : 'Fechado'}
+                  </div>
                 </div>
-              ) : (
-                <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl text-center">
-                  <Lock size={20} className="mx-auto mb-2 text-rose-400" />
-                  <p className="text-xs font-bold text-rose-600 uppercase tracking-wider">Caixa Fechado</p>
-                  <p className="text-[10px] text-rose-400 mt-1">Aguarde a abertura por um supervisor.</p>
-                </div>
-              )}
-            </Card>
-          ))}
+                
+                <h3 className="font-bold text-lg mb-1">{register.name}</h3>
+                <p className="text-xs text-zinc-400 mb-6">Código: {register.code}</p>
+
+                {register.session_status === 'open' ? (
+                  <div className="space-y-2">
+                    {isOpenedByOthers && (
+                      <p className="text-[10px] text-center font-bold text-zinc-400 uppercase mb-1">Ocupado</p>
+                    )}
+                    <button
+                      onClick={() => handleSelectRegister(register.id)}
+                      className="w-full bg-emerald-500 text-white py-3 rounded-xl font-bold hover:bg-emerald-600 transition-all active:scale-95"
+                    >
+                      {isOpenedByMe ? 'Fechar Meu Caixa' : 'Entrar no Caixa'}
+                    </button>
+                  </div>
+                ) : hasPermission(user, 'pos_open_cashier') ? (
+                  <div className="space-y-3">
+                    {userHasOpenSession ? (
+                      <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl text-center">
+                        <Lock size={20} className="mx-auto mb-2 text-rose-400" />
+                        <p className="text-xs font-black text-rose-600 uppercase">Bloqueado</p>
+                      </div>
+                    ) : (
+                      <>
+                        <input
+                          type="number"
+                          placeholder="Valor de Abertura"
+                          value={openingAmounts[register.id] || ''}
+                          onChange={e => {
+                            setOpeningAmounts(prev => ({ ...prev, [register.id]: e.target.value }));
+                          }}
+                          className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-sm"
+                        />
+                        <button
+                          onClick={(e) => handleOpenSession(e, register.id, openingAmounts[register.id] || '')}
+                          className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100"
+                        >
+                          Abrir Caixa
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl text-center">
+                    <Lock size={20} className="mx-auto mb-2 text-rose-400" />
+                    <p className="text-xs font-bold text-rose-600 uppercase tracking-wider">Caixa Fechado</p>
+                    <p className="text-[10px] text-rose-400 mt-1">Aguarde a abertura por um supervisor.</p>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
         </div>
       </div>
     );
@@ -10471,7 +10754,7 @@ export default function App() {
             )}
             {user.role === 'seller' && (
               <>
-                <Route path="/seller" element={<SellerPOS user={user} />} />
+                <Route path="/seller" element={<SellerPOS user={user} onUpdate={setUser} />} />
                 <Route path="/seller/dashboard" element={<SellerDashboard user={user} />} />
                 <Route path="/seller/movements" element={<SellerCashMovements user={user} />} />
                 <Route path="/seller/close" element={<SellerCloseCashier user={user} onUpdate={setUser} />} />

@@ -67,6 +67,7 @@ const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-lg" }: { is
 
 const AVAILABLE_PERMISSIONS = [
   { id: 'pos_access', label: 'Acesso ao PDV', category: 'Vendas' },
+  { id: 'pos_sell', label: 'Realizar Vendas', category: 'Vendas' },
   { id: 'pos_discount', label: 'Aplicar Descontos', category: 'Vendas' },
   { id: 'pos_void', label: 'Anular Vendas', category: 'Vendas' },
   { id: 'pos_open_cashier', label: 'Abrir Caixa', category: 'Caixa' },
