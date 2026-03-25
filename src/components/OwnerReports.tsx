@@ -1,0 +1,257 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  FileText, 
+  Download, 
+  TrendingUp, 
+  PieChart as PieChartIcon 
+} from 'lucide-react';
+import { 
+  ResponsiveContainer, 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  BarChart, 
+  Bar, 
+  PieChart, 
+  Pie, 
+  Cell, 
+  Legend 
+} from 'recharts';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
+import * as XLSX from 'xlsx';
+import { User } from '../types';
+
+const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
+
+const Card = ({ children, className, ...props }: { children: React.ReactNode, className?: string, [key: string]: any }) => (
+  <div {...props} className={cn("bg-white border border-zinc-200 rounded-xl overflow-hidden", className)}>
+    {children}
+  </div>
+);
+
+export const OwnerReports = ({ user }: { user: User }) => {
+  const [data, setData] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const reportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch(`/api/owner/global-reports/${user.id}`)
+      .then(res => res.json())
+      .then(data => {
+        setData(data);
+        setIsLoading(false);
+      });
+  }, [user.id]);
+
+  const exportToPDF = async () => {
+    if (!reportRef.current) return;
+    const canvas = await html2canvas(reportRef.current, { scale: 2 });
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save('Relatorio_Global.pdf');
+  };
+
+  const exportToExcel = () => {
+    if (!data) return;
+    
+    // Create a workbook
+    const wb = XLSX.utils.book_new();
+    
+    // Summary Sheet
+    const summaryData = [
+      ['Relatório Global de Vendas'],
+      ['Data de Extração', new Date().toLocaleString()],
+      [''],
+      ['Métrica', 'Valor'],
+      ['Receita Total', `Kz ${data.totalRevenue.toLocaleString()}`],
+      ['Total de Vendas', data.totalSales],
+    ];
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumo');
+    
+    // Store Revenue Sheet
+    const wsStore = XLSX.utils.json_to_sheet(data.revenueByStore);
+    XLSX.utils.book_append_sheet(wb, wsStore, 'Receita por Loja');
+    
+    // Top Products Sheet
+    const wsProducts = XLSX.utils.json_to_sheet(data.topProducts);
+    XLSX.utils.book_append_sheet(wb, wsProducts, 'Produtos Mais Vendidos');
+    
+    // Write file
+    XLSX.writeFile(wb, 'Relatorio_Global.xlsx');
+  };
+
+  if (isLoading) return <div className="p-12 text-center">Carregando relatórios...</div>;
+
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black tracking-tight">Relatórios Globais</h2>
+          <p className="text-zinc-500">Desempenho consolidado de todas as suas lojas.</p>
+        </div>
+        <div className="flex gap-2">
+          <button 
+            onClick={exportToExcel}
+            className="bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all active:scale-95"
+          >
+            <FileText size={20} /> Exportar Excel
+          </button>
+          <button 
+            onClick={exportToPDF}
+            className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
+          >
+            <Download size={20} /> Exportar PDF
+          </button>
+        </div>
+      </div>
+
+      <div ref={reportRef} className="space-y-8 bg-white p-8 rounded-3xl border border-zinc-100">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <Card className="p-6 bg-zinc-900 text-white border-none rounded-2xl">
+            <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Receita Total</p>
+            <h3 className="text-3xl font-black">Kz {data.totalRevenue.toLocaleString()}</h3>
+            <div className="mt-4 flex items-center gap-2 text-emerald-400 text-xs font-bold">
+              <TrendingUp size={14} /> +12% vs mês anterior
+            </div>
+          </Card>
+          
+          <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Total de Vendas</p>
+            <h3 className="text-3xl font-black">{data.totalSales.toLocaleString()}</h3>
+            <p className="text-xs text-zinc-400 mt-4 font-medium">Consolidado de todas as lojas</p>
+          </Card>
+
+          <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Ticket Médio</p>
+            <h3 className="text-3xl font-black">Kz {(data.totalRevenue / (data.totalSales || 1)).toLocaleString()}</h3>
+            <p className="text-xs text-zinc-400 mt-4 font-medium">Valor médio por venda</p>
+          </Card>
+
+          <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Lojas Ativas</p>
+            <h3 className="text-3xl font-black">{data.revenueByStore.length}</h3>
+            <p className="text-xs text-zinc-400 mt-4 font-medium">Contribuindo para os resultados</p>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
+            <h4 className="text-lg font-black mb-6 flex items-center gap-2">
+              <TrendingUp size={20} className="text-orange-500" />
+              Evolução de Vendas (30 dias)
+            </h4>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={data.salesByDay}>
+                  <defs>
+                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f97316" stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis 
+                    dataKey="date" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{fontSize: 10, fill: '#94a3b8'}}
+                    tickFormatter={(val) => new Date(val).toLocaleDateString('pt-AO', { day: '2-digit', month: 'short' })}
+                  />
+                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
+                  <Tooltip 
+                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                    formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Receita']}
+                  />
+                  <Area type="monotone" dataKey="revenue" stroke="#f97316" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
+          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
+            <h4 className="text-lg font-black mb-6 flex items-center gap-2">
+              <PieChartIcon size={20} className="text-blue-500" />
+              Receita por Loja
+            </h4>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data.revenueByStore} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                  <XAxis type="number" hide />
+                  <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 600}} width={100} />
+                  <Tooltip 
+                    cursor={{fill: '#f8fafc'}}
+                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                    formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Receita']}
+                  />
+                  <Bar dataKey="revenue" fill="#3b82f6" radius={[0, 8, 8, 0]} barSize={24} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <Card className="lg:col-span-2 p-8 border-zinc-100 rounded-3xl shadow-sm">
+            <h4 className="text-lg font-black mb-6">Top 10 Produtos (Global)</h4>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">
+                    <th className="pb-4">Produto</th>
+                    <th className="pb-4 text-center">Qtd Vendida</th>
+                    <th className="pb-4 text-right">Receita Gerada</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-50">
+                  {data.topProducts.map((p: any, i: number) => (
+                    <tr key={i} className="group hover:bg-zinc-50/50 transition-colors">
+                      <td className="py-4 font-bold text-zinc-800">{p.name}</td>
+                      <td className="py-4 text-center font-medium text-zinc-600">{p.quantity}</td>
+                      <td className="py-4 text-right font-black text-zinc-900">Kz {p.revenue.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
+            <h4 className="text-lg font-black mb-6">Métodos de Pagamento</h4>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={data.paymentMethods}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {data.paymentMethods.map((entry: any, index: number) => (
+                      <Cell key={`cell-${index}`} fill={['#f97316', '#3b82f6', '#10b981', '#6366f1'][index % 4]} />
+                    ))}
+                  </Pie>
+                  <Tooltip 
+                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                  />
+                  <Legend verticalAlign="bottom" height={36}/>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+};

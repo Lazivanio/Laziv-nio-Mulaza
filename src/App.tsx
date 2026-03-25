@@ -86,7 +86,13 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { User, Store as StoreType, Product, Transaction, BankAccount, CashRegister } from './types';
 import { OwnerRH } from './components/OwnerRH';
+import { OwnerPartners } from './components/OwnerPartners';
+import { OwnerPurchases } from './components/OwnerPurchases';
 import { OwnerServices } from './components/OwnerServices';
+import { OwnerOverview } from './components/OwnerOverview';
+import { MyStores } from './components/MyStores';
+import { OwnerReports } from './components/OwnerReports';
+import { OwnerSettings } from './components/OwnerSettings';
 import { Service } from './types';
 
 // --- Utilities ---
@@ -378,9 +384,8 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Visão Geral" to="/owner" onClick={closeSidebar} />
                 <SidebarItem icon={Store} label="Minhas Lojas" to="/owner/stores" onClick={closeSidebar} />
-                <SidebarItem icon={Users} label="RH" to="/owner/rh" onClick={closeSidebar} />
-                <SidebarItem icon={Users} label="Clientes" to="/owner/clients" onClick={closeSidebar} />
-                <SidebarItem icon={Briefcase} label="Fornecedores" to="/owner/suppliers" onClick={closeSidebar} />
+                <SidebarItem icon={Briefcase} label="RH" to="/owner/rh" onClick={closeSidebar} />
+                <SidebarItem icon={Users} label="Parceiros" to="/owner/partners" onClick={closeSidebar} />
                 <SidebarItem icon={ShoppingCart} label="Compras" to="/owner/purchases" onClick={closeSidebar} />
                 <SidebarItem icon={Sparkles} label="Serviços" to="/owner/services" onClick={closeSidebar} />
                 <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
@@ -2508,7 +2513,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Preço Mensal (Kz)</label>
               <input 
                 type="number" 
-                value={planFormData.price}
+                value={isNaN(Number(planFormData.price)) ? '' : planFormData.price}
                 onChange={(e) => setPlanFormData({ ...planFormData, price: Number(e.target.value) })}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
                 required
@@ -2518,7 +2523,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Máx. Lojas</label>
               <input 
                 type="number" 
-                value={planFormData.max_stores}
+                value={isNaN(Number(planFormData.max_stores)) ? '' : planFormData.max_stores}
                 onChange={(e) => setPlanFormData({ ...planFormData, max_stores: Number(e.target.value) })}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
                 required
@@ -2528,7 +2533,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Máx. Produtos</label>
               <input 
                 type="number" 
-                value={planFormData.max_products}
+                value={isNaN(Number(planFormData.max_products)) ? '' : planFormData.max_products}
                 onChange={(e) => setPlanFormData({ ...planFormData, max_products: Number(e.target.value) })}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
                 required
@@ -2974,7 +2979,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     type="number" 
                     min="1"
                     max="24"
-                    value={licenseFormData.duration_months}
+                    value={isNaN(Number(licenseFormData.duration_months)) ? '' : licenseFormData.duration_months}
                     onChange={(e) => setLicenseFormData({...licenseFormData, duration_months: Number(e.target.value)})}
                     className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold" 
                   />
@@ -3076,750 +3081,12 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   );
 };
 
-const OwnerOverview = ({ user }: { user: User }) => {
-  const [stats, setStats] = useState({ todaySales: 0, lowStockCount: 0, staffCount: 0 });
-  const [stores, setStores] = useState<StoreType[]>([]);
-
-  useEffect(() => {
-    fetch(`/api/owner/dashboard-stats/all?ownerId=${user.id}`)
-      .then(res => res.json())
-      .then(setStats);
-    fetch(`/api/owner/stores/${user.id}`)
-      .then(res => res.json())
-      .then(setStores);
-  }, [user.id]);
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Visão Geral do Negócio</h2>
-          <p className="text-zinc-500">Resumo de desempenho de todas as suas unidades.</p>
-        </div>
-        <div className="text-left md:text-right">
-          <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Estado Global</p>
-          <div className="flex items-center gap-2 text-emerald-600 font-bold">
-            <Activity size={16} />
-            <span>Operacional</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <StatCard 
-          label="Vendas Consolidadas (Hoje)" 
-          value={`Kz ${(stats.todaySales || 0).toLocaleString()}`} 
-          icon={TrendingUp} 
-          trend="+5.2%" 
-          color="emerald" 
-        />
-        <StatCard 
-          label="Alertas de Stock" 
-          value={`${stats.lowStockCount} itens`} 
-          icon={Package} 
-          color={stats.lowStockCount > 0 ? "rose" : "blue"} 
-        />
-        <StatCard 
-          label="Força de Trabalho" 
-          value={`${stats.staffCount} colaboradores`} 
-          icon={Users} 
-          color="blue" 
-        />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
-            <h3 className="font-bold">Desempenho por Loja</h3>
-            <Link to="/owner/stores" className="text-sm text-zinc-500 hover:text-black flex items-center gap-1">
-              Gerenciar Lojas <ChevronRight size={14} />
-            </Link>
-          </div>
-          <div className="divide-y divide-zinc-100">
-            {stores.map(store => (
-              <div key={store.id} className="p-4 flex items-center justify-between hover:bg-zinc-50 transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-zinc-100 rounded-lg flex items-center justify-center text-zinc-600">
-                    {store.logo_url ? (
-                      <img src={store.logo_url || undefined} alt="" className="w-full h-full object-cover rounded-lg" referrerPolicy="no-referrer" />
-                    ) : (
-                      <Store size={20} />
-                    )}
-                  </div>
-                  <div>
-                    <p className="font-semibold text-sm">{store.name}</p>
-                    <p className="text-xs text-zinc-500">{store.address}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-bold text-sm">Kz {(store.today_sales || 0).toLocaleString()}</p>
-                  <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-wider">Vendas Hoje</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <Card className="bg-zinc-900 text-white border-none relative overflow-hidden">
-          <div className="absolute top-0 right-0 p-8 opacity-10">
-            <BarChart3 size={120} />
-          </div>
-          <div className="p-8 relative z-10 h-full flex flex-col justify-between">
-            <div>
-              <h3 className="text-xl font-bold mb-2">Relatórios Inteligentes</h3>
-              <p className="text-zinc-400 text-sm mb-6">Analise o crescimento do seu negócio com dados detalhados de faturamento e tendências de consumo.</p>
-            </div>
-            <Link 
-              to="/owner/reports"
-              className="inline-flex items-center justify-center gap-2 bg-white text-black px-6 py-3 rounded-xl font-bold hover:bg-zinc-100 transition-colors w-fit"
-            >
-              Aceder Relatórios <ChevronRight size={18} />
-            </Link>
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
-};
-
-const MyStores = ({ user }: { user: User }) => {
-  const [stores, setStores] = useState<StoreType[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingStore, setEditingStore] = useState<StoreType | null>(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    address: '',
-    phone: '',
-    email: '',
-    nif: '',
-    logo_url: '',
-    status: 'active' as 'active' | 'inactive',
-    bank_accounts: [] as BankAccount[]
-  });
-
-  const [viewingProformasStore, setViewingProformasStore] = useState<StoreType | null>(null);
-  const [proformas, setProformas] = useState<any[]>([]);
-  const [isProformaListModalOpen, setIsProformaListModalOpen] = useState(false);
-  const [selectedProforma, setSelectedProforma] = useState<any | null>(null);
-
-  const fetchStores = () => {
-    fetch(`/api/owner/stores/${user.id}`)
-      .then(res => res.json())
-      .then(setStores);
-  };
-
-  const fetchProformas = (storeId: number) => {
-    fetch(`/api/owner/proforma/${storeId}`)
-      .then(res => res.json())
-      .then(setProformas);
-  };
-
-  useEffect(fetchStores, [user.id]);
-
-  useEffect(() => {
-    if (viewingProformasStore) {
-      fetchProformas(viewingProformasStore.id);
-    }
-  }, [viewingProformasStore]);
-
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    const url = editingStore ? `/api/owner/stores/${editingStore.id}` : '/api/owner/stores';
-    const method = editingStore ? 'PUT' : 'POST';
-    
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...formData, owner_id: user.id })
-    });
-
-    if (res.ok) {
-      setIsModalOpen(false);
-      setEditingStore(null);
-      setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', status: 'active', bank_accounts: [] });
-      fetchStores();
-    } else {
-      const data = await res.json();
-      alert(data.error || "Erro ao processar pedido");
-    }
-  };
-
-  const handleEdit = (store: StoreType) => {
-    setEditingStore(store);
-    setFormData({
-      name: store.name,
-      address: store.address,
-      phone: store.phone || '',
-      email: store.email || '',
-      nif: store.nif || '',
-      logo_url: store.logo_url || '',
-      status: store.status,
-      bank_accounts: store.bank_accounts || []
-    });
-    setIsModalOpen(true);
-  };
-
-  const addBankAccount = () => {
-    setFormData({
-      ...formData,
-      bank_accounts: [...formData.bank_accounts, { bank_name: '', iban: '', holder: '', account_number: '' }]
-    });
-  };
-
-  const removeBankAccount = (index: number) => {
-    setFormData({
-      ...formData,
-      bank_accounts: formData.bank_accounts.filter((_, i) => i !== index)
-    });
-  };
-
-  const updateBankAccount = (index: number, field: keyof BankAccount, value: string) => {
-    const newAccounts = [...formData.bank_accounts];
-    newAccounts[index] = { ...newAccounts[index], [field]: value };
-    setFormData({ ...formData, bank_accounts: newAccounts });
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Minhas Lojas</h2>
-          <p className="text-zinc-500">Gerencie e configure suas unidades de negócio.</p>
-        </div>
-        <button 
-          onClick={() => {
-            setEditingStore(null);
-            setFormData({ name: '', address: '', phone: '', nif: '', logo_url: '', status: 'active', bank_accounts: [] });
-            setIsModalOpen(true);
-          }}
-          className="w-full md:w-auto bg-black text-white px-6 py-3 rounded-xl flex items-center justify-center gap-2 font-bold hover:bg-zinc-800 transition-all active:scale-95 shadow-lg shadow-black/10"
-        >
-          <Plus size={20} />
-          Nova Loja
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {stores.map(store => (
-          <Card key={store.id} className="group hover:border-black transition-all duration-300">
-            <div className="p-6">
-              <div className="flex justify-between items-start mb-6">
-                <div className="w-16 h-16 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-400 group-hover:bg-black group-hover:text-white transition-colors overflow-hidden">
-                  {store.logo_url ? (
-                    <img src={store.logo_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <Store size={32} />
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => {
-                      setViewingProformasStore(store);
-                      setIsProformaListModalOpen(true);
-                    }}
-                    className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
-                    title="Ver Proformas"
-                  >
-                    <FileText size={18} />
-                  </button>
-                  <button 
-                    onClick={() => handleEdit(store)}
-                    className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
-                  >
-                    <Edit2 size={18} />
-                  </button>
-                  <Link 
-                    to={`/owner/stores/${store.id}`}
-                    className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
-                  >
-                    <Settings2 size={18} />
-                  </Link>
-                </div>
-              </div>
-
-              <div className="mb-6">
-                <div className="flex items-center gap-2 mb-1">
-                  <h3 className="text-lg font-bold">{store.name}</h3>
-                  <span className={cn(
-                    "px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest",
-                    store.status === 'active' ? "bg-emerald-100 text-emerald-700" : "bg-zinc-100 text-zinc-500"
-                  )}>
-                    {store.status === 'active' ? 'Ativa' : 'Inativa'}
-                  </span>
-                </div>
-                <p className="text-sm text-zinc-500 flex items-center gap-1">
-                  <Home size={14} /> {store.address}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 pt-6 border-t border-zinc-100">
-                <div>
-                  <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-widest mb-1">Vendas Hoje</p>
-                  <p className="font-bold text-zinc-800">Kz {(store.today_sales || 0).toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-widest mb-1">Pessoal</p>
-                  <p className="font-bold text-zinc-800">{store.staff_count} Colaboradores</p>
-                </div>
-              </div>
-            </div>
-            <Link 
-              to={`/owner/stores/${store.id}`}
-              className="block w-full py-4 bg-zinc-50 text-center text-sm font-bold text-zinc-600 hover:bg-black hover:text-white transition-all border-t border-zinc-100"
-            >
-              Aceder Painel Administrativo
-            </Link>
-          </Card>
-        ))}
-      </div>
-
-      <Modal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        title={editingStore ? "Editar Loja" : "Cadastrar Nova Loja"}
-      >
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome da Loja</label>
-              <input 
-                type="text" 
-                required
-                value={formData.name}
-                onChange={e => setFormData({...formData, name: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
-              <input 
-                type="text" 
-                required
-                value={formData.address}
-                onChange={e => setFormData({...formData, address: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Telefone</label>
-              <input 
-                type="text" 
-                value={formData.phone}
-                onChange={e => setFormData({...formData, phone: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email (Opcional)</label>
-              <input 
-                type="email" 
-                value={formData.email}
-                onChange={e => setFormData({...formData, email: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF</label>
-              <input 
-                type="text" 
-                value={formData.nif}
-                onChange={e => setFormData({...formData, nif: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Logotipo da Loja</label>
-              <div className="flex flex-col md:flex-row gap-4">
-                <div className="flex-1 space-y-2">
-                  <input 
-                    type="text" 
-                    value={formData.logo_url}
-                    onChange={e => setFormData({...formData, logo_url: e.target.value})}
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
-                    placeholder="URL da imagem (https://...)"
-                  />
-                  <div className="relative">
-                    <input 
-                      type="file"
-                      accept="image/*"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          try {
-                            const base64 = await fileToBase64(file);
-                            setFormData({...formData, logo_url: base64});
-                          } catch (err) {
-                            console.error("Error converting file to base64", err);
-                          }
-                        }
-                      }}
-                      className="hidden"
-                      id="store-logo-upload"
-                    />
-                    <label 
-                      htmlFor="store-logo-upload"
-                      className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-white border-2 border-dashed border-zinc-200 rounded-xl cursor-pointer hover:border-black hover:bg-zinc-50 transition-all text-sm font-bold text-zinc-600"
-                    >
-                      <Upload size={18} /> Carregar Imagem Local
-                    </label>
-                  </div>
-                </div>
-                {formData.logo_url && (
-                  <div className="w-24 h-24 bg-zinc-100 rounded-2xl overflow-hidden border border-zinc-200 shrink-0">
-                    <img src={formData.logo_url} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  </div>
-                )}
-              </div>
-            </div>
-            {editingStore && (
-              <div className="col-span-2">
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Estado da Loja</label>
-                <select 
-                  value={formData.status}
-                  onChange={e => setFormData({...formData, status: e.target.value as any})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all"
-                >
-                  <option value="active">Ativa</option>
-                  <option value="inactive">Inativa</option>
-                </select>
-              </div>
-            )}
-
-            <div className="col-span-2 space-y-4">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Coordenadas Bancárias</label>
-                <button 
-                  type="button"
-                  onClick={addBankAccount}
-                  className="text-[10px] font-bold text-orange-500 flex items-center gap-1 hover:text-orange-600 transition-colors"
-                >
-                  <Plus size={12} /> Adicionar Conta
-                </button>
-              </div>
-              
-              <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                {formData.bank_accounts.map((account, index) => (
-                  <div key={index} className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3 relative">
-                    <button 
-                      type="button"
-                      onClick={() => removeBankAccount(index)}
-                      className="absolute top-2 right-2 p-1 text-zinc-400 hover:text-rose-500 transition-colors"
-                    >
-                      <X size={14} />
-                    </button>
-                    
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Banco</label>
-                        <input 
-                          type="text" 
-                          required
-                          value={account.bank_name}
-                          onChange={e => updateBankAccount(index, 'bank_name', e.target.value)}
-                          placeholder="Ex: BAI, BFA..."
-                          className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs outline-none focus:border-black transition-all" 
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Titular</label>
-                        <input 
-                          type="text" 
-                          required
-                          value={account.holder}
-                          onChange={e => updateBankAccount(index, 'holder', e.target.value)}
-                          className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs outline-none focus:border-black transition-all" 
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">IBAN</label>
-                        <input 
-                          type="text" 
-                          required
-                          value={account.iban}
-                          onChange={e => updateBankAccount(index, 'iban', e.target.value)}
-                          className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-mono outline-none focus:border-black transition-all" 
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Número da Conta</label>
-                        <input 
-                          type="text" 
-                          required
-                          value={account.account_number}
-                          onChange={e => updateBankAccount(index, 'account_number', e.target.value)}
-                          className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-mono outline-none focus:border-black transition-all" 
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {formData.bank_accounts.length === 0 && (
-                  <p className="text-[10px] text-zinc-400 text-center py-4 border border-dashed border-zinc-200 rounded-xl">
-                    Nenhuma conta bancária configurada.
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95 mt-4">
-            {editingStore ? "Guardar Alterações" : "Criar Loja"}
-          </button>
-        </form>
-      </Modal>
-    </div>
-  );
-};
-
-const OwnerClients = ({ user }: { user: User }) => {
-  const [clients, setClients] = useState<any[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingClient, setEditingClient] = useState<any>(null);
-  const [confirmModal, setConfirmModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-    variant?: "danger" | "primary";
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => {},
-  });
-  const [formData, setFormData] = useState({
-    name: '',
-    nif: '',
-    email: '',
-    phone: '',
-    address: '',
-    type: 'individual'
-  });
-
-  useEffect(() => {
-    fetchClients();
-  }, [user.store_id]);
-
-  const fetchClients = async () => {
-    const storeId = user.store_id || 1;
-    const res = await fetch(`/api/owner/clients/${storeId}`);
-    const data = await res.json();
-    setClients(data);
-  };
-
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    const storeId = user.store_id || 1;
-    const url = editingClient ? `/api/owner/clients/${editingClient.id}` : '/api/owner/clients';
-    const method = editingClient ? 'PUT' : 'POST';
-
-    try {
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, store_id: storeId })
-      });
-
-      if (res.ok) {
-        setIsModalOpen(false);
-        setEditingClient(null);
-        setFormData({ name: '', nif: '', email: '', phone: '', address: '', type: 'individual' });
-        fetchClients();
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Removed handleDelete as clients should stay in history
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black tracking-tight">Gestão de Clientes</h2>
-          <p className="text-zinc-500">Registe e gira os seus clientes para faturação.</p>
-        </div>
-        <button 
-          onClick={() => {
-            setEditingClient(null);
-            setFormData({ name: '', nif: '', email: '', phone: '', address: '', type: 'individual' });
-            setIsModalOpen(true);
-          }}
-          className="w-full md:w-auto bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
-        >
-          <Plus size={20} />
-          Novo Cliente
-        </button>
-      </div>
-
-      <Card className="overflow-hidden border-zinc-100 shadow-sm rounded-2xl">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left min-w-[600px]">
-          <thead className="bg-zinc-50 border-b border-zinc-100">
-            <tr>
-              <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Nome</th>
-              <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Tipo</th>
-              <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">NIF</th>
-              <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Contacto</th>
-              <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest text-right">Ações</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-100">
-            {clients.map(client => (
-              <tr key={client.id} className="hover:bg-zinc-50/50 transition-colors">
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center font-bold">
-                      {client.name.charAt(0)}
-                    </div>
-                    <div>
-                      <p className="font-bold text-zinc-800">{client.name}</p>
-                      <p className="text-xs text-zinc-500">{client.email}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-6 py-4">
-                  <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                    client.type === 'company' ? 'bg-blue-100 text-blue-600' : 'bg-zinc-100 text-zinc-600'
-                  }`}>
-                    {client.type === 'company' ? 'Empresa' : 'Pessoa'}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-sm font-medium text-zinc-600">{client.nif}</td>
-                <td className="px-6 py-4 text-sm text-zinc-500">{client.phone}</td>
-                <td className="px-6 py-4 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <button 
-                      onClick={() => {
-                        setEditingClient(client);
-                        setFormData({
-                          name: client.name,
-                          nif: client.nif,
-                          email: client.email,
-                          phone: client.phone,
-                          address: client.address,
-                          type: client.type || 'individual'
-                        });
-                        setIsModalOpen(true);
-                      }}
-                      className="p-2 text-zinc-400 hover:text-orange-500 transition-colors"
-                    >
-                      <Edit2 size={18} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </div>
-      </Card>
-
-      <Modal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        title={editingClient ? "Editar Cliente" : "Novo Cliente"}
-      >
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="flex gap-4 p-1 bg-zinc-100 rounded-xl mb-4">
-            <button
-              type="button"
-              onClick={() => setFormData({ ...formData, type: 'individual' })}
-              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                formData.type === 'individual' ? 'bg-white shadow-sm text-black' : 'text-zinc-500'
-              }`}
-            >
-              Pessoa Física
-            </button>
-            <button
-              type="button"
-              onClick={() => setFormData({ ...formData, type: 'company' })}
-              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                formData.type === 'company' ? 'bg-white shadow-sm text-black' : 'text-zinc-500'
-              }`}
-            >
-              Empresa
-            </button>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">
-                {formData.type === 'company' ? 'Nome da Empresa' : 'Nome Completo'}
-              </label>
-              <input 
-                type="text" required
-                value={formData.name}
-                onChange={e => setFormData({...formData, name: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                placeholder={formData.type === 'company' ? "Ex: Empresa LDA" : "Ex: João Silva"}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF</label>
-              <input 
-                type="text" required
-                value={formData.nif}
-                onChange={e => setFormData({...formData, nif: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                placeholder="Ex: 500123456"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Telefone</label>
-              <input 
-                type="text"
-                value={formData.phone}
-                onChange={e => setFormData({...formData, phone: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                placeholder="Ex: 923 000 000"
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email</label>
-              <input 
-                type="email"
-                value={formData.email}
-                onChange={e => setFormData({...formData, email: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                placeholder="Ex: joao@email.com"
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
-              <textarea 
-                value={formData.address}
-                onChange={e => setFormData({...formData, address: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all h-20 resize-none"
-                placeholder="Endereço completo..."
-              />
-            </div>
-          </div>
-          <button 
-            type="submit"
-            className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95 mt-4"
-          >
-            {editingClient ? "Guardar Alterações" : "Registar Cliente"}
-          </button>
-        </form>
-      </Modal>
-
-      <ConfirmModal 
-        isOpen={confirmModal.isOpen}
-        onClose={() => setConfirmModal({ ...confirmModal, isOpen: false })}
-        onConfirm={confirmModal.onConfirm}
-        title={confirmModal.title}
-        message={confirmModal.message}
-        variant={confirmModal.variant}
-      />
-    </div>
-  );
-};
 
 const StoreAdmin = ({ user }: { user: User }) => {
   const { storeId: paramStoreId } = useParams();
   const storeId = paramStoreId || user.store_id?.toString();
   const location = useLocation();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'products' | 'promotions' | 'stock' | 'staff' | 'reports' | 'settings' | 'support' | 'cash-registers'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'products' | 'promotions' | 'stock' | 'staff' | 'reports' | 'settings' | 'support' | 'cash-registers' | 'suppliers' | 'purchases' | 'proformas'>('dashboard');
 
   useEffect(() => {
     if (user.role === 'manager') {
@@ -3866,6 +3133,51 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [isProformaModalOpen, setIsProformaModalOpen] = useState(false);
   const [proformas, setProformas] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
+  const [editingSupplier, setEditingSupplier] = useState<any>(null);
+  const [supplierForm, setSupplierForm] = useState({
+    name: '',
+    company_name: '',
+    nif: '',
+    phone: '',
+    email: '',
+    country: 'Angola',
+    city: '',
+    address: '',
+    responsible_person: '',
+    payment_method: 'transfer',
+    payment_term: '7',
+    observations: '',
+    status: 'active'
+  });
+  const [supplierSearchQuery, setSupplierSearchQuery] = useState('');
+  const [viewingSupplierHistory, setViewingSupplierHistory] = useState<any>(null);
+  const [supplierHistory, setSupplierHistory] = useState<any[]>([]);
+
+  const [purchases, setPurchases] = useState<any[]>([]);
+  const [purchaseReturns, setPurchaseReturns] = useState<any[]>([]);
+  const [activePurchaseTab, setActivePurchaseTab] = useState<'orders' | 'received' | 'returns'>('orders');
+  const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
+  const [purchaseForm, setPurchaseForm] = useState({
+    store_id: storeId || '',
+    supplier_id: '',
+    invoice_number: '',
+    due_date: '',
+    items: [] as any[],
+    paid_amount: 0,
+  });
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [selectedPurchase, setSelectedPurchase] = useState<any>(null);
+  const [paymentForm, setPaymentForm] = useState({
+    amount: 0,
+    payment_method: 'transfer'
+  });
+  const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
+  const [returnForm, setReturnForm] = useState({
+    purchase_id: '',
+    reason: '',
+    items: [] as any[]
+  });
   const [selectedProforma, setSelectedProforma] = useState<any>(null);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -3973,6 +3285,12 @@ const StoreAdmin = ({ user }: { user: User }) => {
     fetch(`/api/owner/suppliers/${user.id}`)
       .then(res => res.json())
       .then(setSuppliers);
+    fetch(`/api/owner/purchases/${storeId}`)
+      .then(res => res.json())
+      .then(setPurchases);
+    fetch(`/api/owner/purchase-returns/${storeId}`)
+      .then(res => res.json())
+      .then(setPurchaseReturns);
   };
 
   useEffect(fetchData, [storeId]);
@@ -5999,7 +5317,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Preço (Kz)</label>
               <input 
                 type="number" required
-                value={productForm.price}
+                value={isNaN(Number(productForm.price)) ? '' : productForm.price}
                 onChange={e => setProductForm({...productForm, price: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
               />
@@ -6008,7 +5326,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Stock</label>
               <input 
                 type="number" required
-                value={productForm.stock}
+                value={isNaN(Number(productForm.stock)) ? '' : productForm.stock}
                 onChange={e => setProductForm({...productForm, stock: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
               />
@@ -6035,7 +5353,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Stock Mínimo</label>
               <input 
                 type="number" required
-                value={productForm.min_stock}
+                value={isNaN(Number(productForm.min_stock)) ? '' : productForm.min_stock}
                 onChange={e => setProductForm({...productForm, min_stock: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
               />
@@ -6122,7 +5440,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Saldo Inicial Padrão (Kz)</label>
               <input 
                 type="number" required
-                value={cashRegisterForm.default_initial_balance}
+                value={isNaN(Number(cashRegisterForm.default_initial_balance)) ? '' : cashRegisterForm.default_initial_balance}
                 onChange={e => setCashRegisterForm({...cashRegisterForm, default_initial_balance: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
               />
@@ -6131,7 +5449,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Limite Máximo (Kz)</label>
               <input 
                 type="number" required
-                value={cashRegisterForm.max_limit}
+                value={isNaN(Number(cashRegisterForm.max_limit)) ? '' : cashRegisterForm.max_limit}
                 onChange={e => setCashRegisterForm({...cashRegisterForm, max_limit: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
               />
@@ -6225,7 +5543,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Salário (Kz)</label>
               <input 
                 type="number" required
-                value={staffForm.salary}
+                value={isNaN(Number(staffForm.salary)) ? '' : staffForm.salary}
                 onChange={e => setStaffForm({...staffForm, salary: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
               />
@@ -6282,7 +5600,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Desconto (%)</label>
             <input 
               type="number" required min="1" max="100"
-              value={promoForm.discount_percent}
+              value={isNaN(Number(promoForm.discount_percent)) ? '' : promoForm.discount_percent}
               onChange={e => setPromoForm({...promoForm, discount_percent: e.target.value})}
               className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
             />
@@ -6417,7 +5735,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   <input 
                     type="number" required min="1"
                     placeholder="Ex: 50"
-                    value={stockForm.quantity}
+                    value={isNaN(Number(stockForm.quantity)) ? '' : stockForm.quantity}
                     onChange={e => setStockForm({...stockForm, quantity: e.target.value})}
                     className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
                   />
@@ -6449,7 +5767,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                     <input 
                       type="number" required min="1"
                       placeholder="Ex: 5"
-                      value={stockForm.bulkQuantity}
+                      value={isNaN(Number(stockForm.bulkQuantity)) ? '' : stockForm.bulkQuantity}
                       onChange={e => setStockForm({...stockForm, bulkQuantity: e.target.value})}
                       className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
                     />
@@ -6460,7 +5778,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   <div className="relative">
                     <input 
                       type="number" required min="1"
-                      value={stockForm.unitsPerBulk}
+                      value={isNaN(Number(stockForm.unitsPerBulk)) ? '' : stockForm.unitsPerBulk}
                       onChange={e => setStockForm({...stockForm, unitsPerBulk: e.target.value})}
                       className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all" 
                     />
@@ -6515,1437 +5833,6 @@ const StoreAdmin = ({ user }: { user: User }) => {
   );
 };
 
-import * as XLSX from 'xlsx';
-
-const OwnerSuppliers = ({ user }: { user: User }) => {
-  const [suppliers, setSuppliers] = useState<any[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingSupplier, setEditingSupplier] = useState<any>(null);
-  const [viewingHistory, setViewingHistory] = useState<any>(null);
-  const [history, setHistory] = useState<any[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  
-  const [formData, setFormData] = useState({
-    name: '',
-    company_name: '',
-    nif: '',
-    phone: '',
-    email: '',
-    country: 'Angola',
-    city: '',
-    address: '',
-    responsible_person: '',
-    payment_method: 'transfer',
-    payment_term: '7',
-    observations: '',
-    status: 'active'
-  });
-
-  useEffect(() => {
-    fetchSuppliers();
-  }, [user.id]);
-
-  const fetchSuppliers = async () => {
-    try {
-      const res = await fetch(`/api/owner/suppliers/${user.id}`);
-      const data = await res.json();
-      setSuppliers(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error(e);
-      setSuppliers([]);
-    }
-  };
-
-  const fetchHistory = async (supplierId: number) => {
-    try {
-      const res = await fetch(`/api/owner/suppliers/${supplierId}/purchases`);
-      const data = await res.json();
-      setHistory(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error(e);
-      setHistory([]);
-    }
-  };
-
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    const url = editingSupplier ? `/api/owner/suppliers/${editingSupplier.id}` : '/api/owner/suppliers';
-    const method = editingSupplier ? 'PUT' : 'POST';
-
-    try {
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, owner_id: user.id })
-      });
-
-      if (res.ok) {
-        setIsModalOpen(false);
-        setEditingSupplier(null);
-        resetForm();
-        fetchSuppliers();
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const resetForm = () => {
-    setFormData({
-      name: '',
-      company_name: '',
-      nif: '',
-      phone: '',
-      email: '',
-      country: 'Angola',
-      city: '',
-      address: '',
-      responsible_person: '',
-      payment_method: 'transfer',
-      payment_term: '7',
-      observations: '',
-      status: 'active'
-    });
-  };
-
-  const filteredSuppliers = suppliers.filter(s => 
-    s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (s.company_name && s.company_name.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black tracking-tight">Gestão de Fornecedores</h2>
-          <p className="text-zinc-500">Gira os seus fornecedores e histórico de compras.</p>
-        </div>
-        <div className="flex w-full md:w-auto gap-2">
-          <div className="relative flex-1 md:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="Procurar fornecedor..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-            />
-          </div>
-          <button 
-            onClick={() => {
-              setEditingSupplier(null);
-              resetForm();
-              setIsModalOpen(true);
-            }}
-            className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
-          >
-            <Plus size={20} />
-            Novo Fornecedor
-          </button>
-        </div>
-      </div>
-
-      <Card className="overflow-hidden border-zinc-100 shadow-sm rounded-2xl">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left min-w-[800px]">
-            <thead className="bg-zinc-50 border-b border-zinc-100">
-              <tr>
-                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Fornecedor</th>
-                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Empresa / NIF</th>
-                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Contacto</th>
-                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Status</th>
-                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {filteredSuppliers.map(supplier => (
-                <tr key={supplier.id} className="hover:bg-zinc-50/50 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold">
-                        {supplier.name.charAt(0)}
-                      </div>
-                      <div>
-                        <p className="font-bold text-zinc-800">{supplier.name}</p>
-                        <p className="text-xs text-zinc-500">{supplier.responsible_person || 'Sem responsável'}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm font-medium text-zinc-700">{supplier.company_name || '-'}</p>
-                    <p className="text-xs text-zinc-400">{supplier.nif || '-'}</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm text-zinc-600">{supplier.phone}</p>
-                    <p className="text-xs text-zinc-400">{supplier.email}</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={cn(
-                      "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
-                      supplier.status === 'active' ? "bg-emerald-100 text-emerald-600" : "bg-rose-100 text-rose-600"
-                    )}>
-                      {supplier.status === 'active' ? 'Ativo' : 'Inativo'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <button 
-                        onClick={() => {
-                          setViewingHistory(supplier);
-                          fetchHistory(supplier.id);
-                        }}
-                        className="p-2 text-zinc-400 hover:text-black transition-colors"
-                        title="Ver Histórico"
-                      >
-                        <History size={18} />
-                      </button>
-                      <button 
-                        onClick={() => {
-                          setEditingSupplier(supplier);
-                          setFormData({
-                            name: supplier.name,
-                            company_name: supplier.company_name || '',
-                            nif: supplier.nif || '',
-                            phone: supplier.phone || '',
-                            email: supplier.email || '',
-                            country: supplier.country || 'Angola',
-                            city: supplier.city || '',
-                            address: supplier.address || '',
-                            responsible_person: supplier.responsible_person || '',
-                            payment_method: supplier.payment_method || 'transfer',
-                            payment_term: supplier.payment_term || '7',
-                            observations: supplier.observations || '',
-                            status: supplier.status || 'active'
-                          });
-                          setIsModalOpen(true);
-                        }}
-                        className="p-2 text-zinc-400 hover:text-orange-500 transition-colors"
-                        title="Editar"
-                      >
-                        <Edit2 size={18} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-
-      {/* Modal Cadastro/Edição */}
-      <Modal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        title={editingSupplier ? "Editar Fornecedor" : "Novo Fornecedor"}
-        maxWidth="max-w-2xl"
-      >
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-4">
-            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 pb-2">Dados Principais</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="md:col-span-2">
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Fornecedor *</label>
-                <input 
-                  required
-                  type="text" 
-                  value={formData.name}
-                  onChange={e => setFormData({...formData, name: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome da Empresa</label>
-                <input 
-                  type="text" 
-                  value={formData.company_name}
-                  onChange={e => setFormData({...formData, company_name: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF</label>
-                <input 
-                  type="text" 
-                  value={formData.nif}
-                  onChange={e => setFormData({...formData, nif: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Telefone</label>
-                <input 
-                  type="text" 
-                  value={formData.phone}
-                  onChange={e => setFormData({...formData, phone: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email</label>
-                <input 
-                  type="email" 
-                  value={formData.email}
-                  onChange={e => setFormData({...formData, email: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 pb-2">Localização</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">País</label>
-                <input 
-                  type="text" 
-                  value={formData.country}
-                  onChange={e => setFormData({...formData, country: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Cidade</label>
-                <input 
-                  type="text" 
-                  value={formData.city}
-                  onChange={e => setFormData({...formData, city: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
-                <input 
-                  type="text" 
-                  value={formData.address}
-                  onChange={e => setFormData({...formData, address: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 pb-2">Dados Comerciais</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Pessoa Responsável</label>
-                <input 
-                  type="text" 
-                  value={formData.responsible_person}
-                  onChange={e => setFormData({...formData, responsible_person: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Forma de Pagamento</label>
-                <select 
-                  value={formData.payment_method}
-                  onChange={e => setFormData({...formData, payment_method: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                >
-                  <option value="cash">Dinheiro</option>
-                  <option value="transfer">Transferência</option>
-                  <option value="multicaixa">Multicaixa</option>
-                  <option value="check">Cheque</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Prazo de Pagamento</label>
-                <select 
-                  value={formData.payment_term}
-                  onChange={e => setFormData({...formData, payment_term: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                >
-                  <option value="0">Pronto Pagamento</option>
-                  <option value="7">7 Dias</option>
-                  <option value="15">15 Dias</option>
-                  <option value="30">30 Dias</option>
-                  <option value="60">60 Dias</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 pb-2">Informações Extras</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="md:col-span-2">
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Observações</label>
-                <textarea 
-                  value={formData.observations}
-                  onChange={e => setFormData({...formData, observations: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all h-24 resize-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Status</label>
-                <div className="flex gap-2 p-1 bg-zinc-100 rounded-xl">
-                  <button
-                    type="button"
-                    onClick={() => setFormData({...formData, status: 'active'})}
-                    className={cn(
-                      "flex-1 py-2 rounded-lg text-xs font-bold transition-all",
-                      formData.status === 'active' ? "bg-white shadow-sm text-emerald-600" : "text-zinc-500"
-                    )}
-                  >
-                    Ativo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFormData({...formData, status: 'inactive'})}
-                    className={cn(
-                      "flex-1 py-2 rounded-lg text-xs font-bold transition-all",
-                      formData.status === 'inactive' ? "bg-white shadow-sm text-rose-600" : "text-zinc-500"
-                    )}
-                  >
-                    Inativo
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold text-lg shadow-lg shadow-black/10 active:scale-95 transition-all">
-            {editingSupplier ? "Guardar Alterações" : "Criar Fornecedor"}
-          </button>
-        </form>
-      </Modal>
-
-      {/* Modal Histórico */}
-      <Modal 
-        isOpen={!!viewingHistory} 
-        onClose={() => setViewingHistory(null)} 
-        title={`Histórico: ${viewingHistory?.name}`}
-        maxWidth="max-w-4xl"
-      >
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <StatCard 
-              label="Total Comprado" 
-              value={`Kz ${history.reduce((acc, p) => acc + p.total_amount, 0).toLocaleString()}`} 
-              icon={ShoppingCart} 
-              color="blue" 
-            />
-            <StatCard 
-              label="Dívida Atual" 
-              value={`Kz ${history.reduce((acc, p) => acc + (p.total_amount - p.paid_amount), 0).toLocaleString()}`} 
-              icon={AlertTriangle} 
-              color="rose" 
-            />
-            <StatCard 
-              label="Última Compra" 
-              value={history[0] ? new Date(history[0].timestamp).toLocaleDateString() : '-'} 
-              icon={Calendar} 
-              color="emerald" 
-            />
-          </div>
-
-          <Card className="overflow-hidden border-zinc-100">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-zinc-50 border-b border-zinc-100">
-                  <tr>
-                    <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Data</th>
-                    <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Fatura</th>
-                    <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Total</th>
-                    <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Pago</th>
-                    <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {history.map(purchase => (
-                    <tr key={purchase.id}>
-                      <td className="px-6 py-4 text-sm text-zinc-600">{new Date(purchase.timestamp).toLocaleDateString()}</td>
-                      <td className="px-6 py-4 text-sm font-bold text-zinc-800">{purchase.invoice_number}</td>
-                      <td className="px-6 py-4 text-sm font-bold">Kz {purchase.total_amount.toLocaleString()}</td>
-                      <td className="px-6 py-4 text-sm text-emerald-600 font-medium">Kz {purchase.paid_amount.toLocaleString()}</td>
-                      <td className="px-6 py-4">
-                        <span className={cn(
-                          "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
-                          purchase.status === 'paid' ? "bg-emerald-100 text-emerald-600" : 
-                          purchase.status === 'partial' ? "bg-amber-100 text-amber-600" : "bg-rose-100 text-rose-600"
-                        )}>
-                          {purchase.status === 'paid' ? 'Pago' : purchase.status === 'partial' ? 'Parcial' : 'Pendente'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                  {history.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="px-6 py-8 text-center text-zinc-400 italic">Nenhuma compra registada.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
-      </Modal>
-    </div>
-  );
-};
-
-const OwnerPurchases = ({ user }: { user: User }) => {
-  const [purchases, setPurchases] = useState<any[]>([]);
-  const [suppliers, setSuppliers] = useState<any[]>([]);
-  const [stores, setStores] = useState<any[]>([]);
-  const [products, setProducts] = useState<any[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [selectedPurchase, setSelectedPurchase] = useState<any>(null);
-  const [selectedStoreId, setSelectedStoreId] = useState<string>('all');
-  const [loading, setLoading] = useState(false);
-
-  const [formData, setFormData] = useState({
-    store_id: '',
-    supplier_id: '',
-    invoice_number: '',
-    due_date: '',
-    items: [] as any[],
-    paid_amount: 0,
-  });
-
-  const [paymentData, setPaymentData] = useState({
-    amount: 0,
-    payment_method: 'transfer'
-  });
-
-  useEffect(() => {
-    fetchStores();
-    fetchSuppliers();
-  }, [user.id]);
-
-  useEffect(() => {
-    if (selectedStoreId !== 'all') {
-      fetchPurchases(selectedStoreId);
-      fetchProducts(selectedStoreId);
-    } else if (stores.length > 0) {
-      setSelectedStoreId(stores[0].id.toString());
-    }
-  }, [selectedStoreId, stores]);
-
-  const fetchStores = async () => {
-    try {
-      const res = await fetch(`/api/owner/stores/${user.id}`);
-      const data = await res.json();
-      setStores(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const fetchSuppliers = async () => {
-    try {
-      const res = await fetch(`/api/owner/suppliers/${user.id}`);
-      const data = await res.json();
-      setSuppliers(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const fetchPurchases = async (storeId: string) => {
-    try {
-      const res = await fetch(`/api/owner/purchases/${storeId}`);
-      const data = await res.json();
-      setPurchases(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const fetchProducts = async (storeId: string) => {
-    try {
-      const res = await fetch(`/api/owner/products/${storeId}`);
-      const data = await res.json();
-      setProducts(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleAddProduct = (productId: string) => {
-    const product = products.find(p => p.id.toString() === productId);
-    if (!product) return;
-    
-    if (formData.items.find(item => item.product_id === product.id)) return;
-
-    setFormData({
-      ...formData,
-      items: [...formData.items, {
-        product_id: product.id,
-        name: product.name,
-        quantity: 1,
-        price: product.cost_price || 0
-      }]
-    });
-  };
-
-  const handleUpdateItem = (index: number, field: string, value: any) => {
-    const newItems = [...formData.items];
-    newItems[index] = { ...newItems[index], [field]: value };
-    setFormData({ ...formData, items: newItems });
-  };
-
-  const handleRemoveItem = (index: number) => {
-    setFormData({
-      ...formData,
-      items: formData.items.filter((_, i) => i !== index)
-    });
-  };
-
-  const calculateTotal = () => {
-    return formData.items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
-  };
-
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (formData.items.length === 0) {
-      alert("Adicione pelo menos um produto.");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const total_amount = calculateTotal();
-      const res = await fetch('/api/owner/purchases', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          total_amount,
-          user_id: user.id
-        })
-      });
-
-      if (res.ok) {
-        setIsModalOpen(false);
-        resetForm();
-        fetchPurchases(selectedStoreId);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handlePayment = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!selectedPurchase) return;
-
-    setLoading(true);
-    try {
-      const res = await fetch('/api/owner/purchase-payments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          purchase_id: selectedPurchase.id,
-          amount: paymentData.amount,
-          payment_method: paymentData.payment_method
-        })
-      });
-
-      if (res.ok) {
-        setIsPaymentModalOpen(false);
-        fetchPurchases(selectedStoreId);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const resetForm = () => {
-    setFormData({
-      store_id: selectedStoreId,
-      supplier_id: '',
-      invoice_number: '',
-      due_date: '',
-      items: [],
-      paid_amount: 0,
-    });
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black tracking-tight">Compras e Faturas</h2>
-          <p className="text-zinc-500">Gira as suas compras, faturas e dívidas a fornecedores.</p>
-        </div>
-        <div className="flex w-full md:w-auto gap-2">
-          <select 
-            value={selectedStoreId}
-            onChange={e => setSelectedStoreId(e.target.value)}
-            className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all font-bold"
-          >
-            {stores.map(s => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-          <button 
-            onClick={() => {
-              resetForm();
-              setIsModalOpen(true);
-            }}
-            className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
-          >
-            <Plus size={20} />
-            Nova Compra
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard 
-          label="Total em Dívida" 
-          value={`Kz ${purchases.reduce((sum, p) => sum + (p.total_amount - p.paid_amount), 0).toLocaleString()}`}
-          icon={AlertTriangle}
-          color="text-rose-600"
-        />
-        <StatCard 
-          label="Compras este Mês" 
-          value={purchases.length.toString()}
-          icon={ShoppingCart}
-          color="text-blue-600"
-        />
-        <StatCard 
-          label="Total Comprado" 
-          value={`Kz ${purchases.reduce((sum, p) => sum + p.total_amount, 0).toLocaleString()}`}
-          icon={DollarSign}
-          color="text-emerald-600"
-        />
-      </div>
-
-      <Card className="overflow-hidden border-zinc-100 shadow-sm rounded-2xl">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left min-w-[800px]">
-            <thead className="bg-zinc-50 border-b border-zinc-100">
-              <tr>
-                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Fatura / Data</th>
-                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Fornecedor</th>
-                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Valor Total</th>
-                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Pago / Restante</th>
-                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Status</th>
-                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {purchases.map(purchase => (
-                <tr key={purchase.id} className="hover:bg-zinc-50/50 transition-colors">
-                  <td className="px-6 py-4">
-                    <p className="font-bold text-zinc-800">#{purchase.invoice_number}</p>
-                    <p className="text-xs text-zinc-500">{new Date(purchase.timestamp).toLocaleDateString()}</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm font-medium text-zinc-700">{purchase.supplier_name}</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm font-black text-zinc-900">Kz {purchase.total_amount.toLocaleString()}</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-xs text-emerald-600 font-bold">Pago: Kz {purchase.paid_amount.toLocaleString()}</p>
-                    <p className="text-xs text-rose-600 font-bold">Falta: Kz {(purchase.total_amount - purchase.paid_amount).toLocaleString()}</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={cn(
-                      "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
-                      purchase.status === 'paid' ? "bg-emerald-100 text-emerald-600" : 
-                      purchase.status === 'partial' ? "bg-orange-100 text-orange-600" : "bg-rose-100 text-rose-600"
-                    )}>
-                      {purchase.status === 'paid' ? 'Liquidado' : 
-                       purchase.status === 'partial' ? 'Parcial' : 'Pendente'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {purchase.status !== 'paid' && (
-                        <button 
-                          onClick={() => {
-                            setSelectedPurchase(purchase);
-                            setPaymentData({
-                              amount: purchase.total_amount - purchase.paid_amount,
-                              payment_method: 'transfer'
-                            });
-                            setIsPaymentModalOpen(true);
-                          }}
-                          className="p-2 text-zinc-400 hover:text-emerald-600 transition-colors"
-                          title="Registar Pagamento"
-                        >
-                          <DollarSign size={18} />
-                        </button>
-                      )}
-                      <button 
-                        className="p-2 text-zinc-400 hover:text-black transition-colors"
-                        title="Ver Detalhes"
-                      >
-                        <Eye size={18} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-
-      <Modal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        title="Registar Nova Compra"
-        maxWidth="max-w-4xl"
-      >
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Loja de Destino</label>
-              <select 
-                required
-                value={formData.store_id}
-                onChange={e => setFormData({...formData, store_id: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-              >
-                <option value="">Seleccione a Loja</option>
-                {stores.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Fornecedor</label>
-              <select 
-                required
-                value={formData.supplier_id}
-                onChange={e => setFormData({...formData, supplier_id: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-              >
-                <option value="">Seleccione o Fornecedor</option>
-                {suppliers.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nº da Fatura</label>
-              <input 
-                required
-                type="text" 
-                value={formData.invoice_number}
-                onChange={e => setFormData({...formData, invoice_number: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                placeholder="Ex: FAT/2024/001"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">Produtos Comprados</h3>
-              <select 
-                onChange={e => handleAddProduct(e.target.value)}
-                value=""
-                className="px-4 py-2 bg-zinc-100 border-none rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-black"
-              >
-                <option value="">+ Adicionar Produto</option>
-                {products.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="border border-zinc-100 rounded-2xl overflow-hidden">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-zinc-50">
-                  <tr>
-                    <th className="px-4 py-3 font-bold text-zinc-500">Produto</th>
-                    <th className="px-4 py-3 font-bold text-zinc-500 w-24">Qtd</th>
-                    <th className="px-4 py-3 font-bold text-zinc-500 w-32">Preço Custo</th>
-                    <th className="px-4 py-3 font-bold text-zinc-500 w-32">Subtotal</th>
-                    <th className="px-4 py-3 text-right"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {formData.items.map((item, index) => (
-                    <tr key={item.product_id}>
-                      <td className="px-4 py-3 font-medium">{item.name}</td>
-                      <td className="px-4 py-3">
-                        <input 
-                          type="number" 
-                          min="1"
-                          value={item.quantity}
-                          onChange={e => handleUpdateItem(index, 'quantity', parseInt(e.target.value))}
-                          className="w-full px-2 py-1 bg-white border border-zinc-200 rounded-lg outline-none focus:ring-2 focus:ring-black"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input 
-                          type="number" 
-                          min="0"
-                          value={item.price}
-                          onChange={e => handleUpdateItem(index, 'price', parseFloat(e.target.value))}
-                          className="w-full px-2 py-1 bg-white border border-zinc-200 rounded-lg outline-none focus:ring-2 focus:ring-black"
-                        />
-                      </td>
-                      <td className="px-4 py-3 font-bold">
-                        Kz {(item.quantity * item.price).toLocaleString()}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button 
-                          type="button"
-                          onClick={() => handleRemoveItem(index)}
-                          className="text-rose-500 hover:bg-rose-50 p-1 rounded-lg transition-colors"
-                        >
-                          <X size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {formData.items.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-zinc-400 italic">
-                        Nenhum produto adicionado.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Valor Pago Inicialmente</label>
-                <input 
-                  type="number" 
-                  min="0"
-                  max={calculateTotal()}
-                  value={formData.paid_amount}
-                  onChange={e => setFormData({...formData, paid_amount: parseFloat(e.target.value)})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all font-black text-xl"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Data de Vencimento (se pendente)</label>
-                <input 
-                  type="date" 
-                  value={formData.due_date}
-                  onChange={e => setFormData({...formData, due_date: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                />
-              </div>
-            </div>
-
-            <div className="bg-zinc-900 text-white p-6 rounded-[2rem] space-y-2">
-              <div className="flex justify-between items-center opacity-60">
-                <span className="text-sm font-bold uppercase tracking-widest">Total da Compra</span>
-                <span className="font-bold">Kz {calculateTotal().toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-bold uppercase tracking-widest">Restante em Dívida</span>
-                <span className="text-2xl font-black text-rose-400">Kz {(calculateTotal() - formData.paid_amount).toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
-
-          <button 
-            type="submit" 
-            disabled={loading}
-            className="w-full bg-black text-white py-4 rounded-2xl font-black text-lg hover:bg-zinc-800 transition-all active:scale-95 disabled:opacity-50"
-          >
-            {loading ? 'Processando...' : 'Confirmar Compra e Entrada de Stock'}
-          </button>
-        </form>
-      </Modal>
-
-      <Modal 
-        isOpen={isPaymentModalOpen} 
-        onClose={() => setIsPaymentModalOpen(false)} 
-        title="Registar Pagamento a Fornecedor"
-      >
-        <form onSubmit={handlePayment} className="space-y-6">
-          {selectedPurchase && (
-            <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100">
-              <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Resumo da Dívida</p>
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium">Fatura: {selectedPurchase.invoice_number}</span>
-                <span className="text-lg font-black text-rose-600">Kz {(selectedPurchase.total_amount - selectedPurchase.paid_amount).toLocaleString()}</span>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Valor do Pagamento</label>
-              <input 
-                required
-                type="number" 
-                min="1"
-                max={selectedPurchase ? selectedPurchase.total_amount - selectedPurchase.paid_amount : undefined}
-                value={paymentData.amount}
-                onChange={e => setPaymentData({...paymentData, amount: parseFloat(e.target.value)})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all font-black text-2xl"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Forma de Pagamento</label>
-              <select 
-                value={paymentData.payment_method}
-                onChange={e => setPaymentData({...paymentData, payment_method: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all font-bold"
-              >
-                <option value="cash">Dinheiro</option>
-                <option value="transfer">Transferência</option>
-                <option value="multicaixa">Multicaixa</option>
-                <option value="check">Cheque</option>
-              </select>
-            </div>
-          </div>
-
-          <button 
-            type="submit" 
-            disabled={loading}
-            className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black text-lg hover:bg-emerald-700 transition-all active:scale-95 disabled:opacity-50"
-          >
-            {loading ? 'Processando...' : 'Confirmar Pagamento'}
-          </button>
-        </form>
-      </Modal>
-    </div>
-  );
-};
-
-const OwnerReports = ({ user }: { user: User }) => {
-  const [data, setData] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const reportRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    fetch(`/api/owner/global-reports/${user.id}`)
-      .then(res => res.json())
-      .then(data => {
-        setData(data);
-        setIsLoading(false);
-      });
-  }, [user.id]);
-
-  const exportToPDF = async () => {
-    if (!reportRef.current) return;
-    const canvas = await html2canvas(reportRef.current, { scale: 2 });
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-    pdf.save('Relatorio_Global.pdf');
-  };
-
-  const exportToExcel = () => {
-    if (!data) return;
-    
-    // Create a workbook
-    const wb = XLSX.utils.book_new();
-    
-    // Summary Sheet
-    const summaryData = [
-      ['Relatório Global de Vendas'],
-      ['Data de Extração', new Date().toLocaleString()],
-      [''],
-      ['Métrica', 'Valor'],
-      ['Receita Total', `Kz ${data.totalRevenue.toLocaleString()}`],
-      ['Total de Vendas', data.totalSales],
-    ];
-    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-    XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumo');
-    
-    // Store Revenue Sheet
-    const wsStore = XLSX.utils.json_to_sheet(data.revenueByStore);
-    XLSX.utils.book_append_sheet(wb, wsStore, 'Receita por Loja');
-    
-    // Top Products Sheet
-    const wsProducts = XLSX.utils.json_to_sheet(data.topProducts);
-    XLSX.utils.book_append_sheet(wb, wsProducts, 'Produtos Mais Vendidos');
-    
-    // Write file
-    XLSX.writeFile(wb, 'Relatorio_Global.xlsx');
-  };
-
-  if (isLoading) return <div className="p-12 text-center">Carregando relatórios...</div>;
-
-  return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-black tracking-tight">Relatórios Globais</h2>
-          <p className="text-zinc-500">Desempenho consolidado de todas as suas lojas.</p>
-        </div>
-        <div className="flex gap-2">
-          <button 
-            onClick={exportToExcel}
-            className="bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all active:scale-95"
-          >
-            <FileText size={20} /> Exportar Excel
-          </button>
-          <button 
-            onClick={exportToPDF}
-            className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
-          >
-            <Download size={20} /> Exportar PDF
-          </button>
-        </div>
-      </div>
-
-      <div ref={reportRef} className="space-y-8 bg-white p-8 rounded-3xl border border-zinc-100">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <Card className="p-6 bg-zinc-900 text-white border-none rounded-2xl">
-            <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Receita Total</p>
-            <h3 className="text-3xl font-black">Kz {data.totalRevenue.toLocaleString()}</h3>
-            <div className="mt-4 flex items-center gap-2 text-emerald-400 text-xs font-bold">
-              <TrendingUp size={14} /> +12% vs mês anterior
-            </div>
-          </Card>
-          
-          <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Total de Vendas</p>
-            <h3 className="text-3xl font-black">{data.totalSales.toLocaleString()}</h3>
-            <p className="text-xs text-zinc-400 mt-4 font-medium">Consolidado de todas as lojas</p>
-          </Card>
-
-          <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Ticket Médio</p>
-            <h3 className="text-3xl font-black">Kz {(data.totalRevenue / (data.totalSales || 1)).toLocaleString()}</h3>
-            <p className="text-xs text-zinc-400 mt-4 font-medium">Valor médio por venda</p>
-          </Card>
-
-          <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Lojas Ativas</p>
-            <h3 className="text-3xl font-black">{data.revenueByStore.length}</h3>
-            <p className="text-xs text-zinc-400 mt-4 font-medium">Contribuindo para os resultados</p>
-          </Card>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
-            <h4 className="text-lg font-black mb-6 flex items-center gap-2">
-              <TrendingUp size={20} className="text-orange-500" />
-              Evolução de Vendas (30 dias)
-            </h4>
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data.salesByDay}>
-                  <defs>
-                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f97316" stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis 
-                    dataKey="date" 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{fontSize: 10, fill: '#94a3b8'}}
-                    tickFormatter={(val) => new Date(val).toLocaleDateString('pt-AO', { day: '2-digit', month: 'short' })}
-                  />
-                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
-                  <Tooltip 
-                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                    formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Receita']}
-                  />
-                  <Area type="monotone" dataKey="revenue" stroke="#f97316" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-
-          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
-            <h4 className="text-lg font-black mb-6 flex items-center gap-2">
-              <PieChartIcon size={20} className="text-blue-500" />
-              Receita por Loja
-            </h4>
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.revenueByStore} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
-                  <XAxis type="number" hide />
-                  <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 600}} width={100} />
-                  <Tooltip 
-                    cursor={{fill: '#f8fafc'}}
-                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                    formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Receita']}
-                  />
-                  <Bar dataKey="revenue" fill="#3b82f6" radius={[0, 8, 8, 0]} barSize={24} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <Card className="lg:col-span-2 p-8 border-zinc-100 rounded-3xl shadow-sm">
-            <h4 className="text-lg font-black mb-6">Top 10 Produtos (Global)</h4>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">
-                    <th className="pb-4">Produto</th>
-                    <th className="pb-4 text-center">Qtd Vendida</th>
-                    <th className="pb-4 text-right">Receita Gerada</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-50">
-                  {data.topProducts.map((p: any, i: number) => (
-                    <tr key={i} className="group hover:bg-zinc-50/50 transition-colors">
-                      <td className="py-4 font-bold text-zinc-800">{p.name}</td>
-                      <td className="py-4 text-center font-medium text-zinc-600">{p.quantity}</td>
-                      <td className="py-4 text-right font-black text-zinc-900">Kz {p.revenue.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-
-          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
-            <h4 className="text-lg font-black mb-6">Métodos de Pagamento</h4>
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={data.paymentMethods}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {data.paymentMethods.map((entry: any, index: number) => (
-                      <Cell key={`cell-${index}`} fill={['#f97316', '#3b82f6', '#10b981', '#6366f1'][index % 4]} />
-                    ))}
-                  </Pie>
-                  <Tooltip 
-                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                  />
-                  <Legend verticalAlign="bottom" height={36}/>
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const OwnerSettings = ({ user }: { user: User }) => {
-  const [formData, setFormData] = useState({
-    name: user.name || '',
-    email: user.email || '',
-    phone: '',
-    nif: '',
-    address: '',
-    company_name: '',
-    password: '',
-    confirmPassword: ''
-  });
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    fetch(`/api/admin/clients/${user.id}/details`)
-      .then(res => res.json())
-      .then(data => {
-        setFormData({
-          ...formData,
-          name: data.client.name,
-          email: data.client.email,
-          phone: data.client.phone || '',
-          nif: data.client.nif || '',
-          address: data.client.address || '',
-          company_name: data.client.company_name || ''
-        });
-        setIsLoading(false);
-      });
-  }, [user.id]);
-
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (formData.password && formData.password !== formData.confirmPassword) {
-      alert("As senhas não coincidem");
-      return;
-    }
-    setIsSaving(true);
-    try {
-      const res = await fetch(`/api/profile/${user.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
-      });
-      if (res.ok) {
-        alert("Perfil actualizado com sucesso!");
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  if (isLoading) return <div className="p-12 text-center text-zinc-500">Carregando configurações...</div>;
-
-  return (
-    <div className="max-w-4xl mx-auto space-y-8">
-      <div>
-        <h2 className="text-2xl font-black tracking-tight">Configurações da Conta</h2>
-        <p className="text-zinc-500">Gerencie seus dados de proprietário e preferências do sistema.</p>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-6">
-          <Card>
-            <div className="p-6 border-b border-zinc-100">
-              <h3 className="font-bold">Informações Pessoais</h3>
-            </div>
-            <form onSubmit={handleSubmit} className="p-6 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nome Completo</label>
-                  <input 
-                    type="text" 
-                    value={formData.name}
-                    onChange={e => setFormData({...formData, name: e.target.value})}
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Email</label>
-                  <input 
-                    type="email" 
-                    value={formData.email}
-                    onChange={e => setFormData({...formData, email: e.target.value})}
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Telefone</label>
-                  <input 
-                    type="text" 
-                    value={formData.phone}
-                    onChange={e => setFormData({...formData, phone: e.target.value})}
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">NIF</label>
-                  <input 
-                    type="text" 
-                    value={formData.nif}
-                    onChange={e => setFormData({...formData, nif: e.target.value})}
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
-                  />
-                </div>
-                <div className="col-span-full">
-                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nome da Empresa</label>
-                  <input 
-                    type="text" 
-                    value={formData.company_name}
-                    onChange={e => setFormData({...formData, company_name: e.target.value})}
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
-                  />
-                </div>
-                <div className="col-span-full">
-                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Endereço Fiscal</label>
-                  <textarea 
-                    value={formData.address}
-                    onChange={e => setFormData({...formData, address: e.target.value})}
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all h-24 resize-none"
-                  />
-                </div>
-              </div>
-
-              <div className="pt-6 border-t border-zinc-100">
-                <h4 className="font-bold text-sm mb-4">Alterar Palavra-passe</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nova Palavra-passe</label>
-                    <input 
-                      type="password" 
-                      value={formData.password}
-                      onChange={e => setFormData({...formData, password: e.target.value})}
-                      className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
-                      placeholder="Deixe em branco para manter"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Confirmar Palavra-passe</label>
-                    <input 
-                      type="password" 
-                      value={formData.confirmPassword}
-                      onChange={e => setFormData({...formData, confirmPassword: e.target.value})}
-                      className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
-                      placeholder="Confirme a nova senha"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-6 border-t border-zinc-100 flex justify-end">
-                <button 
-                  type="submit" 
-                  disabled={isSaving}
-                  className="px-8 py-3 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all disabled:opacity-50"
-                >
-                  {isSaving ? 'Guardando...' : 'Guardar Alterações'}
-                </button>
-              </div>
-            </form>
-          </Card>
-        </div>
-
-        <div className="space-y-6">
-          <Card className="p-6 bg-black text-white">
-            <h3 className="font-bold mb-4">Estado da Subscrição</h3>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-zinc-400">Plano Actual</span>
-                <span className="font-bold bg-white/10 px-2 py-1 rounded text-xs uppercase">Profissional</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-zinc-400">Expira em</span>
-                <span className="font-bold">31/12/2026</span>
-              </div>
-              <div className="pt-4 border-t border-white/10">
-                <button className="w-full py-3 bg-white text-black rounded-xl font-bold text-sm hover:bg-zinc-100 transition-all">
-                  Renovar Subscrição
-                </button>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="p-6">
-            <h3 className="font-bold mb-4">Segurança</h3>
-            <div className="space-y-4">
-              <div className="flex items-center gap-3 text-sm text-zinc-600">
-                <ShieldCheck size={18} className="text-emerald-500" />
-                Autenticação de dois factores activa
-              </div>
-              <div className="flex items-center gap-3 text-sm text-zinc-600">
-                <Clock size={18} className="text-zinc-400" />
-                Último acesso: Hoje às 14:20
-              </div>
-            </div>
-          </Card>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => {
   const invoiceRef = useRef<HTMLDivElement>(null);
@@ -8643,7 +6530,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                           <input
                             type="number"
                             placeholder="Valor de Abertura"
-                            value={openingAmounts[register.id] || ''}
+                            value={isNaN(Number(openingAmounts[register.id])) ? '' : openingAmounts[register.id]}
                             onChange={e => setOpeningAmounts(prev => ({ ...prev, [register.id]: e.target.value }))}
                             className="w-full pl-12 pr-4 py-4 bg-zinc-50 border border-zinc-100 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-lg"
                           />
@@ -9124,7 +7011,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                         type="number"
                         min="0"
                         disabled={!hasPermission(user, 'pos_discount')}
-                        value={discount}
+                        value={isNaN(Number(discount)) ? '' : discount}
                         onChange={e => setDiscount(Number(e.target.value))}
                         className={cn(
                           "w-full pl-8 pr-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-orange-500 text-xs font-bold",
@@ -9313,7 +7200,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 <input
                   type="number"
                   autoFocus
-                  value={cashReceived}
+                  value={isNaN(Number(cashReceived)) ? '' : cashReceived}
                   onChange={e => setCashReceived(e.target.value)}
                   placeholder="0.00"
                   className="w-full px-6 py-4 bg-zinc-50 border border-zinc-100 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 font-black text-2xl"
@@ -9349,7 +7236,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   </label>
                   <input
                     type="number"
-                    value={splitAmounts.cash}
+                    value={isNaN(Number(splitAmounts.cash)) ? '' : splitAmounts.cash}
                     onChange={e => setSplitAmounts({...splitAmounts, cash: e.target.value})}
                     placeholder="0.00"
                     className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-lg"
@@ -9361,7 +7248,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   </label>
                   <input
                     type="number"
-                    value={splitAmounts.card}
+                    value={isNaN(Number(splitAmounts.card)) ? '' : splitAmounts.card}
                     onChange={e => setSplitAmounts({...splitAmounts, card: e.target.value})}
                     placeholder="0.00"
                     className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-lg"
@@ -9854,7 +7741,7 @@ const SellerCashMovements = ({ user }: { user: User }) => {
               <input
                 type="number"
                 required
-                value={amount}
+                value={isNaN(Number(amount)) ? '' : amount}
                 onChange={e => setAmount(e.target.value)}
                 placeholder="0.00"
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold"
@@ -10156,7 +8043,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
                         <input
                           type="number"
                           placeholder="Valor de Abertura"
-                          value={openingAmounts[register.id] || ''}
+                          value={isNaN(Number(openingAmounts[register.id])) ? '' : openingAmounts[register.id]}
                           onChange={e => {
                             setOpeningAmounts(prev => ({ ...prev, [register.id]: e.target.value }));
                           }}
@@ -10228,7 +8115,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
               <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Valor Físico em Caixa</label>
               <input
                 type="number"
-                value={physicalAmount}
+                value={isNaN(Number(physicalAmount)) ? '' : physicalAmount}
                 onChange={e => setPhysicalAmount(e.target.value)}
                 placeholder="Informe o valor contado..."
                 className="w-full px-6 py-4 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 font-black text-2xl"
@@ -10742,8 +8629,7 @@ export default function App() {
                 <Route path="/owner" element={<OwnerOverview user={user} />} />
                 <Route path="/owner/stores" element={<MyStores user={user} />} />
                 <Route path="/owner/stores/:storeId" element={<StoreAdmin user={user} />} />
-                <Route path="/owner/clients" element={<OwnerClients user={user} />} />
-                <Route path="/owner/suppliers" element={<OwnerSuppliers user={user} />} />
+                <Route path="/owner/partners" element={<OwnerPartners user={user} />} />
                 <Route path="/owner/purchases" element={<OwnerPurchases user={user} />} />
                 <Route path="/owner/services" element={<OwnerServices user={user} />} />
                 <Route path="/owner/rh" element={<OwnerRH user={user} />} />

@@ -965,7 +965,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
               <input 
                 required
                 type="number" 
-                value={employeeForm.base_salary}
+                value={isNaN(Number(employeeForm.base_salary)) ? '' : employeeForm.base_salary}
                 onChange={e => setEmployeeForm({...employeeForm, base_salary: e.target.value})}
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
               />
@@ -1146,7 +1146,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 <input 
                   required
                   type="number" 
-                  value={salaryPaymentForm.amount}
+                  value={isNaN(Number(salaryPaymentForm.amount)) ? '' : salaryPaymentForm.amount}
                   onChange={e => setSalaryPaymentForm({...salaryPaymentForm, amount: e.target.value})}
                   className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
                 />
@@ -1156,7 +1156,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 <input 
                   required
                   type="number" 
-                  value={salaryPaymentForm.bonus}
+                  value={isNaN(Number(salaryPaymentForm.bonus)) ? '' : salaryPaymentForm.bonus}
                   onChange={e => setSalaryPaymentForm({...salaryPaymentForm, bonus: e.target.value})}
                   className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
                 />

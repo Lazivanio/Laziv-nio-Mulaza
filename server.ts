@@ -558,33 +558,57 @@ db.exec(`
 `);
 
 try {
-  const columns = db.prepare("PRAGMA table_info(transactions)").all() as any[];
-  if (!columns.some(col => col.name === 'split_details')) {
+  const columnsTransactions = db.prepare("PRAGMA table_info(transactions)").all() as any[];
+  if (!columnsTransactions.some(col => col.name === 'split_details')) {
     db.exec("ALTER TABLE transactions ADD COLUMN split_details TEXT");
   }
-  if (!columns.some(col => col.name === 'client_name')) {
+  if (!columnsTransactions.some(col => col.name === 'client_name')) {
     db.exec("ALTER TABLE transactions ADD COLUMN client_name TEXT");
   }
-  if (!columns.some(col => col.name === 'client_nif')) {
+  if (!columnsTransactions.some(col => col.name === 'client_nif')) {
     db.exec("ALTER TABLE transactions ADD COLUMN client_nif TEXT");
   }
-  if (!columns.some(col => col.name === 'discount_percent')) {
+  if (!columnsTransactions.some(col => col.name === 'discount_percent')) {
     db.exec("ALTER TABLE transactions ADD COLUMN discount_percent REAL DEFAULT 0");
   }
-  if (!columns.some(col => col.name === 'discount_amount')) {
+  if (!columnsTransactions.some(col => col.name === 'discount_amount')) {
     db.exec("ALTER TABLE transactions ADD COLUMN discount_amount REAL DEFAULT 0");
   }
-  if (!columns.some(col => col.name === 'tax_amount')) {
+  if (!columnsTransactions.some(col => col.name === 'tax_amount')) {
     db.exec("ALTER TABLE transactions ADD COLUMN tax_amount REAL DEFAULT 0");
   }
-  if (!columns.some(col => col.name === 'invoice_number')) {
+  if (!columnsTransactions.some(col => col.name === 'invoice_number')) {
     db.exec("ALTER TABLE transactions ADD COLUMN invoice_number TEXT");
   }
-  if (!columns.some(col => col.name === 'agt_status')) {
+  if (!columnsTransactions.some(col => col.name === 'agt_status')) {
     db.exec("ALTER TABLE transactions ADD COLUMN agt_status TEXT DEFAULT 'pending'"); // 'pending', 'sent', 'error'
   }
+  const columnsPurchases = db.prepare("PRAGMA table_info(purchases)").all() as any[];
+  if (!columnsPurchases.some(col => col.name === 'delivery_status')) {
+    db.exec("ALTER TABLE purchases ADD COLUMN delivery_status TEXT DEFAULT 'pending'"); // 'pending', 'received', 'cancelled'
+  }
+  if (!columnsPurchases.some(col => col.name === 'received_at')) {
+    db.exec("ALTER TABLE purchases ADD COLUMN received_at DATETIME");
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS purchase_returns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER,
+      supplier_id INTEGER,
+      purchase_id INTEGER,
+      total_amount REAL,
+      reason TEXT,
+      items TEXT, -- JSON string of items returned
+      status TEXT DEFAULT 'pending', -- 'pending', 'completed'
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(store_id) REFERENCES stores(id),
+      FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
+      FOREIGN KEY(purchase_id) REFERENCES purchases(id)
+    );
+  `);
 } catch (e) {
-  console.error("Migration error (transactions):", e);
+  console.error("Migration error (purchases/returns):", e);
 }
 
 try {
@@ -2225,7 +2249,14 @@ async function startServer() {
 
   // Client Routes
   app.get("/api/owner/clients/:storeId", (req, res) => {
-    const clients = db.prepare("SELECT * FROM clients WHERE store_id = ? ORDER BY name ASC").all(req.params.storeId);
+    const clients = db.prepare(`
+      SELECT c.*,
+        (SELECT COUNT(*) FROM transactions t WHERE t.client_nif = c.nif) as total_purchases,
+        (SELECT SUM(total_amount) FROM transactions t WHERE t.client_nif = c.nif) as total_spent
+      FROM clients c 
+      WHERE c.store_id = ? 
+      ORDER BY name ASC
+    `).all(req.params.storeId);
     res.json(clients);
   });
 
@@ -2316,6 +2347,22 @@ async function startServer() {
     res.json(purchases.map((p: any) => ({ ...p, items: JSON.parse(p.items) })));
   });
 
+  app.get("/api/owner/suppliers/:ownerId/report", (req, res) => {
+    const report = db.prepare(`
+      SELECT s.id, s.name, s.nif,
+        COUNT(p.id) as total_purchases,
+        IFNULL(SUM(p.total_amount), 0) as total_spent,
+        IFNULL(SUM(p.paid_amount), 0) as total_paid,
+        IFNULL((SUM(p.total_amount) - SUM(p.paid_amount)), 0) as total_debt
+      FROM suppliers s
+      LEFT JOIN purchases p ON s.id = p.supplier_id
+      WHERE s.owner_id = ?
+      GROUP BY s.id
+      ORDER BY total_spent DESC
+    `).all(req.params.ownerId);
+    res.json(report);
+  });
+
   app.post("/api/owner/purchases", (req, res) => {
     const { store_id, supplier_id, total_amount, paid_amount, invoice_number, items, due_date, user_id } = req.body;
     
@@ -2384,6 +2431,75 @@ async function startServer() {
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/owner/purchase-returns/:storeId", (req, res) => {
+    const returns = db.prepare(`
+      SELECT r.*, s.name as supplier_name 
+      FROM purchase_returns r
+      JOIN suppliers s ON r.supplier_id = s.id
+      WHERE r.store_id = ?
+      ORDER BY r.timestamp DESC
+    `).all(req.params.storeId);
+    res.json(returns.map((r: any) => ({ ...r, items: JSON.parse(r.items) })));
+  });
+
+  app.post("/api/owner/purchase-returns", (req, res) => {
+    const { store_id, supplier_id, purchase_id, total_amount, reason, items } = req.body;
+    
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO purchase_returns (store_id, supplier_id, purchase_id, total_amount, reason, items)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      const result = stmt.run(store_id, supplier_id, purchase_id, total_amount, reason, JSON.stringify(items));
+      
+      // Update stock for returned items
+      const parsedItems = items;
+      for (const item of parsedItems) {
+        db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.product_id);
+      }
+      
+      res.json({ id: result.lastInsertRowid });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: "Erro ao registar devolução" });
+    }
+  });
+
+  app.put("/api/owner/purchases/:id/receive", (req, res) => {
+    const { id } = req.params;
+    
+    try {
+      const purchase = db.prepare("SELECT * FROM purchases WHERE id = ?").get(id) as any;
+      if (!purchase) return res.status(404).json({ error: "Compra não encontrada" });
+      if (purchase.delivery_status === 'received') return res.status(400).json({ error: "Compra já recebida" });
+
+      const items = JSON.parse(purchase.items);
+      
+      // Update stock
+      for (const item of items) {
+        db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(item.quantity, item.product_id);
+      }
+      
+      db.prepare("UPDATE purchases SET delivery_status = 'received', received_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      
+      res.json({ success: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: "Erro ao receber encomenda" });
+    }
+  });
+
+  app.put("/api/owner/purchases/:id/cancel", (req, res) => {
+    const { id } = req.params;
+    try {
+      db.prepare("UPDATE purchases SET delivery_status = 'cancelled' WHERE id = ?").run(id);
+      res.json({ success: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: "Erro ao cancelar encomenda" });
     }
   });
 

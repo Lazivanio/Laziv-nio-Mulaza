@@ -333,7 +333,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
                 <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Preço (Kz)</label>
                 <input 
                   type="number" required min="0"
-                  value={formData.price}
+                  value={isNaN(Number(formData.price)) ? '' : formData.price}
                   onChange={e => setFormData({...formData, price: e.target.value})}
                   className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all font-bold"
                   placeholder="0.00"
