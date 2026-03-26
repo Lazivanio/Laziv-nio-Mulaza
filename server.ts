@@ -590,6 +590,15 @@ try {
   if (!columnsPurchases.some(col => col.name === 'received_at')) {
     db.exec("ALTER TABLE purchases ADD COLUMN received_at DATETIME");
   }
+  if (!columnsPurchases.some(col => col.name === 'is_direct')) {
+    db.exec("ALTER TABLE purchases ADD COLUMN is_direct INTEGER DEFAULT 0");
+  }
+  if (!columnsPurchases.some(col => col.name === 'is_stock_updated')) {
+    db.exec("ALTER TABLE purchases ADD COLUMN is_stock_updated INTEGER DEFAULT 0");
+  }
+  if (!columnsPurchases.some(col => col.name === 'is_closed')) {
+    db.exec("ALTER TABLE purchases ADD COLUMN is_closed INTEGER DEFAULT 0");
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS purchase_returns (
@@ -672,7 +681,7 @@ function hasPermission(userId: number, permissionId: string): boolean {
   // If custom_permissions is set (not null), it overrides role permissions
   if (user.custom_permissions !== null && user.custom_permissions !== undefined) {
     try {
-      const customPerms = JSON.parse(user.custom_permissions);
+      const customPerms = typeof user.custom_permissions === 'string' ? JSON.parse(user.custom_permissions) : (user.custom_permissions || []);
       if (Array.isArray(customPerms)) {
         return customPerms.includes(permissionId);
       }
@@ -683,7 +692,7 @@ function hasPermission(userId: number, permissionId: string): boolean {
 
   // Fallback to role permissions
   try {
-    const rolePerms = user.role_permissions ? JSON.parse(user.role_permissions) : [];
+    const rolePerms = user.role_permissions ? (typeof user.role_permissions === 'string' ? JSON.parse(user.role_permissions) : user.role_permissions) : [];
     if (Array.isArray(rolePerms)) {
       return rolePerms.includes(permissionId);
     }
@@ -1437,7 +1446,7 @@ async function startServer() {
     
     res.json(stores.map(s => ({
       ...s,
-      bank_accounts: s.bank_accounts ? JSON.parse(s.bank_accounts) : []
+      bank_accounts: s.bank_accounts ? (typeof s.bank_accounts === 'string' ? JSON.parse(s.bank_accounts) : s.bank_accounts) : []
     })));
   });
 
@@ -1456,7 +1465,7 @@ async function startServer() {
       if (activeLicenses.length > 0) {
         maxStores = activeLicenses.reduce((max, lic) => {
           try {
-            const feat = JSON.parse(lic.features);
+            const feat = typeof lic.features === 'string' ? JSON.parse(lic.features) : (lic.features || []);
             return Math.max(max, feat.max_stores || 0);
           } catch (e) {
             return max;
@@ -2333,7 +2342,7 @@ async function startServer() {
       WHERE p.store_id = ?
       ORDER BY p.timestamp DESC
     `).all(req.params.storeId);
-    res.json(purchases.map((p: any) => ({ ...p, items: JSON.parse(p.items) })));
+    res.json(purchases.map((p: any) => ({ ...p, items: typeof p.items === 'string' ? JSON.parse(p.items) : (p.items || []) })));
   });
 
   app.get("/api/owner/suppliers/:id/purchases", (req, res) => {
@@ -2344,7 +2353,7 @@ async function startServer() {
       WHERE p.supplier_id = ?
       ORDER BY p.timestamp DESC
     `).all(req.params.id);
-    res.json(purchases.map((p: any) => ({ ...p, items: JSON.parse(p.items) })));
+    res.json(purchases.map((p: any) => ({ ...p, items: typeof p.items === 'string' ? JSON.parse(p.items) : (p.items || []) })));
   });
 
   app.get("/api/owner/suppliers/:ownerId/report", (req, res) => {
@@ -2364,15 +2373,30 @@ async function startServer() {
   });
 
   app.post("/api/owner/purchases", (req, res) => {
-    const { store_id, supplier_id, total_amount, paid_amount, invoice_number, items, due_date, user_id } = req.body;
+    const { store_id, supplier_id, total_amount, paid_amount, invoice_number, items, due_date, user_id, delivery_status, is_direct, is_stock_updated, is_closed, status } = req.body;
     
     const transaction = db.transaction(() => {
-      const status = paid_amount >= total_amount ? 'paid' : (paid_amount > 0 ? 'partial' : 'pending');
-      
+      let finalInvoiceNumber = invoice_number;
+      if (!finalInvoiceNumber || finalInvoiceNumber.trim() === '') {
+        const year = new Date().getFullYear();
+        const lastPurchase = db.prepare("SELECT invoice_number FROM purchases WHERE invoice_number LIKE ? ORDER BY id DESC LIMIT 1").get(`FCO-${year}-%`) as { invoice_number: string } | undefined;
+        let sequence = 1;
+        if (lastPurchase && lastPurchase.invoice_number) {
+          const parts = lastPurchase.invoice_number.split('-');
+          if (parts.length > 2) {
+            const lastSeq = parseInt(parts[2]);
+            if (!isNaN(lastSeq)) {
+              sequence = lastSeq + 1;
+            }
+          }
+        }
+        finalInvoiceNumber = `FCO-${year}-${sequence.toString().padStart(4, '0')}`;
+      }
+
       const purchaseResult = db.prepare(`
-        INSERT INTO purchases (store_id, supplier_id, total_amount, paid_amount, status, invoice_number, items, due_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(store_id, supplier_id, total_amount, paid_amount, status, invoice_number, JSON.stringify(items), due_date);
+        INSERT INTO purchases (store_id, supplier_id, total_amount, paid_amount, status, invoice_number, items, due_date, delivery_status, is_direct, is_stock_updated, is_closed)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(store_id, supplier_id, total_amount, (paid_amount || 0), status, finalInvoiceNumber, JSON.stringify(items), due_date, delivery_status, is_direct ? 1 : 0, is_stock_updated ? 1 : 0, is_closed ? 1 : 0);
       
       const purchaseId = purchaseResult.lastInsertRowid;
 
@@ -2383,16 +2407,18 @@ async function startServer() {
         `).run(purchaseId, paid_amount, 'Initial Payment');
       }
 
-      // Create stock movements for each item
-      for (const item of items) {
-        db.prepare(`
-          UPDATE products SET stock = stock + ? WHERE id = ?
-        `).run(item.quantity, item.product_id);
+      // If it's a direct purchase, update stock immediately
+      if (is_direct) {
+        for (const item of items) {
+          db.prepare(`
+            UPDATE products SET stock = stock + ? WHERE id = ?
+          `).run(item.quantity, item.product_id);
 
-        db.prepare(`
-          INSERT INTO stock_movements (store_id, product_id, user_id, type, quantity, reason, supplier_id, purchase_id)
-          VALUES (?, ?, ?, 'in', ?, ?, ?, ?)
-        `).run(store_id, item.product_id, user_id, item.quantity, `Compra - Fatura ${invoice_number}`, supplier_id, purchaseId);
+          db.prepare(`
+            INSERT INTO stock_movements (store_id, product_id, user_id, type, quantity, reason, supplier_id, purchase_id)
+            VALUES (?, ?, ?, 'in', ?, ?, ?, ?)
+          `).run(store_id, item.product_id, user_id, item.quantity, `Compra Direta - Fatura ${finalInvoiceNumber}`, supplier_id, purchaseId);
+        }
       }
 
       return purchaseId;
@@ -2419,8 +2445,8 @@ async function startServer() {
         UPDATE purchases 
         SET paid_amount = paid_amount + ?,
             status = CASE 
-              WHEN paid_amount + ? >= total_amount THEN 'paid'
-              ELSE 'partial'
+              WHEN (paid_amount + ?) >= total_amount THEN 'liquidado'
+              ELSE 'devendo'
             END
         WHERE id = ?
       `).run(amount, amount, purchase_id);
@@ -2434,37 +2460,53 @@ async function startServer() {
     }
   });
 
-  app.get("/api/owner/purchase-returns/:storeId", (req, res) => {
-    const returns = db.prepare(`
-      SELECT r.*, s.name as supplier_name 
-      FROM purchase_returns r
-      JOIN suppliers s ON r.supplier_id = s.id
-      WHERE r.store_id = ?
-      ORDER BY r.timestamp DESC
-    `).all(req.params.storeId);
-    res.json(returns.map((r: any) => ({ ...r, items: JSON.parse(r.items) })));
-  });
-
+  // Purchase Returns
   app.post("/api/owner/purchase-returns", (req, res) => {
     const { store_id, supplier_id, purchase_id, total_amount, reason, items } = req.body;
     
     try {
-      const stmt = db.prepare(`
-        INSERT INTO purchase_returns (store_id, supplier_id, purchase_id, total_amount, reason, items)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `);
-      const result = stmt.run(store_id, supplier_id, purchase_id, total_amount, reason, JSON.stringify(items));
-      
-      // Update stock for returned items
-      const parsedItems = items;
-      for (const item of parsedItems) {
-        db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.product_id);
-      }
-      
-      res.json({ id: result.lastInsertRowid });
-    } catch (e) {
+      const transaction = db.transaction(() => {
+        const stmt = db.prepare(`
+          INSERT INTO purchase_returns (store_id, supplier_id, purchase_id, total_amount, reason, items)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `);
+        const result = stmt.run(store_id, supplier_id, purchase_id, total_amount, reason, JSON.stringify(items));
+        
+        // Update stock for returned items
+        for (const item of items) {
+          db.prepare("UPDATE products SET stock = stock - ? WHERE id = ? AND store_id = ?").run(item.quantity, item.product_id, store_id);
+          
+          // Record stock movement
+          db.prepare(`
+            INSERT INTO stock_movements (store_id, product_id, type, quantity, reason, purchase_id)
+            VALUES (?, ?, 'out', ?, ?, ?)
+          `).run(store_id, item.product_id, item.quantity, `Devolução de Compra - Motivo: ${reason}`, purchase_id);
+        }
+        
+        return result.lastInsertRowid;
+      });
+
+      const id = transaction();
+      res.json({ success: true, id });
+    } catch (e: any) {
       console.error(e);
-      res.status(500).json({ error: "Erro ao registar devolução" });
+      res.status(500).json({ error: e.message || "Erro ao registar devolução" });
+    }
+  });
+
+  app.get("/api/owner/purchase-returns/:storeId", (req, res) => {
+    try {
+      const returns = db.prepare(`
+        SELECT r.*, s.name as supplier_name 
+        FROM purchase_returns r
+        JOIN suppliers s ON r.supplier_id = s.id
+        WHERE r.store_id = ?
+        ORDER BY r.timestamp DESC
+      `).all(req.params.storeId);
+      res.json(returns.map((r: any) => ({ ...r, items: typeof r.items === 'string' ? JSON.parse(r.items || '[]') : (r.items || []) })));
+    } catch (e: any) {
+      console.error(e);
+      res.status(500).json({ error: e.message });
     }
   });
 
@@ -2476,19 +2518,62 @@ async function startServer() {
       if (!purchase) return res.status(404).json({ error: "Compra não encontrada" });
       if (purchase.delivery_status === 'received') return res.status(400).json({ error: "Compra já recebida" });
 
-      const items = JSON.parse(purchase.items);
-      
-      // Update stock
-      for (const item of items) {
-        db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(item.quantity, item.product_id);
-      }
-      
       db.prepare("UPDATE purchases SET delivery_status = 'received', received_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
       
       res.json({ success: true });
     } catch (e) {
       console.error(e);
       res.status(500).json({ error: "Erro ao receber encomenda" });
+    }
+  });
+
+  app.put("/api/owner/purchases/:id/update-stock", (req, res) => {
+    const { id } = req.params;
+    const { user_id } = req.body;
+    
+    const transaction = db.transaction(() => {
+      const purchase = db.prepare("SELECT * FROM purchases WHERE id = ?").get(id) as any;
+      if (!purchase) throw new Error("Compra não encontrada");
+      if (purchase.delivery_status !== 'received') throw new Error("Encomenda ainda não foi recebida");
+      if (purchase.is_stock_updated) throw new Error("Stock já foi atualizado");
+
+      const items = typeof purchase.items === 'string' ? JSON.parse(purchase.items) : (purchase.items || []);
+      
+      for (const item of items) {
+        db.prepare("UPDATE products SET stock = stock + ? WHERE id = ? AND store_id = ?").run(item.quantity, item.product_id, purchase.store_id);
+
+        db.prepare(`
+          INSERT INTO stock_movements (store_id, product_id, user_id, type, quantity, reason, supplier_id, purchase_id)
+          VALUES (?, ?, ?, 'in', ?, ?, ?, ?)
+        `).run(purchase.store_id, item.product_id, user_id, item.quantity, `Recebimento Encomenda - Fatura ${purchase.invoice_number}`, purchase.supplier_id, id);
+      }
+
+      db.prepare("UPDATE purchases SET is_stock_updated = 1 WHERE id = ?").run(id);
+    });
+
+    try {
+      transaction();
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error(e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/owner/purchases/:id/close", (req, res) => {
+    const { id } = req.params;
+    
+    try {
+      const purchase = db.prepare("SELECT * FROM purchases WHERE id = ?").get(id) as any;
+      if (!purchase) return res.status(404).json({ error: "Compra não encontrada" });
+      if (!purchase.is_stock_updated) return res.status(400).json({ error: "Stock deve ser atualizado antes de fechar a encomenda" });
+
+      db.prepare("UPDATE purchases SET is_closed = 1 WHERE id = ?").run(id);
+      
+      res.json({ success: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: "Erro ao fechar encomenda" });
     }
   });
 
@@ -2586,8 +2671,8 @@ async function startServer() {
     
     const sale = db.prepare("SELECT * FROM transactions WHERE id = ?").get(info.lastInsertRowid) as any;
     if (sale) {
-      sale.items = JSON.parse(sale.items);
-      if (sale.split_details) sale.split_details = JSON.parse(sale.split_details);
+      sale.items = typeof sale.items === 'string' ? JSON.parse(sale.items) : (sale.items || []);
+      if (sale.split_details) sale.split_details = typeof sale.split_details === 'string' ? JSON.parse(sale.split_details) : sale.split_details;
       
       // --- SAF-T JSON Generation & AGT Submission ---
       try {
@@ -2651,8 +2736,8 @@ async function startServer() {
     `).all(req.params.sellerId) as any[];
     
     sales.forEach(s => {
-      s.items = JSON.parse(s.items);
-      if (s.split_details) s.split_details = JSON.parse(s.split_details);
+      s.items = typeof s.items === 'string' ? JSON.parse(s.items) : (s.items || []);
+      if (s.split_details) s.split_details = typeof s.split_details === 'string' ? JSON.parse(s.split_details) : s.split_details;
     });
     
     res.json(sales);
@@ -2925,7 +3010,7 @@ async function startServer() {
       const newProforma = db.prepare("SELECT * FROM proforma_invoices WHERE id = ?").get(result.lastInsertRowid) as any;
       res.json({
         ...newProforma,
-        items: JSON.parse(newProforma.items)
+        items: typeof newProforma.items === 'string' ? JSON.parse(newProforma.items) : (newProforma.items || [])
       });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -2936,8 +3021,8 @@ async function startServer() {
     const proformas = db.prepare("SELECT * FROM proforma_invoices WHERE store_id = ? ORDER BY created_at DESC").all(req.params.storeId) as any[];
     res.json(proformas.map(p => ({
       ...p,
-      items: p.items ? JSON.parse(p.items) : [],
-      bank_accounts: p.bank_accounts ? JSON.parse(p.bank_accounts) : []
+      items: p.items ? (typeof p.items === 'string' ? JSON.parse(p.items) : p.items) : [],
+      bank_accounts: p.bank_accounts ? (typeof p.bank_accounts === 'string' ? JSON.parse(p.bank_accounts) : p.bank_accounts) : []
     })));
   });
 

@@ -100,15 +100,15 @@ export const OwnerReports = ({ user }: { user: User }) => {
         <div className="flex gap-2">
           <button 
             onClick={exportToExcel}
-            className="bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all active:scale-95"
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
           >
-            <FileText size={20} /> Exportar Excel
+            <FileText size={18} /> Exportar Excel
           </button>
           <button 
             onClick={exportToPDF}
-            className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-zinc-800 transition-all active:scale-95"
+            className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-black/20"
           >
-            <Download size={20} /> Exportar PDF
+            <Download size={18} /> Exportar PDF
           </button>
         </div>
       </div>

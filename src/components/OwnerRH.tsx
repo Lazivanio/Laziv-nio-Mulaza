@@ -488,7 +488,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                     role: emp.role,
                                     store_id: emp.store_id?.toString() || '',
                                     role_id: emp.role_id?.toString() || '',
-                                    custom_permissions: emp.custom_permissions ? JSON.parse(emp.custom_permissions) : rolePerms,
+                                    custom_permissions: emp.custom_permissions ? (typeof emp.custom_permissions === 'string' ? JSON.parse(emp.custom_permissions) : emp.custom_permissions) : rolePerms,
                                     base_salary: (emp as any).base_salary?.toString() || '',
                                     status: emp.status || 'active'
                                   });
@@ -566,16 +566,16 @@ export const OwnerRH = ({ user }: { user: User }) => {
                       </div>
                     </div>
                     <h4 className="font-bold text-lg mb-1">{role.name}</h4>
-                    <p className="text-xs text-zinc-500 mb-4">{JSON.parse(role.permissions).length} permissões atribuídas</p>
+                    <p className="text-xs text-zinc-500 mb-4">{(typeof role.permissions === 'string' ? JSON.parse(role.permissions) : (role.permissions || [])).length} permissões atribuídas</p>
                     <div className="flex flex-wrap gap-1">
-                      {JSON.parse(role.permissions).slice(0, 3).map((p: string) => (
+                      {(typeof role.permissions === 'string' ? JSON.parse(role.permissions) : (role.permissions || [])).slice(0, 3).map((p: string) => (
                         <span key={p} className="px-2 py-1 bg-zinc-50 text-zinc-600 text-[10px] font-bold rounded-lg border border-zinc-100">
                           {AVAILABLE_PERMISSIONS.find(ap => ap.id === p)?.label || p}
                         </span>
                       ))}
-                      {JSON.parse(role.permissions).length > 3 && (
+                      {(typeof role.permissions === 'string' ? JSON.parse(role.permissions) : (role.permissions || [])).length > 3 && (
                         <span className="px-2 py-1 bg-zinc-50 text-zinc-400 text-[10px] font-bold rounded-lg border border-zinc-100">
-                          +{JSON.parse(role.permissions).length - 3}
+                          +{(typeof role.permissions === 'string' ? JSON.parse(role.permissions) : (role.permissions || [])).length - 3}
                         </span>
                       )}
                     </div>

@@ -199,9 +199,9 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
               resetForm();
               setIsModalOpen(true);
             }}
-            className="bg-orange-600 text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-orange-700 transition-all active:scale-95 shadow-lg shadow-orange-600/20"
+            className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200"
           >
-            <Plus size={20} />
+            <Plus size={18} />
             Novo Fornecedor
           </button>
         </div>
@@ -249,45 +249,45 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
                       {supplier.status === 'active' ? 'Ativo' : 'Inativo'}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <button 
-                        onClick={() => {
-                          setViewingHistory(supplier);
-                          fetchHistory(supplier.id);
-                        }}
-                        className="p-2 text-zinc-400 hover:text-black transition-colors"
-                        title="Ver Histórico"
-                      >
-                        <History size={18} />
-                      </button>
-                      <button 
-                        onClick={() => {
-                          setEditingSupplier(supplier);
-                          setFormData({
-                            name: supplier.name,
-                            company_name: supplier.company_name || '',
-                            nif: supplier.nif || '',
-                            phone: supplier.phone || '',
-                            email: supplier.email || '',
-                            country: supplier.country || 'Angola',
-                            city: supplier.city || '',
-                            address: supplier.address || '',
-                            responsible_person: supplier.responsible_person || '',
-                            payment_method: supplier.payment_method || 'transfer',
-                            payment_term: supplier.payment_term || '7',
-                            observations: supplier.observations || '',
-                            status: supplier.status || 'active'
-                          });
-                          setIsModalOpen(true);
-                        }}
-                        className="p-2 text-zinc-400 hover:text-orange-500 transition-colors"
-                        title="Editar"
-                      >
-                        <Edit2 size={18} />
-                      </button>
-                    </div>
-                  </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button 
+                            onClick={() => {
+                              setViewingHistory(supplier);
+                              fetchHistory(supplier.id);
+                            }}
+                            className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
+                            title="Ver Histórico"
+                          >
+                            <History size={18} />
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setEditingSupplier(supplier);
+                              setFormData({
+                                name: supplier.name,
+                                company_name: supplier.company_name || '',
+                                nif: supplier.nif || '',
+                                phone: supplier.phone || '',
+                                email: supplier.email || '',
+                                country: supplier.country || 'Angola',
+                                city: supplier.city || '',
+                                address: supplier.address || '',
+                                responsible_person: supplier.responsible_person || '',
+                                payment_method: supplier.payment_method || 'transfer',
+                                payment_term: supplier.payment_term || '7',
+                                observations: supplier.observations || '',
+                                status: supplier.status || 'active'
+                              });
+                              setIsModalOpen(true);
+                            }}
+                            className="p-2 text-zinc-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-all"
+                            title="Editar"
+                          >
+                            <Edit2 size={18} />
+                          </button>
+                        </div>
+                      </td>
                 </tr>
               ))}
             </tbody>
@@ -448,7 +448,7 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
                     type="button"
                     onClick={() => setFormData({...formData, status: 'active'})}
                     className={cn(
-                      "flex-1 py-2 rounded-lg text-xs font-bold transition-all",
+                      "flex-1 py-2 rounded-xl text-xs font-bold transition-all",
                       formData.status === 'active' ? "bg-white shadow-sm text-emerald-600" : "text-zinc-500"
                     )}
                   >
@@ -458,7 +458,7 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
                     type="button"
                     onClick={() => setFormData({...formData, status: 'inactive'})}
                     className={cn(
-                      "flex-1 py-2 rounded-lg text-xs font-bold transition-all",
+                      "flex-1 py-2 rounded-xl text-xs font-bold transition-all",
                       formData.status === 'inactive' ? "bg-white shadow-sm text-rose-600" : "text-zinc-500"
                     )}
                   >
@@ -469,7 +469,7 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
             </div>
           </div>
 
-          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold text-lg shadow-lg shadow-black/10 active:scale-95 transition-all">
+          <button type="submit" className="w-full bg-black text-white py-3 rounded-xl font-bold shadow-lg shadow-zinc-200 hover:bg-zinc-800 transition-all active:scale-[0.98]">
             {editingSupplier ? "Guardar Alterações" : "Criar Fornecedor"}
           </button>
         </form>

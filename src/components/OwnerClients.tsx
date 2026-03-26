@@ -117,9 +117,9 @@ export const OwnerClients = ({ user }: { user: User }) => {
             setFormData({ name: '', nif: '', email: '', phone: '', address: '', type: 'individual' });
             setIsModalOpen(true);
           }}
-          className="w-full md:w-auto bg-orange-600 text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-orange-700 transition-all active:scale-95 shadow-lg shadow-orange-600/20"
+          className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200"
         >
-          <Plus size={20} />
+          <Plus size={18} />
           Novo Cliente
         </button>
       </div>
@@ -174,7 +174,7 @@ export const OwnerClients = ({ user }: { user: User }) => {
                           });
                           setIsModalOpen(true);
                         }}
-                        className="p-2 text-zinc-400 hover:text-orange-500 transition-colors"
+                        className="p-2 rounded-lg transition-all text-zinc-400 hover:text-black hover:bg-zinc-100"
                       >
                         <Edit2 size={18} />
                       </button>
@@ -193,12 +193,12 @@ export const OwnerClients = ({ user }: { user: User }) => {
         title={editingClient ? "Editar Cliente" : "Novo Cliente"}
       >
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="flex gap-4 p-1 bg-zinc-100 rounded-xl mb-4">
+          <div className="flex gap-4 p-1 bg-zinc-100 rounded-2xl mb-4">
             <button
               type="button"
               onClick={() => setFormData({ ...formData, type: 'individual' })}
-              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                formData.type === 'individual' ? 'bg-white shadow-sm text-black' : 'text-zinc-500'
+              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
+                formData.type === 'individual' ? 'bg-white shadow-sm text-black' : 'text-zinc-500 hover:bg-zinc-50'
               }`}
             >
               Pessoa Física
@@ -206,8 +206,8 @@ export const OwnerClients = ({ user }: { user: User }) => {
             <button
               type="button"
               onClick={() => setFormData({ ...formData, type: 'company' })}
-              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                formData.type === 'company' ? 'bg-white shadow-sm text-black' : 'text-zinc-500'
+              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
+                formData.type === 'company' ? 'bg-white shadow-sm text-black' : 'text-zinc-500 hover:bg-zinc-50'
               }`}
             >
               Empresa
@@ -268,7 +268,7 @@ export const OwnerClients = ({ user }: { user: User }) => {
           </div>
           <button 
             type="submit"
-            className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95 mt-4"
+            className="w-full bg-black text-white py-3 rounded-xl font-bold shadow-lg shadow-zinc-200 hover:bg-zinc-800 transition-all active:scale-[0.98] mt-4"
           >
             {editingClient ? "Guardar Alterações" : "Registar Cliente"}
           </button>

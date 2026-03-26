@@ -8575,7 +8575,14 @@ export default function App() {
 
   useEffect(() => {
     const saved = localStorage.getItem('user');
-    if (saved) setUser(JSON.parse(saved));
+    if (saved) {
+      try {
+        setUser(JSON.parse(saved));
+      } catch (e) {
+        console.error('Error parsing saved user:', e);
+        localStorage.removeItem('user');
+      }
+    }
   }, []);
 
   const handleLogin = (userData: User) => {

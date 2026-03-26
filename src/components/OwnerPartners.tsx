@@ -180,12 +180,12 @@ export const OwnerPartners = ({ user }: { user: User }) => {
           <h1 className="text-4xl font-black text-zinc-900 tracking-tight">Parceiros</h1>
           <p className="text-zinc-500 mt-1">Gira os seus clientes e fornecedores num único lugar.</p>
         </div>
-        <div className="flex items-center gap-2 bg-zinc-200 p-1 rounded-xl">
+        <div className="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0">
           <button 
             onClick={() => setActiveTab('clients')}
             className={cn(
-              "px-6 py-2.5 rounded-lg font-bold transition-all flex items-center gap-2",
-              activeTab === 'clients' ? "bg-black text-white shadow-sm" : "bg-white text-zinc-600 hover:bg-zinc-50"
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap",
+              activeTab === 'clients' ? "bg-black text-white shadow-lg shadow-black/20" : "bg-white text-zinc-500 hover:bg-zinc-100"
             )}
           >
             <Users size={18} />
@@ -194,8 +194,8 @@ export const OwnerPartners = ({ user }: { user: User }) => {
           <button 
             onClick={() => setActiveTab('suppliers')}
             className={cn(
-              "px-6 py-2.5 rounded-lg font-bold transition-all flex items-center gap-2",
-              activeTab === 'suppliers' ? "bg-black text-white shadow-sm" : "bg-white text-zinc-600 hover:bg-zinc-50"
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap",
+              activeTab === 'suppliers' ? "bg-black text-white shadow-lg shadow-black/20" : "bg-white text-zinc-500 hover:bg-zinc-100"
             )}
           >
             <Briefcase size={18} />
@@ -204,8 +204,8 @@ export const OwnerPartners = ({ user }: { user: User }) => {
           <button 
             onClick={() => setActiveTab('reports')}
             className={cn(
-              "px-6 py-2.5 rounded-lg font-bold transition-all flex items-center gap-2",
-              activeTab === 'reports' ? "bg-black text-white shadow-sm" : "bg-white text-zinc-600 hover:bg-zinc-50"
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap",
+              activeTab === 'reports' ? "bg-black text-white shadow-lg shadow-black/20" : "bg-white text-zinc-500 hover:bg-zinc-100"
             )}
           >
             <TrendingUp size={18} />
@@ -232,9 +232,9 @@ export const OwnerPartners = ({ user }: { user: User }) => {
               setClientForm({ name: '', nif: '', email: '', phone: '', address: '', type: 'individual' });
               setIsClientModalOpen(true);
             }}
-            className="bg-orange-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-orange-700 transition-all active:scale-95 shadow-lg shadow-orange-600/20"
+            className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200"
           >
-            <Plus size={20} />
+            <Plus size={18} />
             Novo Cliente
           </button>
         )}
@@ -245,9 +245,9 @@ export const OwnerPartners = ({ user }: { user: User }) => {
               setSupplierForm({ name: '', nif: '', email: '', phone: '', address: '', category: '' });
               setIsSupplierModalOpen(true);
             }}
-            className="bg-orange-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-orange-700 transition-all active:scale-95 shadow-lg shadow-orange-600/20"
+            className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200"
           >
-            <Plus size={20} />
+            <Plus size={18} />
             Novo Fornecedor
           </button>
         )}
@@ -315,7 +315,7 @@ export const OwnerPartners = ({ user }: { user: User }) => {
                               });
                               setIsClientModalOpen(true);
                             }}
-                            className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-black transition-all"
+                            className="p-2 rounded-lg transition-all text-zinc-400 hover:text-black hover:bg-zinc-100"
                           >
                             <Edit2 size={18} />
                           </button>
@@ -376,7 +376,7 @@ export const OwnerPartners = ({ user }: { user: User }) => {
                             });
                             setIsSupplierModalOpen(true);
                           }}
-                          className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-black transition-all"
+                          className="p-2 rounded-lg transition-all text-zinc-400 hover:text-black hover:bg-zinc-100"
                         >
                           <Edit2 size={18} />
                         </button>
@@ -531,7 +531,7 @@ export const OwnerPartners = ({ user }: { user: User }) => {
           </div>
           <button 
             type="submit"
-            className="w-full bg-orange-600 text-white py-4 rounded-xl font-bold hover:bg-orange-700 transition-all active:scale-95 mt-4"
+            className="w-full bg-black text-white py-3 rounded-xl font-bold shadow-lg shadow-zinc-200 hover:bg-zinc-800 transition-all active:scale-[0.98] mt-4"
           >
             Salvar Cliente
           </button>
@@ -605,7 +605,7 @@ export const OwnerPartners = ({ user }: { user: User }) => {
           </div>
           <button 
             type="submit"
-            className="w-full bg-orange-600 text-white py-4 rounded-xl font-bold hover:bg-orange-700 transition-all active:scale-95 mt-4"
+            className="w-full bg-black text-white py-3 rounded-xl font-bold shadow-lg shadow-zinc-200 hover:bg-zinc-800 transition-all active:scale-[0.98] mt-4"
           >
             Salvar Fornecedor
           </button>
