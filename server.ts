@@ -383,6 +383,27 @@ db.exec(`
     FOREIGN KEY(owner_id) REFERENCES users(id)
   );
 
+  CREATE TABLE IF NOT EXISTS credit_invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    owner_id INTEGER,
+    client_name TEXT,
+    client_nif TEXT,
+    address TEXT,
+    country TEXT,
+    doc_type TEXT,
+    series TEXT,
+    invoice_number TEXT,
+    invoice_date TEXT,
+    currency TEXT,
+    total_amount REAL,
+    tax_amount REAL,
+    items TEXT, -- JSON string
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(owner_id) REFERENCES users(id)
+  );
+
   CREATE TABLE IF NOT EXISTS clients (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     store_id INTEGER,
@@ -3024,6 +3045,48 @@ async function startServer() {
       items: p.items ? (typeof p.items === 'string' ? JSON.parse(p.items) : p.items) : [],
       bank_accounts: p.bank_accounts ? (typeof p.bank_accounts === 'string' ? JSON.parse(p.bank_accounts) : p.bank_accounts) : []
     })));
+  });
+
+  app.post("/api/owner/credit-invoices", (req, res) => {
+    const { 
+      store_id, client_nif, client_name, address, country, 
+      doc_type, series, invoice_number, invoice_date, 
+      currency, total_amount, tax_amount, items 
+    } = req.body;
+
+    try {
+      const result = db.prepare(`
+        INSERT INTO credit_invoices (
+          store_id, client_nif, client_name, address, country, 
+          doc_type, series, invoice_number, invoice_date, 
+          currency, total_amount, tax_amount, items
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        store_id, client_nif, client_name, address, country, 
+        doc_type, series, invoice_number, invoice_date, 
+        currency, total_amount, tax_amount, JSON.stringify(items)
+      );
+
+      const newInvoice = db.prepare("SELECT * FROM credit_invoices WHERE id = ?").get(result.lastInsertRowid) as any;
+      res.json({
+        ...newInvoice,
+        items: typeof newInvoice.items === 'string' ? JSON.parse(newInvoice.items) : (newInvoice.items || [])
+      });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/owner/credit-invoices/:storeId", (req, res) => {
+    try {
+      const invoices = db.prepare("SELECT * FROM credit_invoices WHERE store_id = ? ORDER BY created_at DESC").all(req.params.storeId) as any[];
+      res.json(invoices.map(inv => ({
+        ...inv,
+        items: inv.items ? (typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items) : []
+      })));
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
   });
 
   // Vite middleware for development

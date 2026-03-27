@@ -8,7 +8,11 @@ import {
   Settings2, 
   Home, 
   Upload, 
-  X 
+  X,
+  Wallet,
+  Monitor,
+  CheckCircle,
+  Lock
 } from 'lucide-react';
 import { User, Store as StoreType, BankAccount } from '../types';
 
@@ -66,6 +70,10 @@ export const MyStores = ({ user }: { user: User }) => {
   const [viewingProformasStore, setViewingProformasStore] = useState<StoreType | null>(null);
   const [proformas, setProformas] = useState<any[]>([]);
   const [isProformaListModalOpen, setIsProformaListModalOpen] = useState(false);
+  const [isOpeningModalOpen, setIsOpeningModalOpen] = useState(false);
+  const [selectedStoreForOpening, setSelectedStoreForOpening] = useState<StoreType | null>(null);
+  const [registersForSelectedStore, setRegistersForSelectedStore] = useState<any[]>([]);
+  const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
 
   const fetchStores = () => {
     fetch(`/api/owner/stores/${user.id}`)
@@ -86,6 +94,52 @@ export const MyStores = ({ user }: { user: User }) => {
       fetchProformas(viewingProformasStore.id);
     }
   }, [viewingProformasStore]);
+
+  const handleOpenRegisterModal = (store: StoreType) => {
+    setSelectedStoreForOpening(store);
+    fetch(`/api/owner/stores/${store.id}/cash-registers`)
+      .then(res => res.json())
+      .then(data => {
+        setRegistersForSelectedStore(data);
+        setIsOpeningModalOpen(true);
+      });
+  };
+
+  const handleOpenSession = async (registerId: number, amount: string) => {
+    if (!amount || isNaN(parseFloat(amount))) {
+      alert('Por favor, insira um valor de abertura válido.');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/seller/open-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          store_id: selectedStoreForOpening?.id,
+          seller_id: user.id,
+          cash_register_id: registerId,
+          opening_amount: parseFloat(amount)
+        })
+      });
+
+      if (res.ok) {
+        setOpeningAmounts(prev => ({ ...prev, [registerId]: '' }));
+        if (selectedStoreForOpening) {
+          fetch(`/api/owner/stores/${selectedStoreForOpening.id}/cash-registers`)
+            .then(res => res.json())
+            .then(setRegistersForSelectedStore);
+        }
+        alert('Caixa aberto com sucesso!');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Erro ao abrir caixa.');
+      }
+    } catch (error) {
+      console.error("Error opening session:", error);
+      alert('Erro de conexão ao abrir caixa.');
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -188,6 +242,13 @@ export const MyStores = ({ user }: { user: User }) => {
                     <FileText size={18} />
                   </button>
                   <button 
+                    onClick={() => handleOpenRegisterModal(store)}
+                    className="p-2 text-zinc-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                    title="Abrir Caixa"
+                  >
+                    <Wallet size={18} />
+                  </button>
+                  <button 
                     onClick={() => handleEdit(store)}
                     className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
                   >
@@ -230,8 +291,9 @@ export const MyStores = ({ user }: { user: User }) => {
             </div>
             <Link 
               to={`/owner/stores/${store.id}`}
-              className="block w-full py-4 bg-zinc-50 text-center text-sm font-bold text-zinc-600 hover:bg-black hover:text-white transition-all border-t border-zinc-100"
+              className="block w-full py-4 bg-zinc-50 text-center text-sm font-black text-zinc-600 hover:bg-black hover:text-white transition-all border-t border-zinc-100 flex items-center justify-center gap-2"
             >
+              <Settings2 size={16} />
               Aceder Painel Administrativo
             </Link>
           </Card>
@@ -430,6 +492,79 @@ export const MyStores = ({ user }: { user: User }) => {
             {editingStore ? "Guardar Alterações" : "Criar Loja"}
           </button>
         </form>
+      </Modal>
+
+      <Modal 
+        isOpen={isOpeningModalOpen} 
+        onClose={() => setIsOpeningModalOpen(false)} 
+        title={`Abrir Caixa - ${selectedStoreForOpening?.name}`}
+      >
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {registersForSelectedStore.map(register => {
+              const isOpenedByMe = register.session_status === 'open' && register.seller_id === user.id;
+              const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id;
+
+              return (
+                <div key={register.id} className="p-6 border border-zinc-100 rounded-2xl space-y-4 hover:border-orange-200 transition-all group">
+                  <div className="flex items-center justify-between">
+                    <div className={cn(
+                      "w-12 h-12 rounded-xl flex items-center justify-center",
+                      register.session_status === 'open' ? "bg-emerald-100 text-emerald-600" : "bg-zinc-100 text-zinc-400"
+                    )}>
+                      <Monitor size={24} />
+                    </div>
+                    <span className={cn(
+                      "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider",
+                      register.session_status === 'open' ? "bg-emerald-100 text-emerald-600" : "bg-zinc-100 text-zinc-400"
+                    )}>
+                      {register.session_status === 'open' ? 'Aberto' : 'Fechado'}
+                    </span>
+                  </div>
+
+                  <div>
+                    <h4 className="font-bold text-lg">{register.name}</h4>
+                    <p className="text-xs text-zinc-400 font-mono">{register.code}</p>
+                  </div>
+
+                  {register.session_status === 'open' ? (
+                    <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl flex items-center gap-3">
+                      <CheckCircle size={20} className="text-emerald-600" />
+                      <div>
+                        <p className="text-xs font-bold text-emerald-900">Caixa em Operação</p>
+                        <p className="text-[10px] text-emerald-700">{isOpenedByMe ? 'Aberto por você' : 'Aberto por outro funcionário'}</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 font-bold text-sm">Kz</span>
+                        <input
+                          type="number"
+                          placeholder="Valor de Abertura"
+                          value={openingAmounts[register.id] || ''}
+                          onChange={e => setOpeningAmounts(prev => ({ ...prev, [register.id]: e.target.value }))}
+                          className="w-full pl-10 pr-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold"
+                        />
+                      </div>
+                      <button
+                        onClick={() => handleOpenSession(register.id, openingAmounts[register.id] || register.default_initial_balance.toString())}
+                        className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100"
+                      >
+                        Abrir Caixa
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {registersForSelectedStore.length === 0 && (
+              <div className="col-span-2 py-12 text-center text-zinc-400">
+                Nenhum caixa registado para esta loja.
+              </div>
+            )}
+          </div>
+        </div>
       </Modal>
     </div>
   );
