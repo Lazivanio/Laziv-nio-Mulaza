@@ -284,6 +284,44 @@ db.exec(`
     console.error("Migration error (stock_movements):", e);
   }
 
+  // Migration for credit_invoices
+  try {
+    const columns = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
+    if (!columns.some(col => col.name === 'seller_id')) {
+      db.exec("ALTER TABLE credit_invoices ADD COLUMN seller_id INTEGER");
+    }
+    if (!columns.some(col => col.name === 'payment_method')) {
+      db.exec("ALTER TABLE credit_invoices ADD COLUMN payment_method TEXT");
+    }
+    if (!columns.some(col => col.name === 'parent_invoice_id')) {
+      db.exec("ALTER TABLE credit_invoices ADD COLUMN parent_invoice_id INTEGER");
+    }
+    if (!columns.some(col => col.name === 'reason')) {
+      db.exec("ALTER TABLE credit_invoices ADD COLUMN reason TEXT");
+    }
+    if (!columns.some(col => col.name === 'note_category')) {
+      db.exec("ALTER TABLE credit_invoices ADD COLUMN note_category TEXT");
+    }
+    if (!columns.some(col => col.name === 'adjustment_amount')) {
+      db.exec("ALTER TABLE credit_invoices ADD COLUMN adjustment_amount REAL DEFAULT 0");
+    }
+    if (!columns.some(col => col.name === 'observations')) {
+      db.exec("ALTER TABLE credit_invoices ADD COLUMN observations TEXT");
+    }
+  } catch (e) {
+    console.error("Migration error (credit_invoices):", e);
+  }
+
+  // Migration for purchase_returns
+  try {
+    const columns = db.prepare("PRAGMA table_info(purchase_returns)").all() as any[];
+    if (!columns.some(col => col.name === 'type')) {
+      db.exec("ALTER TABLE purchase_returns ADD COLUMN type TEXT DEFAULT 'credit'");
+    }
+  } catch (e) {
+    console.error("Migration error (purchase_returns):", e);
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -387,6 +425,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     store_id INTEGER,
     owner_id INTEGER,
+    seller_id INTEGER,
     client_name TEXT,
     client_nif TEXT,
     address TEXT,
@@ -398,10 +437,12 @@ db.exec(`
     currency TEXT,
     total_amount REAL,
     tax_amount REAL,
+    payment_method TEXT,
     items TEXT, -- JSON string
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(store_id) REFERENCES stores(id),
-    FOREIGN KEY(owner_id) REFERENCES users(id)
+    FOREIGN KEY(owner_id) REFERENCES users(id),
+    FOREIGN KEY(seller_id) REFERENCES users(id)
   );
 
   CREATE TABLE IF NOT EXISTS clients (
@@ -2481,27 +2522,40 @@ async function startServer() {
     }
   });
 
-  // Purchase Returns
+  // Purchase Returns / Notes
   app.post("/api/owner/purchase-returns", (req, res) => {
-    const { store_id, supplier_id, purchase_id, total_amount, reason, items } = req.body;
+    const { store_id, supplier_id, purchase_id, total_amount, reason, items, type = 'credit' } = req.body;
     
     try {
       const transaction = db.transaction(() => {
         const stmt = db.prepare(`
-          INSERT INTO purchase_returns (store_id, supplier_id, purchase_id, total_amount, reason, items)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO purchase_returns (store_id, supplier_id, purchase_id, total_amount, reason, items, type)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
-        const result = stmt.run(store_id, supplier_id, purchase_id, total_amount, reason, JSON.stringify(items));
+        const result = stmt.run(store_id, supplier_id, purchase_id, total_amount, reason, JSON.stringify(items), type);
         
-        // Update stock for returned items
-        for (const item of items) {
-          db.prepare("UPDATE products SET stock = stock - ? WHERE id = ? AND store_id = ?").run(item.quantity, item.product_id, store_id);
-          
-          // Record stock movement
-          db.prepare(`
-            INSERT INTO stock_movements (store_id, product_id, type, quantity, reason, purchase_id)
-            VALUES (?, ?, 'out', ?, ?, ?)
-          `).run(store_id, item.product_id, item.quantity, `Devolução de Compra - Motivo: ${reason}`, purchase_id);
+        // Update stock for returned items (only if it's a credit note / return)
+        if (type === 'credit') {
+          for (const item of items) {
+            db.prepare("UPDATE products SET stock = stock - ? WHERE id = ? AND store_id = ?").run(item.quantity, item.product_id, store_id);
+            
+            // Record stock movement
+            db.prepare(`
+              INSERT INTO stock_movements (store_id, product_id, type, quantity, reason, purchase_id)
+              VALUES (?, ?, 'out', ?, ?, ?)
+            `).run(store_id, item.product_id, item.quantity, `Nota de Crédito (Devolução) - Motivo: ${reason}`, purchase_id);
+          }
+        } else if (type === 'debit') {
+          // For debit notes, if it involves items, stock should go IN
+          for (const item of items) {
+            db.prepare("UPDATE products SET stock = stock + ? WHERE id = ? AND store_id = ?").run(item.quantity, item.product_id, store_id);
+            
+            // Record stock movement
+            db.prepare(`
+              INSERT INTO stock_movements (store_id, product_id, type, quantity, reason, purchase_id)
+              VALUES (?, ?, 'in', ?, ?, ?)
+            `).run(store_id, item.product_id, item.quantity, `Nota de Débito - Motivo: ${reason}`, purchase_id);
+          }
         }
         
         return result.lastInsertRowid;
@@ -2511,7 +2565,7 @@ async function startServer() {
       res.json({ success: true, id });
     } catch (e: any) {
       console.error(e);
-      res.status(500).json({ error: e.message || "Erro ao registar devolução" });
+      res.status(500).json({ error: e.message || "Erro ao registar nota" });
     }
   });
 
@@ -2651,7 +2705,7 @@ async function startServer() {
     
     // Generate Sequential Invoice Number
     const year = new Date().getFullYear();
-    const lastInvoice = db.prepare("SELECT invoice_number FROM transactions WHERE invoice_number LIKE ? ORDER BY id DESC LIMIT 1").get(`FR ${year}/%`) as { invoice_number: string } | undefined;
+    const lastInvoice = db.prepare("SELECT invoice_number FROM transactions WHERE invoice_number LIKE ? ORDER BY id DESC LIMIT 1").get(`FS ${year}/%`) as { invoice_number: string } | undefined;
     let sequence = 1;
     if (lastInvoice) {
       const parts = lastInvoice.invoice_number.split('/');
@@ -2659,7 +2713,7 @@ async function startServer() {
         sequence = parseInt(parts[1]) + 1;
       }
     }
-    const invoice_number = `FR ${year}/${sequence}`;
+    const invoice_number = `FS ${year}/${sequence}`;
 
     const info = db.prepare(`
       INSERT INTO transactions (
@@ -2687,7 +2741,9 @@ async function startServer() {
     
     // Update stock
     for (const item of items) {
-      db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.id);
+      if (item.type === 'product') {
+        db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.id);
+      }
     }
     
     const sale = db.prepare("SELECT * FROM transactions WHERE id = ?").get(info.lastInsertRowid) as any;
@@ -2748,20 +2804,36 @@ async function startServer() {
   });
 
   app.get("/api/seller/sales/:sellerId", (req, res) => {
-    const sales = db.prepare(`
-      SELECT t.*, s.name as store_name 
+    const sellerId = req.params.sellerId;
+    
+    // Standard transactions (FS)
+    const transactions = db.prepare(`
+      SELECT t.*, s.name as store_name, 'FS' as doc_type
       FROM transactions t
       JOIN stores s ON t.store_id = s.id
       WHERE t.seller_id = ?
-      ORDER BY t.timestamp DESC
-    `).all(req.params.sellerId) as any[];
+    `).all(sellerId) as any[];
     
-    sales.forEach(s => {
+    // Formal invoices (FR, FT)
+    const formalInvoices = db.prepare(`
+      SELECT 
+        id, store_id, seller_id, total_amount, items, 
+        client_name, client_nif, tax_amount, invoice_number,
+        created_at as timestamp, doc_type, 'formal' as source
+      FROM credit_invoices
+      WHERE seller_id = ?
+    `).all(sellerId) as any[];
+
+    const allSales = [...transactions, ...formalInvoices].sort((a, b) => 
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    
+    allSales.forEach(s => {
       s.items = typeof s.items === 'string' ? JSON.parse(s.items) : (s.items || []);
       if (s.split_details) s.split_details = typeof s.split_details === 'string' ? JSON.parse(s.split_details) : s.split_details;
     });
     
-    res.json(sales);
+    res.json(allSales);
   });
 
   // Seller Dashboard Stats
@@ -3051,27 +3123,64 @@ async function startServer() {
     const { 
       store_id, client_nif, client_name, address, country, 
       doc_type, series, invoice_number, invoice_date, 
-      currency, total_amount, tax_amount, items 
+      currency, total_amount, tax_amount, items, seller_id,
+      payment_method, parent_invoice_id, reason, note_category,
+      adjustment_amount, observations
     } = req.body;
 
     try {
-      const result = db.prepare(`
-        INSERT INTO credit_invoices (
+      db.transaction(() => {
+        const result = db.prepare(`
+          INSERT INTO credit_invoices (
+            store_id, client_nif, client_name, address, country, 
+            doc_type, series, invoice_number, invoice_date, 
+            currency, total_amount, tax_amount, items, seller_id,
+            payment_method, parent_invoice_id, reason, note_category,
+            adjustment_amount, observations
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
           store_id, client_nif, client_name, address, country, 
           doc_type, series, invoice_number, invoice_date, 
-          currency, total_amount, tax_amount, items
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        store_id, client_nif, client_name, address, country, 
-        doc_type, series, invoice_number, invoice_date, 
-        currency, total_amount, tax_amount, JSON.stringify(items)
-      );
+          currency, total_amount, tax_amount, JSON.stringify(items), seller_id || null,
+          payment_method || 'cash', parent_invoice_id || null, reason || null, 
+          note_category || null, adjustment_amount || 0, observations || null
+        );
 
-      const newInvoice = db.prepare("SELECT * FROM credit_invoices WHERE id = ?").get(result.lastInsertRowid) as any;
-      res.json({
-        ...newInvoice,
-        items: typeof newInvoice.items === 'string' ? JSON.parse(newInvoice.items) : (newInvoice.items || [])
-      });
+        // Update stock for products
+        for (const item of items) {
+          if (item.type === 'product' && item.quantity > 0) {
+            if (doc_type === 'NC') {
+              // Nota de Crédito
+              if (note_category === 'return') {
+                // Return to stock
+                db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(item.quantity, item.product_id || item.id);
+                
+                // Record stock movement
+                db.prepare(`
+                  INSERT INTO stock_movements (store_id, product_id, type, quantity, reason)
+                  VALUES (?, ?, 'in', ?, ?)
+                `).run(store_id, item.product_id || item.id, item.quantity, `Nota de Crédito (Devolução) - Fatura: ${invoice_number}`);
+              }
+              // If 'correction', stock is not affected
+            } else {
+              // FT, FR, ND - Stock goes OUT
+              db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.product_id || item.id);
+              
+              // Record stock movement
+              db.prepare(`
+                INSERT INTO stock_movements (store_id, product_id, type, quantity, reason)
+                VALUES (?, ?, 'out', ?, ?)
+              `).run(store_id, item.product_id || item.id, item.quantity, `${doc_type === 'ND' ? 'Nota de Débito' : 'Fatura'} - Nº: ${invoice_number}`);
+            }
+          }
+        }
+
+        const newInvoice = db.prepare("SELECT * FROM credit_invoices WHERE id = ?").get(result.lastInsertRowid) as any;
+        res.json({
+          ...newInvoice,
+          items: typeof newInvoice.items === 'string' ? JSON.parse(newInvoice.items) : (newInvoice.items || [])
+        });
+      })();
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

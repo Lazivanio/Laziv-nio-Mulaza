@@ -80,6 +80,7 @@ import {
   AlertCircle,
   CheckCircle2,
   CheckCircle,
+  Receipt,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -3136,6 +3137,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [creditInvoices, setCreditInvoices] = useState<any[]>([]);
   const [isCreditInvoiceModalOpen, setIsCreditInvoiceModalOpen] = useState(false);
   const [isInvoiceTypeModalOpen, setIsInvoiceTypeModalOpen] = useState(false);
+  const [invoiceModalMode, setInvoiceModalMode] = useState<'invoice' | 'note'>('invoice');
   const [selectedCreditInvoice, setSelectedCreditInvoice] = useState<any>(null);
   const [creditInvoiceForm, setCreditInvoiceForm] = useState({
     client_nif: '',
@@ -3147,7 +3149,12 @@ const StoreAdmin = ({ user }: { user: User }) => {
     invoice_number: '',
     invoice_date: new Date().toISOString().split('T')[0],
     currency: 'AOA',
-    items: [] as any[]
+    items: [] as any[],
+    parent_invoice_id: '',
+    reason: '',
+    note_category: 'return' as 'return' | 'correction',
+    adjustment_amount: 0,
+    observations: ''
   });
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
@@ -3746,10 +3753,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
 
   const handleCreateCreditInvoice = async (e: FormEvent) => {
     e.preventDefault();
-    if (creditInvoiceForm.items.length === 0) return;
+    if (creditInvoiceForm.items.length === 0 && !creditInvoiceForm.adjustment_amount) return;
 
-    const total_amount = creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
-    const tax_amount = creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * (item.tax / 100)), 0);
+    const items_total = creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+    const items_tax = creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * (item.tax / 100)), 0);
+    
+    // For ND, we might have an adjustment amount without items
+    const total_amount = items_total + (creditInvoiceForm.adjustment_amount || 0);
+    const tax_amount = items_tax; // Assuming adjustment_amount is tax-exempt or tax is already included? 
+    // Usually, adjustments are financial. Let's stick to items tax for now.
 
     const res = await fetch('/api/owner/credit-invoices', {
       method: 'POST',
@@ -3758,7 +3770,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
         ...creditInvoiceForm, 
         store_id: storeId,
         total_amount,
-        tax_amount
+        tax_amount,
+        seller_id: user?.id
       })
     });
 
@@ -3774,7 +3787,12 @@ const StoreAdmin = ({ user }: { user: User }) => {
         invoice_number: '',
         invoice_date: new Date().toISOString().split('T')[0],
         currency: 'AOA',
-        items: [] as any[]
+        items: [] as any[],
+        parent_invoice_id: '',
+        reason: '',
+        note_category: 'return',
+        adjustment_amount: 0,
+        observations: ''
       });
       fetchData();
     }
@@ -4554,55 +4572,247 @@ const StoreAdmin = ({ user }: { user: User }) => {
               <Modal
                 isOpen={isInvoiceTypeModalOpen}
                 onClose={() => setIsInvoiceTypeModalOpen(false)}
-                title="Nova Fatura"
+                title={invoiceModalMode === 'invoice' ? "Nova Fatura" : "Nova Nota"}
                 maxWidth="max-w-md"
               >
-                <div className="grid grid-cols-1 gap-4 p-4">
-                  <button 
-                    onClick={() => {
-                      setCreditInvoiceForm({...creditInvoiceForm, doc_type: 'FT'});
-                      setIsInvoiceTypeModalOpen(false);
-                      setIsCreditInvoiceModalOpen(true);
-                    }}
-                    className="flex flex-col items-center gap-4 p-8 bg-zinc-50 border-2 border-zinc-100 rounded-3xl hover:border-black hover:bg-zinc-100 transition-all group"
-                  >
-                    <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
-                      <CreditCard className="text-zinc-400 group-hover:text-black" size={32} />
-                    </div>
-                    <div className="text-center">
-                      <h4 className="font-black uppercase tracking-widest text-sm">Fatura Crédito</h4>
-                      <p className="text-xs text-zinc-500 mt-1">Venda a prazo para pagamento posterior.</p>
-                    </div>
-                  </button>
+                <div className="grid grid-cols-2 gap-4 p-4">
+                  {invoiceModalMode === 'invoice' ? (
+                    <>
+                      <button 
+                        onClick={() => {
+                          setCreditInvoiceForm({
+                            ...creditInvoiceForm, 
+                            doc_type: 'FT',
+                            parent_invoice_id: '',
+                            items: []
+                          });
+                          setIsInvoiceTypeModalOpen(false);
+                          setIsCreditInvoiceModalOpen(true);
+                        }}
+                        className="flex flex-col items-center gap-4 p-6 bg-zinc-50 border-2 border-zinc-100 rounded-3xl hover:border-black hover:bg-zinc-100 transition-all group"
+                      >
+                        <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
+                          <CreditCard className="text-zinc-400 group-hover:text-black" size={24} />
+                        </div>
+                        <div className="text-center">
+                          <h4 className="font-black uppercase tracking-widest text-[10px]">Fatura Crédito</h4>
+                          <p className="text-[10px] text-zinc-500 mt-1">Venda a prazo.</p>
+                        </div>
+                      </button>
 
-                  <button 
-                    onClick={() => {
-                      setCreditInvoiceForm({...creditInvoiceForm, doc_type: 'FR'});
-                      setIsInvoiceTypeModalOpen(false);
-                      setIsCreditInvoiceModalOpen(true);
-                    }}
-                    className="flex flex-col items-center gap-4 p-8 bg-zinc-50 border-2 border-zinc-100 rounded-3xl hover:border-black hover:bg-zinc-100 transition-all group"
-                  >
-                    <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
-                      <FileText className="text-zinc-400 group-hover:text-black" size={32} />
-                    </div>
-                    <div className="text-center">
-                      <h4 className="font-black uppercase tracking-widest text-sm">Fatura Recibo</h4>
-                      <p className="text-xs text-zinc-500 mt-1">Venda a pronto pagamento imediato.</p>
-                    </div>
-                  </button>
+                      <button 
+                        onClick={() => {
+                          setCreditInvoiceForm({
+                            ...creditInvoiceForm, 
+                            doc_type: 'FR',
+                            parent_invoice_id: '',
+                            items: []
+                          });
+                          setIsInvoiceTypeModalOpen(false);
+                          setIsCreditInvoiceModalOpen(true);
+                        }}
+                        className="flex flex-col items-center gap-4 p-6 bg-zinc-50 border-2 border-zinc-100 rounded-3xl hover:border-black hover:bg-zinc-100 transition-all group"
+                      >
+                        <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
+                          <FileText className="text-zinc-400 group-hover:text-black" size={24} />
+                        </div>
+                        <div className="text-center">
+                          <h4 className="font-black uppercase tracking-widest text-[10px]">Fatura Recibo</h4>
+                          <p className="text-[10px] text-zinc-500 mt-1">Venda a pronto.</p>
+                        </div>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button 
+                        onClick={() => {
+                          setCreditInvoiceForm({
+                            ...creditInvoiceForm, 
+                            doc_type: 'NC',
+                            parent_invoice_id: creditInvoiceForm.parent_invoice_id || '',
+                            items: creditInvoiceForm.parent_invoice_id ? creditInvoiceForm.items : [],
+                            reason: '',
+                            note_category: 'return'
+                          });
+                          setIsInvoiceTypeModalOpen(false);
+                          setIsCreditInvoiceModalOpen(true);
+                        }}
+                        className="flex flex-col items-center gap-4 p-6 bg-zinc-50 border-2 border-zinc-100 rounded-3xl hover:border-orange-500 hover:bg-orange-50 transition-all group"
+                      >
+                        <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
+                          <ArrowDownCircle className="text-zinc-400 group-hover:text-orange-500" size={24} />
+                        </div>
+                        <div className="text-center">
+                          <h4 className="font-black uppercase tracking-widest text-[10px]">Nota Crédito</h4>
+                          <p className="text-[10px] text-zinc-500 mt-1">Reduzir valor.</p>
+                        </div>
+                      </button>
+
+                      <button 
+                        onClick={() => {
+                          setCreditInvoiceForm({
+                            ...creditInvoiceForm, 
+                            doc_type: 'ND',
+                            parent_invoice_id: creditInvoiceForm.parent_invoice_id || '',
+                            items: creditInvoiceForm.parent_invoice_id ? creditInvoiceForm.items : [],
+                            reason: '',
+                            adjustment_amount: 0,
+                            observations: ''
+                          });
+                          setIsInvoiceTypeModalOpen(false);
+                          setIsCreditInvoiceModalOpen(true);
+                        }}
+                        className="flex flex-col items-center gap-4 p-6 bg-zinc-50 border-2 border-zinc-100 rounded-3xl hover:border-blue-500 hover:bg-blue-50 transition-all group"
+                      >
+                        <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
+                          <ArrowUpCircle className="text-zinc-400 group-hover:text-blue-500" size={24} />
+                        </div>
+                        <div className="text-center">
+                          <h4 className="font-black uppercase tracking-widest text-[10px]">Nota Débito</h4>
+                          <p className="text-[10px] text-zinc-500 mt-1">Aumentar valor.</p>
+                        </div>
+                      </button>
+                    </>
+                  )}
                 </div>
               </Modal>
 
               <Modal
                 isOpen={isCreditInvoiceModalOpen}
                 onClose={() => setIsCreditInvoiceModalOpen(false)}
-                title={creditInvoiceForm.doc_type === 'FT' ? "Nova Fatura Crédito" : "Nova Fatura Recibo"}
+                title={
+                  creditInvoiceForm.doc_type === 'FT' ? "Nova Fatura Crédito" : 
+                  creditInvoiceForm.doc_type === 'FR' ? "Nova Fatura Recibo" :
+                  creditInvoiceForm.doc_type === 'NC' ? "Nova Nota de Crédito" :
+                  "Nova Nota de Débito"
+                }
                 maxWidth="max-w-5xl"
               >
                 <form onSubmit={handleCreateCreditInvoice} className="space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="md:col-span-2 space-y-6">
+                      {/* Selection of Associated Invoice for NC/ND */}
+                      {(creditInvoiceForm.doc_type === 'NC' || creditInvoiceForm.doc_type === 'ND') && (
+                        <div className="p-6 bg-zinc-50 rounded-3xl border border-zinc-100 space-y-4">
+                          <h4 className="text-sm font-black uppercase tracking-widest text-zinc-400">Fatura Associada</h4>
+                          <div>
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Selecionar Fatura (Obrigatório)</label>
+                            <select 
+                              required
+                              value={creditInvoiceForm.parent_invoice_id}
+                              onChange={(e) => {
+                                const inv = creditInvoices.find(i => i.id.toString() === e.target.value);
+                                if (inv) {
+                                  let items = [];
+                                  try {
+                                    items = typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items;
+                                  } catch (err) {}
+                                  
+                                  setCreditInvoiceForm({
+                                    ...creditInvoiceForm,
+                                    parent_invoice_id: inv.id.toString(),
+                                    client_name: inv.client_name,
+                                    client_nif: inv.client_nif,
+                                    address: inv.address || '',
+                                    country: inv.country || 'Angola',
+                                    currency: inv.currency || 'AOA',
+                                    items: items.map((it: any) => ({ ...it, quantity: 0, max_quantity: it.quantity }))
+                                  });
+                                }
+                              }}
+                              className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
+                            >
+                              <option value="">Selecione uma fatura...</option>
+                              {creditInvoices
+                                .filter(inv => inv.doc_type === 'FT' || inv.doc_type === 'FR')
+                                .map(inv => (
+                                  <option key={inv.id} value={inv.id}>
+                                    {inv.doc_type} {inv.invoice_number} - {inv.client_name} ({new Date(inv.invoice_date).toLocaleDateString()})
+                                  </option>
+                                ))
+                              }
+                            </select>
+                          </div>
+                          
+                          <div>
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Motivo da Nota (Obrigatório)</label>
+                            <textarea 
+                              required
+                              value={creditInvoiceForm.reason}
+                              onChange={e => setCreditInvoiceForm({...creditInvoiceForm, reason: e.target.value})}
+                              placeholder={creditInvoiceForm.doc_type === 'NC' ? "Ex: Devolução de produto, erro na fatura..." : "Ex: Faltou cobrar algo, erro no preço..."}
+                              className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm min-h-[80px]"
+                            />
+                          </div>
+
+                          {creditInvoiceForm.doc_type === 'NC' && (
+                            <div className="space-y-4">
+                              <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Tipo de Nota</label>
+                              <div className="grid grid-cols-2 gap-4">
+                                <button 
+                                  type="button"
+                                  onClick={() => setCreditInvoiceForm({...creditInvoiceForm, note_category: 'return'})}
+                                  className={cn(
+                                    "p-4 rounded-2xl border-2 transition-all text-left",
+                                    creditInvoiceForm.note_category === 'return' ? "border-orange-500 bg-orange-50" : "border-zinc-100 bg-white hover:border-zinc-200"
+                                  )}
+                                >
+                                  <p className="font-bold text-sm">Devolução de Produto</p>
+                                  <p className="text-[10px] text-zinc-500">O produto volta para o stock.</p>
+                                </button>
+                                <button 
+                                  type="button"
+                                  onClick={() => setCreditInvoiceForm({...creditInvoiceForm, note_category: 'correction'})}
+                                  className={cn(
+                                    "p-4 rounded-2xl border-2 transition-all text-left",
+                                    creditInvoiceForm.note_category === 'correction' ? "border-orange-500 bg-orange-50" : "border-zinc-100 bg-white hover:border-zinc-200"
+                                  )}
+                                >
+                                  <p className="font-bold text-sm">Correção de Valor</p>
+                                  <p className="text-[10px] text-zinc-500">Apenas ajuste financeiro.</p>
+                                </button>
+                              </div>
+
+                              {creditInvoiceForm.note_category === 'correction' && (
+                                <div>
+                                  <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Valor da Correção (Ajuste Manual)</label>
+                                  <input 
+                                    type="number"
+                                    value={creditInvoiceForm.adjustment_amount}
+                                    onChange={e => setCreditInvoiceForm({...creditInvoiceForm, adjustment_amount: parseFloat(e.target.value) || 0})}
+                                    className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
+                                    placeholder="Valor a descontar..."
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {creditInvoiceForm.doc_type === 'ND' && (
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Valor Adicional (Ajuste Manual)</label>
+                                <input 
+                                  type="number"
+                                  value={creditInvoiceForm.adjustment_amount}
+                                  onChange={e => setCreditInvoiceForm({...creditInvoiceForm, adjustment_amount: parseFloat(e.target.value) || 0})}
+                                  className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Observação</label>
+                                <input 
+                                  type="text"
+                                  value={creditInvoiceForm.observations}
+                                  onChange={e => setCreditInvoiceForm({...creditInvoiceForm, observations: e.target.value})}
+                                  className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       <div className="p-6 bg-zinc-50 rounded-3xl border border-zinc-100 space-y-4">
                         <h4 className="text-sm font-black uppercase tracking-widest text-zinc-400">Dados do Cliente</h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4611,9 +4821,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             <input 
                               type="text"
                               required
+                              readOnly={!!creditInvoiceForm.parent_invoice_id}
                               value={creditInvoiceForm.client_nif}
                               onChange={e => setCreditInvoiceForm({...creditInvoiceForm, client_nif: e.target.value})}
-                              className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
+                              className={cn(
+                                "w-full px-4 py-3 border border-zinc-200 rounded-xl outline-none focus:border-black text-sm",
+                                creditInvoiceForm.parent_invoice_id ? "bg-zinc-100 cursor-not-allowed" : "bg-white"
+                              )}
                             />
                           </div>
                           <div>
@@ -4621,9 +4835,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             <input 
                               type="text"
                               required
+                              readOnly={!!creditInvoiceForm.parent_invoice_id}
                               value={creditInvoiceForm.client_name}
                               onChange={e => setCreditInvoiceForm({...creditInvoiceForm, client_name: e.target.value})}
-                              className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
+                              className={cn(
+                                "w-full px-4 py-3 border border-zinc-200 rounded-xl outline-none focus:border-black text-sm",
+                                creditInvoiceForm.parent_invoice_id ? "bg-zinc-100 cursor-not-allowed" : "bg-white"
+                              )}
                             />
                           </div>
                           <div className="md:col-span-2">
@@ -4631,177 +4849,242 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             <input 
                               type="text"
                               required
+                              readOnly={!!creditInvoiceForm.parent_invoice_id}
                               value={creditInvoiceForm.address}
                               onChange={e => setCreditInvoiceForm({...creditInvoiceForm, address: e.target.value})}
-                              className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">País</label>
-                            <input 
-                              type="text"
-                              required
-                              value={creditInvoiceForm.country}
-                              onChange={e => setCreditInvoiceForm({...creditInvoiceForm, country: e.target.value})}
-                              className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
+                              className={cn(
+                                "w-full px-4 py-3 border border-zinc-200 rounded-xl outline-none focus:border-black text-sm",
+                                creditInvoiceForm.parent_invoice_id ? "bg-zinc-100 cursor-not-allowed" : "bg-white"
+                              )}
                             />
                           </div>
                         </div>
                       </div>
 
-                      <div className="p-6 bg-zinc-50 rounded-3xl border border-zinc-100 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-sm font-black uppercase tracking-widest text-zinc-400">Itens da Fatura</h4>
-                          <div className="relative w-64">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={14} />
-                            <input 
-                              type="text"
-                              placeholder="Adicionar produto..."
-                              className="w-full pl-9 pr-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-xs"
-                              onChange={(e) => {
-                                const query = e.target.value.toLowerCase();
-                                if (query.length > 2) {
-                                  const found = products.find(p => p.name.toLowerCase().includes(query) || p.barcode?.includes(query));
-                                  if (found) addProductToCreditInvoice(found);
-                                }
-                              }}
-                            />
+                      {/* Item Table logic for NC/ND */}
+                      {(creditInvoiceForm.doc_type === 'FT' || creditInvoiceForm.doc_type === 'FR' || (creditInvoiceForm.doc_type === 'NC' && creditInvoiceForm.note_category === 'return') || creditInvoiceForm.doc_type === 'ND') && (
+                        <div className="p-6 bg-zinc-50 rounded-3xl border border-zinc-100 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-black uppercase tracking-widest text-zinc-400">
+                              {creditInvoiceForm.doc_type === 'NC' ? "Produtos a Devolver" : "Itens da Fatura"}
+                            </h4>
+                            {(creditInvoiceForm.doc_type === 'FT' || creditInvoiceForm.doc_type === 'FR' || creditInvoiceForm.doc_type === 'ND') && (
+                              <div className="relative w-64">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={14} />
+                                <input 
+                                  type="text"
+                                  placeholder="Adicionar produto..."
+                                  className="w-full pl-9 pr-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-xs"
+                                  onChange={(e) => {
+                                    const query = e.target.value.toLowerCase();
+                                    if (query.length > 2) {
+                                      const found = products.find(p => p.name.toLowerCase().includes(query) || p.barcode?.includes(query));
+                                      if (found) addProductToCreditInvoice(found);
+                                    }
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                          
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left">
+                              <thead>
+                                <tr className="text-[10px] font-black text-zinc-400 uppercase tracking-widest border-b border-zinc-200">
+                                  <th className="pb-2">Código</th>
+                                  <th className="pb-2">Descrição</th>
+                                  <th className="pb-2 text-center">Qtd</th>
+                                  <th className="pb-2 text-right">Preço</th>
+                                  <th className="pb-2 text-right">IVA</th>
+                                  <th className="pb-2 text-right">Ação</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-zinc-100">
+                                {creditInvoiceForm.items.map((item) => (
+                                  <tr key={item.product_id} className="text-sm">
+                                    <td className="py-3 font-mono text-xs">{item.code}</td>
+                                    <td className="py-3 font-bold">{item.name}</td>
+                                    <td className="py-3">
+                                      <div className="flex items-center justify-center gap-2">
+                                        <button 
+                                          type="button"
+                                          onClick={() => updateCreditInvoiceItemQuantity(item.product_id, item.quantity - 1)}
+                                          className="p-1 hover:bg-zinc-200 rounded-lg"
+                                        >
+                                          <Minus size={12} />
+                                        </button>
+                                        <span className="w-8 text-center font-bold">{item.quantity}</span>
+                                        <button 
+                                          type="button"
+                                          onClick={() => {
+                                            if (creditInvoiceForm.doc_type === 'NC' && item.max_quantity && item.quantity >= item.max_quantity) return;
+                                            updateCreditInvoiceItemQuantity(item.product_id, item.quantity + 1);
+                                          }}
+                                          className={cn(
+                                            "p-1 hover:bg-zinc-200 rounded-lg",
+                                            creditInvoiceForm.doc_type === 'NC' && item.max_quantity && item.quantity >= item.max_quantity && "opacity-20 cursor-not-allowed"
+                                          )}
+                                        >
+                                          <Plus size={12} />
+                                        </button>
+                                      </div>
+                                      {item.max_quantity && (
+                                        <p className="text-[8px] text-center text-zinc-400 uppercase font-bold mt-1">Máx: {item.max_quantity}</p>
+                                      )}
+                                    </td>
+                                    <td className="py-3 text-right">Kz {item.price.toLocaleString()}</td>
+                                    <td className="py-3 text-right">{item.tax}%</td>
+                                    <td className="py-3 text-right">
+                                      <button 
+                                        type="button"
+                                        onClick={() => removeProductFromCreditInvoice(item.product_id)}
+                                        className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                                      >
+                                        <Trash2 size={16} />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                                {creditInvoiceForm.items.length === 0 && (
+                                  <tr>
+                                    <td colSpan={6} className="py-8 text-center text-zinc-400 text-xs italic">
+                                      Nenhum item adicionado.
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
                           </div>
                         </div>
-                        
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left">
-                            <thead>
-                              <tr className="text-[10px] font-black text-zinc-400 uppercase tracking-widest border-b border-zinc-200">
-                                <th className="pb-2">Código</th>
-                                <th className="pb-2">Descrição</th>
-                                <th className="pb-2 text-center">Qtd</th>
-                                <th className="pb-2 text-right">Preço</th>
-                                <th className="pb-2 text-right">IVA</th>
-                                <th className="pb-2 text-right">Ação</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-zinc-100">
-                              {creditInvoiceForm.items.map((item) => (
-                                <tr key={item.product_id} className="text-sm">
-                                  <td className="py-3 font-mono text-xs">{item.code}</td>
-                                  <td className="py-3 font-bold">{item.name}</td>
-                                  <td className="py-3">
-                                    <div className="flex items-center justify-center gap-2">
-                                      <button 
-                                        type="button"
-                                        onClick={() => updateCreditInvoiceItemQuantity(item.product_id, item.quantity - 1)}
-                                        className="p-1 hover:bg-zinc-200 rounded-lg"
-                                      >
-                                        <Minus size={12} />
-                                      </button>
-                                      <span className="w-8 text-center font-bold">{item.quantity}</span>
-                                      <button 
-                                        type="button"
-                                        onClick={() => updateCreditInvoiceItemQuantity(item.product_id, item.quantity + 1)}
-                                        className="p-1 hover:bg-zinc-200 rounded-lg"
-                                      >
-                                        <Plus size={12} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                  <td className="py-3 text-right">Kz {item.price.toLocaleString()}</td>
-                                  <td className="py-3 text-right">{item.tax}%</td>
-                                  <td className="py-3 text-right">
-                                    <button 
-                                      type="button"
-                                      onClick={() => removeProductFromCreditInvoice(item.product_id)}
-                                      className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
-                                    >
-                                      <Trash2 size={16} />
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
+                      )}
                     </div>
 
                     <div className="space-y-6">
                       <div className="p-6 bg-zinc-900 text-white rounded-3xl space-y-6 shadow-xl shadow-black/20">
-                        <h4 className="text-sm font-black uppercase tracking-widest text-zinc-500">Detalhes do Documento</h4>
-                        <div className="space-y-4">
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Tipo de Documento</label>
-                            <select 
-                              value={creditInvoiceForm.doc_type}
-                              onChange={e => setCreditInvoiceForm({...creditInvoiceForm, doc_type: e.target.value})}
-                              className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
-                            >
-                              <option value="FT">Fatura</option>
-                              <option value="FR">Fatura Recibo</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Série</label>
-                            <input 
-                              type="text"
-                              required
-                              value={creditInvoiceForm.series}
-                              onChange={e => setCreditInvoiceForm({...creditInvoiceForm, series: e.target.value})}
-                              className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Número da Fatura</label>
-                            <input 
-                              type="text"
-                              required
-                              value={creditInvoiceForm.invoice_number}
-                              onChange={e => setCreditInvoiceForm({...creditInvoiceForm, invoice_number: e.target.value})}
-                              className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
-                              placeholder="Ex: 001"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Data da Fatura</label>
-                            <input 
-                              type="date"
-                              required
-                              value={creditInvoiceForm.invoice_date}
-                              onChange={e => setCreditInvoiceForm({...creditInvoiceForm, invoice_date: e.target.value})}
-                              className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Moeda</label>
-                            <input 
-                              type="text"
-                              readOnly
-                              value={creditInvoiceForm.currency}
-                              className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none text-sm opacity-50"
-                            />
-                          </div>
-                        </div>
+                        {(creditInvoiceForm.doc_type === 'FT' || creditInvoiceForm.doc_type === 'FR') && (
+                          <>
+                            <h4 className="text-sm font-black uppercase tracking-widest text-zinc-500">Detalhes do Documento</h4>
+                            <div className="space-y-4">
+                              <div>
+                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Tipo de Documento</label>
+                                <select 
+                                  value={creditInvoiceForm.doc_type}
+                                  onChange={e => setCreditInvoiceForm({...creditInvoiceForm, doc_type: e.target.value})}
+                                  className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
+                                >
+                                  <option value="FT">Fatura</option>
+                                  <option value="FR">Fatura Recibo</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Série</label>
+                                <input 
+                                  type="text"
+                                  required
+                                  value={creditInvoiceForm.series}
+                                  onChange={e => setCreditInvoiceForm({...creditInvoiceForm, series: e.target.value})}
+                                  className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Número da Fatura</label>
+                                <input 
+                                  type="text"
+                                  required
+                                  value={creditInvoiceForm.invoice_number}
+                                  onChange={e => setCreditInvoiceForm({...creditInvoiceForm, invoice_number: e.target.value})}
+                                  className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
+                                  placeholder="Ex: 001"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Data da Fatura</label>
+                                <input 
+                                  type="date"
+                                  required
+                                  value={creditInvoiceForm.invoice_date}
+                                  onChange={e => setCreditInvoiceForm({...creditInvoiceForm, invoice_date: e.target.value})}
+                                  className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Moeda</label>
+                                <input 
+                                  type="text"
+                                  readOnly
+                                  value={creditInvoiceForm.currency}
+                                  className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none text-sm opacity-50"
+                                />
+                              </div>
+                            </div>
+                          </>
+                        )}
 
                         <div className="pt-6 border-t border-zinc-800 space-y-2">
                           <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase">
-                            <span>Subtotal</span>
+                            <span>Subtotal Itens</span>
                             <span>Kz {creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0).toLocaleString()}</span>
                           </div>
+                          {creditInvoiceForm.doc_type === 'ND' && creditInvoiceForm.adjustment_amount > 0 && (
+                            <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase">
+                              <span>Ajuste Manual</span>
+                              <span>Kz {creditInvoiceForm.adjustment_amount.toLocaleString()}</span>
+                            </div>
+                          )}
                           <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase">
                             <span>IVA (14%)</span>
                             <span>Kz {creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * 0.14), 0).toLocaleString()}</span>
                           </div>
                           <div className="flex justify-between text-xl font-black pt-4">
-                            <span>TOTAL</span>
-                            <span className="text-orange-500">Kz {(creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0) * 1.14).toLocaleString()}</span>
+                            <span>{creditInvoiceForm.doc_type === 'NC' ? 'VALOR NOTA' : 'TOTAL'}</span>
+                            <span className={cn(
+                              creditInvoiceForm.doc_type === 'NC' ? "text-orange-500" : "text-blue-500"
+                            )}>
+                              Kz {(
+                                (creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0) * 1.14) + 
+                                creditInvoiceForm.adjustment_amount
+                              ).toLocaleString()}
+                            </span>
                           </div>
+
+                          {creditInvoiceForm.parent_invoice_id && (
+                            <div className="mt-4 p-4 bg-zinc-800 rounded-2xl border border-zinc-700">
+                              <p className="text-[10px] font-bold text-zinc-500 uppercase mb-2">Resumo da Fatura</p>
+                              <div className="flex justify-between text-xs mb-1">
+                                <span className="text-zinc-400">Valor Original:</span>
+                                <span>Kz {creditInvoices.find(i => i.id.toString() === creditInvoiceForm.parent_invoice_id)?.total_amount.toLocaleString()}</span>
+                              </div>
+                              <div className="flex justify-between text-xs font-bold pt-2 border-t border-zinc-700">
+                                <span className="text-zinc-400">Novo Valor:</span>
+                                <span className="text-emerald-500">
+                                  Kz {(() => {
+                                    const original = creditInvoices.find(i => i.id.toString() === creditInvoiceForm.parent_invoice_id)?.total_amount || 0;
+                                    const noteValue = (creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0) * 1.14) + 
+                                                     creditInvoiceForm.adjustment_amount;
+                                    return (creditInvoiceForm.doc_type === 'NC' ? original - noteValue : original + noteValue).toLocaleString();
+                                  })()}
+                                </span>
+                              </div>
+                            </div>
+                          )}
                         </div>
 
                         <button 
                           type="submit"
                           disabled={creditInvoiceForm.items.length === 0}
-                          className="w-full py-4 bg-orange-500 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20 disabled:opacity-50 disabled:shadow-none"
+                          className={cn(
+                            "w-full py-4 text-white rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg disabled:opacity-50 disabled:shadow-none",
+                            creditInvoiceForm.doc_type === 'NC' ? "bg-orange-500 hover:bg-orange-600 shadow-orange-500/20" :
+                            creditInvoiceForm.doc_type === 'ND' ? "bg-blue-500 hover:bg-blue-600 shadow-blue-500/20" :
+                            "bg-black hover:bg-zinc-800 shadow-black/20"
+                          )}
                         >
-                          Emitir {creditInvoiceForm.doc_type === 'FT' ? "Fatura Crédito" : "Fatura Recibo"}
+                          Emitir {
+                            creditInvoiceForm.doc_type === 'FT' ? "Fatura Crédito" : 
+                            creditInvoiceForm.doc_type === 'FR' ? "Fatura Recibo" :
+                            creditInvoiceForm.doc_type === 'NC' ? "Nota de Crédito" :
+                            "Nota de Débito"
+                          }
                         </button>
                       </div>
                     </div>
@@ -4814,12 +5097,26 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   <h3 className="text-xl font-bold">Faturas</h3>
                   <p className="text-sm text-zinc-500">Gestão de faturas (Crédito e Recibo) emitidas.</p>
                 </div>
-                <button 
-                  onClick={() => setIsInvoiceTypeModalOpen(true)}
-                  className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-zinc-800 transition-all shadow-lg shadow-black/10"
-                >
-                  <Plus size={18} /> Nova Fatura
-                </button>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => {
+                      setInvoiceModalMode('invoice');
+                      setIsInvoiceTypeModalOpen(true);
+                    }}
+                    className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-zinc-800 transition-all shadow-lg shadow-black/10"
+                  >
+                    <Plus size={18} /> Nova Fatura
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setInvoiceModalMode('note');
+                      setIsInvoiceTypeModalOpen(true);
+                    }}
+                    className="bg-zinc-100 text-zinc-900 px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-zinc-200 transition-all"
+                  >
+                    <FileText size={18} /> Notas
+                  </button>
+                </div>
               </div>
 
               <Card className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -4852,9 +5149,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             <td className="p-4">
                               <span className={cn(
                                 "px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest",
-                                inv.doc_type === 'FT' ? "bg-blue-50 text-blue-600" : "bg-emerald-50 text-emerald-600"
+                                inv.doc_type === 'FT' ? "bg-blue-50 text-blue-600" : 
+                                inv.doc_type === 'FR' ? "bg-emerald-50 text-emerald-600" :
+                                inv.doc_type === 'NC' ? "bg-orange-50 text-orange-600" :
+                                "bg-indigo-50 text-indigo-600"
                               )}>
-                                {inv.doc_type === 'FT' ? 'Crédito' : 'Recibo'}
+                                {inv.doc_type === 'FT' ? 'Crédito' : 
+                                 inv.doc_type === 'FR' ? 'Recibo' :
+                                 inv.doc_type === 'NC' ? 'Nota Crédito' :
+                                 'Nota Débito'}
                               </span>
                             </td>
                             <td className="p-4">
@@ -4870,14 +5173,63 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             <td className="p-4 text-right">
                               <div className="flex justify-end gap-2">
                                 <button 
-                                  onClick={() => setSelectedCreditInvoice(inv)}
+                                  onClick={() => {
+                                    const formatted = { ...inv };
+                                    if (typeof formatted.items === 'string') {
+                                      try {
+                                        formatted.items = JSON.parse(formatted.items);
+                                      } catch (e) {}
+                                    }
+                                    setCreditInvoiceForm({
+                                      client_nif: formatted.client_nif,
+                                      client_name: formatted.client_name,
+                                      address: formatted.address || '',
+                                      country: formatted.country || 'Angola',
+                                      doc_type: 'NC',
+                                      series: new Date().getFullYear().toString(),
+                                      invoice_number: '',
+                                      invoice_date: new Date().toISOString().split('T')[0],
+                                      currency: formatted.currency || 'AOA',
+                                      items: (formatted.items || []).map((it: any) => ({ ...it, quantity: 0, max_quantity: it.quantity })),
+                                      parent_invoice_id: inv.id.toString(),
+                                      reason: '',
+                                      note_category: 'return',
+                                      adjustment_amount: 0,
+                                      observations: ''
+                                    });
+                                    setInvoiceModalMode('note');
+                                    setIsInvoiceTypeModalOpen(true);
+                                  }}
+                                  className="p-2 hover:bg-orange-100 rounded-xl transition-colors text-orange-600"
+                                  title="Criar Nota"
+                                >
+                                  <FileText size={16} />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    const formatted = { ...inv };
+                                    if (typeof formatted.items === 'string') {
+                                      try {
+                                        formatted.items = JSON.parse(formatted.items);
+                                      } catch (e) {}
+                                    }
+                                    setSelectedCreditInvoice(formatted);
+                                  }}
                                   className="p-2 hover:bg-zinc-200 rounded-xl transition-colors text-zinc-600"
                                   title="Visualizar"
                                 >
                                   <Eye size={16} />
                                 </button>
                                 <button 
-                                  onClick={() => setSelectedCreditInvoice(inv)}
+                                  onClick={() => {
+                                    const formatted = { ...inv };
+                                    if (typeof formatted.items === 'string') {
+                                      try {
+                                        formatted.items = JSON.parse(formatted.items);
+                                      } catch (e) {}
+                                    }
+                                    setSelectedCreditInvoice(formatted);
+                                  }}
                                   className="p-2 hover:bg-zinc-200 rounded-xl transition-colors text-zinc-600"
                                   title="Imprimir"
                                 >
@@ -6478,7 +6830,7 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
     });
     
     pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-    pdf.save(`FATURA_CREDITO_${invoice.invoice_number.replace('/', '_')}.pdf`);
+    pdf.save(`${invoice.doc_type === 'NC' ? 'NOTA_CREDITO' : invoice.doc_type === 'ND' ? 'NOTA_DEBITO' : invoice.doc_type === 'FR' ? 'FATURA_RECIBO' : 'FATURA_CREDITO'}_${invoice.invoice_number.replace('/', '_')}.pdf`);
   };
 
   if (!invoice || !store) return null;
@@ -6523,12 +6875,24 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
             </div>
           </div>
           <div className="text-right">
-            <h1 className="text-4xl font-black text-zinc-100 uppercase mb-2">FATURA CRÉDITO</h1>
+            <h1 className="text-4xl font-black text-zinc-100 uppercase mb-2">
+              {invoice.doc_type === 'FR' ? 'FATURA RECIBO' : 
+               invoice.doc_type === 'FT' ? 'FATURA CRÉDITO' : 
+               invoice.doc_type === 'NC' ? 'NOTA DE CRÉDITO' :
+               invoice.doc_type === 'ND' ? 'NOTA DE DÉBITO' :
+               'DOCUMENTO'}
+            </h1>
             <div className="space-y-1 text-xs font-bold text-zinc-500 uppercase tracking-widest">
               <p>Nº {invoice.invoice_number}</p>
-              <p>SÉRIE {invoice.series}</p>
-              <p>DATA {new Date(invoice.invoice_date).toLocaleDateString()}</p>
-              <p>MOEDA {invoice.currency}</p>
+              <p>SÉRIE {invoice.series || 'A'}</p>
+              <p>DATA {new Date(invoice.invoice_date || invoice.timestamp || invoice.created_at).toLocaleDateString()}</p>
+              <p>MOEDA {invoice.currency || 'Kz'}</p>
+              <p>PAGAMENTO {
+                invoice.payment_method === 'cash' ? 'NUMERÁRIO' :
+                invoice.payment_method === 'multicaixa' ? 'MULTICAIXA' :
+                invoice.payment_method === 'transfer' ? 'TRANSFERÊNCIA' :
+                invoice.payment_method === 'split' ? 'MISTO' : (invoice.payment_method || 'N/A').toUpperCase()
+              }</p>
             </div>
           </div>
         </div>
@@ -7092,6 +7456,22 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const [clientSearch, setClientSearch] = useState('');
   const [lastSale, setLastSale] = useState<any>(null);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [isFormalInvoiceModalOpen, setIsFormalInvoiceModalOpen] = useState(false);
+  const [isFormalInvoiceGeneratedModalOpen, setIsFormalInvoiceGeneratedModalOpen] = useState(false);
+  const [lastFormalInvoice, setLastFormalInvoice] = useState<any>(null);
+  const [formalInvoiceForm, setFormalInvoiceForm] = useState({
+    client_nif: '',
+    client_name: '',
+    address: '',
+    country: 'Angola',
+    doc_type: 'FR',
+    series: new Date().getFullYear().toString(),
+    invoice_number: '',
+    invoice_date: new Date().toISOString().split('T')[0],
+    currency: 'AOA',
+    payment_method: 'cash',
+    items: [] as any[]
+  });
   const [storeInfo, setStoreInfo] = useState<any>(null);
   
   // Payment states
@@ -7518,6 +7898,61 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     }
   };
 
+  const handleCreateFormalInvoice = async (e: FormEvent) => {
+    e.preventDefault();
+    if (cart.length === 0) return;
+
+    setIsProcessing(true);
+    try {
+      const storeId = user.store_id || 1;
+      const items = cart.map(i => {
+        const price = i.type === 'product' 
+          ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
+          : i.item.price;
+        return { 
+          product_id: i.item.id, 
+          name: i.item.name,
+          quantity: i.quantity,
+          price: price,
+          type: i.type,
+          code: i.type === 'product' ? (i.item as Product).barcode : (i.item as Service).code,
+          tax: 14 // Default tax
+        };
+      });
+
+      const total_amount = total;
+      const tax_amount = tax;
+
+      const res = await fetch('/api/owner/credit-invoices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          ...formalInvoiceForm, 
+          items,
+          store_id: storeId,
+          total_amount,
+          tax_amount,
+          seller_id: user.id
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setLastFormalInvoice(data);
+        setIsFormalInvoiceModalOpen(false);
+        setIsFormalInvoiceGeneratedModalOpen(true);
+        setCart([]);
+        setDiscount(0);
+        setClient({ name: 'Consumidor Final', nif: '999999999' });
+        fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
+      }
+    } catch (error) {
+      console.error("Error creating formal invoice:", error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const change = paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - total : 0;
 
   const filteredProducts = products
@@ -7836,11 +8271,27 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 Proforma
               </button>
               <button 
+                onClick={() => {
+                  setFormalInvoiceForm({
+                    ...formalInvoiceForm, 
+                    doc_type: 'FR',
+                    client_name: client.name !== 'Consumidor Final' ? client.name : '',
+                    client_nif: client.nif !== '999999999' ? client.nif : ''
+                  });
+                  setIsFormalInvoiceModalOpen(true);
+                }}
+                disabled={cart.length === 0 || !hasPermission(user, 'pos_sell')}
+                className="flex-1 bg-zinc-100 text-zinc-600 py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 hover:bg-zinc-200 disabled:opacity-50 transition-all active:scale-[0.98]"
+              >
+                <FileText size={18} />
+                Fatura
+              </button>
+              <button 
                 onClick={handleCheckout}
                 disabled={cart.length === 0 || isProcessing || hasActiveSession === false || !hasPermission(user, 'pos_sell')}
                 className="flex-[2] bg-orange-500 text-white py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 hover:bg-orange-600 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed transition-all shadow-lg shadow-orange-500/20 active:scale-[0.98]"
               >
-                {isProcessing ? 'Processando...' : 'Finalizar Venda'}
+                {isProcessing ? 'Processando...' : 'Vender agora'}
                 <ChevronRight size={20} />
               </button>
             </div>
@@ -8147,6 +8598,157 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         <Invoice sale={lastSale} store={storeInfo} user={user} />
       </Modal>
 
+      {/* Formal Invoice Form Modal */}
+      <Modal 
+        isOpen={isFormalInvoiceModalOpen} 
+        onClose={() => setIsFormalInvoiceModalOpen(false)} 
+        title="Nova Fatura Recibo"
+        maxWidth="max-w-4xl"
+      >
+        <form onSubmit={handleCreateFormalInvoice} className="space-y-8 p-4">
+          <div className="grid grid-cols-2 gap-8">
+            <div className="space-y-6">
+              <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-100 pb-2">Dados do Cliente</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">NIF do Cliente</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={formalInvoiceForm.client_nif}
+                    onChange={e => setFormalInvoiceForm({...formalInvoiceForm, client_nif: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black font-bold text-sm"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Nome do Cliente</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={formalInvoiceForm.client_name}
+                    onChange={e => setFormalInvoiceForm({...formalInvoiceForm, client_name: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black font-bold text-sm"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Endereço</label>
+                <input 
+                  type="text" 
+                  required
+                  value={formalInvoiceForm.address}
+                  onChange={e => setFormalInvoiceForm({...formalInvoiceForm, address: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black font-bold text-sm"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">País</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={formalInvoiceForm.country}
+                    onChange={e => setFormalInvoiceForm({...formalInvoiceForm, country: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black font-bold text-sm"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Moeda</label>
+                  <select 
+                    value={formalInvoiceForm.currency}
+                    onChange={e => setFormalInvoiceForm({...formalInvoiceForm, currency: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black font-bold text-sm"
+                  >
+                    <option value="AOA">AOA (Kwanza)</option>
+                    <option value="USD">USD (Dólar)</option>
+                    <option value="EUR">EUR (Euro)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-100 pb-2">Dados do Documento</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Série</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={formalInvoiceForm.series}
+                    onChange={e => setFormalInvoiceForm({...formalInvoiceForm, series: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black font-bold text-sm"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Tipo de Pagamento</label>
+                  <select 
+                    value={formalInvoiceForm.payment_method}
+                    onChange={e => setFormalInvoiceForm({...formalInvoiceForm, payment_method: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black font-bold text-sm"
+                  >
+                    <option value="cash">Numerário (Dinheiro)</option>
+                    <option value="multicaixa">Multicaixa (TPA)</option>
+                    <option value="transfer">Transferência Bancária</option>
+                    <option value="split">Misto (Dinheiro + TPA)</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Data da Fatura</label>
+                <input 
+                  type="date" 
+                  required
+                  value={formalInvoiceForm.invoice_date}
+                  onChange={e => setFormalInvoiceForm({...formalInvoiceForm, invoice_date: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black font-bold text-sm"
+                />
+              </div>
+              <div className="p-6 bg-zinc-900 rounded-3xl text-white">
+                <div className="flex justify-between items-center mb-4">
+                  <span className="text-[10px] font-black uppercase tracking-widest opacity-50">Total da Fatura</span>
+                  <span className="px-3 py-1 bg-white/10 rounded-full text-[10px] font-black uppercase tracking-widest">{formalInvoiceForm.currency}</span>
+                </div>
+                <div className="text-4xl font-black tracking-tighter">
+                  {formalInvoiceForm.currency} {total.toLocaleString()}
+                </div>
+                <div className="mt-4 pt-4 border-t border-white/10 flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-50">
+                  <span>Itens no Carrinho</span>
+                  <span>{cart.length} Artigos</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-4 pt-6">
+            <button 
+              type="button"
+              onClick={() => setIsFormalInvoiceModalOpen(false)}
+              className="flex-1 px-8 py-4 bg-zinc-100 text-zinc-600 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-200 transition-all"
+            >
+              Cancelar
+            </button>
+            <button 
+              type="submit"
+              disabled={isProcessing}
+              className="flex-[2] px-8 py-4 bg-black text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all shadow-xl shadow-black/20 disabled:opacity-50"
+            >
+              {isProcessing ? 'Processando...' : 'Emitir Fatura Recibo'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Formal Invoice Generated Modal */}
+      <Modal 
+        isOpen={isFormalInvoiceGeneratedModalOpen} 
+        onClose={() => setIsFormalInvoiceGeneratedModalOpen(false)} 
+        title="Fatura Formal Gerada"
+        maxWidth="max-w-4xl"
+      >
+        <CreditInvoicePreview invoice={lastFormalInvoice} store={storeInfo} />
+      </Modal>
+
       {/* Services Modal */}
       <Modal isOpen={isServiceModalOpen} onClose={() => setIsServiceModalOpen(false)} title="Serviços Disponíveis">
         <div className="space-y-4">
@@ -8223,7 +8825,15 @@ const SellerHistory = ({ user }: { user: User }) => {
   }, [user.id, user.store_id]);
 
   const openInvoice = (sale: any) => {
-    setSelectedSale(sale);
+    let formattedSale = { ...sale };
+    if (typeof formattedSale.items === 'string') {
+      try {
+        formattedSale.items = JSON.parse(formattedSale.items);
+      } catch (e) {
+        console.error("Error parsing items:", e);
+      }
+    }
+    setSelectedSale(formattedSale);
     setIsInvoiceModalOpen(true);
   };
 
@@ -8242,6 +8852,7 @@ const SellerHistory = ({ user }: { user: User }) => {
             <thead>
               <tr className="bg-zinc-50 border-b border-zinc-100">
                 <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">ID</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Tipo</th>
                 <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Data</th>
                 <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
                 <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Método</th>
@@ -8251,8 +8862,17 @@ const SellerHistory = ({ user }: { user: User }) => {
             </thead>
             <tbody className="divide-y divide-zinc-100">
               {sales.map((sale) => (
-                <tr key={sale.id} className="hover:bg-zinc-50/50 transition-colors">
+                <tr key={`${sale.source || 'trans'}-${sale.id}`} className="hover:bg-zinc-50/50 transition-colors">
                   <td className="px-6 py-4 font-mono text-xs">#{sale.id.toString().padStart(6, '0')}</td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                      sale.doc_type === 'FR' ? 'bg-blue-100 text-blue-600' :
+                      sale.doc_type === 'FT' ? 'bg-purple-100 text-purple-600' :
+                      'bg-zinc-100 text-zinc-600'
+                    }`}>
+                      {sale.doc_type || 'FS'}
+                    </span>
+                  </td>
                   <td className="px-6 py-4 text-sm text-zinc-600">{new Date(sale.timestamp).toLocaleString()}</td>
                   <td className="px-6 py-4">
                     <div className="text-sm font-bold">{sale.client_name}</div>
@@ -8260,7 +8880,7 @@ const SellerHistory = ({ user }: { user: User }) => {
                   </td>
                   <td className="px-6 py-4">
                     <span className="px-2 py-1 bg-zinc-100 text-zinc-600 rounded-full text-[10px] font-bold uppercase">
-                      {sale.payment_method}
+                      {sale.payment_method || 'N/A'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right font-black text-sm">Kz {(sale.total_amount || 0).toLocaleString()}</td>
@@ -8276,7 +8896,7 @@ const SellerHistory = ({ user }: { user: User }) => {
               ))}
               {sales.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 italic">Nenhuma venda encontrada.</td>
+                  <td colSpan={7} className="px-6 py-12 text-center text-zinc-400 italic">Nenhuma venda encontrada.</td>
                 </tr>
               )}
             </tbody>
@@ -8284,8 +8904,17 @@ const SellerHistory = ({ user }: { user: User }) => {
         </div>
       </Card>
 
-      <Modal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} title="Reimprimir Fatura">
-        <Invoice sale={selectedSale} store={storeInfo} user={user} />
+      <Modal 
+        isOpen={isInvoiceModalOpen} 
+        onClose={() => setIsInvoiceModalOpen(false)} 
+        title={selectedSale?.source === 'formal' ? "Visualizar Fatura A4" : "Reimprimir Fatura"}
+        maxWidth={selectedSale?.source === 'formal' ? "max-w-4xl" : "max-w-md"}
+      >
+        {selectedSale?.source === 'formal' ? (
+          <CreditInvoicePreview invoice={{...selectedSale, invoice_date: selectedSale.timestamp}} store={storeInfo} />
+        ) : (
+          <Invoice sale={selectedSale} store={storeInfo} user={user} />
+        )}
       </Modal>
     </div>
   );

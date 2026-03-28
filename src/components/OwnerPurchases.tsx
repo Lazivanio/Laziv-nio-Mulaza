@@ -18,7 +18,9 @@ import {
   Package,
   ArrowRight,
   Calendar,
-  FileText
+  FileText,
+  ArrowDownCircle,
+  ArrowUpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Store as StoreType } from '../types';
@@ -64,9 +66,9 @@ const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-lg" }: { is
 );
 
 export const OwnerPurchases = ({ user }: { user: User }) => {
-  const [activeTab, setActiveTab] = useState<'direct' | 'orders' | 'receipts' | 'returns'>('direct');
+  const [activeTab, setActiveTab] = useState<'direct' | 'orders' | 'receipts' | 'notes'>('direct');
   const [purchases, setPurchases] = useState<any[]>([]);
-  const [returns, setReturns] = useState<any[]>([]);
+  const [notes, setNotes] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [stores, setStores] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
@@ -97,7 +99,8 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     purchase_id: '',
     reason: '',
     items: [] as any[],
-    total_amount: 0
+    total_amount: 0,
+    type: 'credit' as 'credit' | 'debit'
   });
 
   const [paymentData, setPaymentData] = useState({
@@ -151,7 +154,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     try {
       const res = await fetch(`/api/owner/purchase-returns/${selectedStoreId}`);
       const data = await res.json();
-      setReturns(data);
+      setNotes(data);
     } catch (e) {
       console.error(e);
     }
@@ -294,7 +297,8 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
           purchase_id: returnForm.purchase_id,
           total_amount,
           reason: returnForm.reason,
-          items: selectedItems
+          items: selectedItems,
+          type: returnForm.type
         })
       });
 
@@ -350,7 +354,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     if (activeTab === 'direct') return isDirect || isClosed;
     if (activeTab === 'orders') return !isDirect;
     if (activeTab === 'receipts') return !isDirect;
-    if (activeTab === 'returns') return false; // To be implemented
+    if (activeTab === 'notes') return false; 
     return false;
   });
 
@@ -398,14 +402,14 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
             Recebimentos
           </button>
           <button 
-            onClick={() => setActiveTab('returns')}
+            onClick={() => setActiveTab('notes')}
             className={cn(
               "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap",
-              activeTab === 'returns' ? "bg-black text-white shadow-lg shadow-black/20" : "bg-white text-zinc-500 hover:bg-zinc-100"
+              activeTab === 'notes' ? "bg-black text-white shadow-lg shadow-black/20" : "bg-white text-zinc-500 hover:bg-zinc-100"
             )}
           >
             <RotateCcw size={18} />
-            Devoluções
+            Notas
           </button>
         </div>
       </div>
@@ -432,9 +436,16 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
         </div>
         <button 
           onClick={() => {
-            if (activeTab === 'returns') {
-              setActiveTab('receipts');
-              alert("Por favor, selecione uma encomenda recebida no histórico para iniciar a devolução.");
+            if (activeTab === 'notes') {
+              setReturnForm({
+                supplier_id: '',
+                purchase_id: '',
+                reason: '',
+                items: [],
+                total_amount: 0,
+                type: 'credit'
+              });
+              setIsReturnModalOpen(true);
               return;
             }
             setPurchaseForm({ store_id: selectedStoreId, supplier_id: '', invoice_number: '', due_date: '', items: [], paid_amount: 0 });
@@ -444,7 +455,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
           className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200"
         >
           <Plus size={18} />
-          {activeTab === 'direct' ? 'Comprar' : activeTab === 'returns' ? 'Nova Devolução' : 'Nova Encomenda'}
+          {activeTab === 'direct' ? 'Comprar' : activeTab === 'notes' ? 'Nova Nota' : 'Nova Encomenda'}
         </button>
       </div>
 
@@ -454,7 +465,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6">
-          {activeTab !== 'returns' ? (
+          {activeTab !== 'notes' ? (
             <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -562,14 +573,15 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                                   purchase_id: p.id,
                                   reason: '',
                                   items: (typeof p.items === 'string' ? JSON.parse(p.items) : p.items).map((item: any) => ({ ...item, maxQuantity: item.quantity, selected: true })),
-                                  total_amount: p.total_amount
+                                  total_amount: p.total_amount,
+                                  type: 'credit'
                                 });
                                 setIsReturnModalOpen(true);
                               }}
                               className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
-                              title="Devolver"
+                              title="Criar Nota"
                             >
-                              <RotateCcw size={18} />
+                              <FileText size={18} />
                             </button>
                           )}
                         </div>
@@ -585,23 +597,35 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                 <thead>
                   <tr className="bg-zinc-50 border-b border-zinc-200">
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Fornecedor</th>
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Produtos Devolvidos</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Tipo</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Produtos</th>
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Motivo</th>
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Total Devolvido</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Total</th>
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Data</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {returns.map((r) => (
+                  {notes.map((r) => (
                     <tr key={r.id} className="hover:bg-zinc-50/50 transition-colors">
                       <td className="px-6 py-4">
                         <p className="font-bold text-zinc-900">{r.supplier_name}</p>
                         <p className="text-xs text-zinc-500">Ref: #{r.id}</p>
                       </td>
                       <td className="px-6 py-4">
+                        <span className={cn(
+                          "px-2 py-1 rounded-full text-[10px] font-black uppercase border",
+                          r.type === 'credit' ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-blue-50 text-blue-600 border-blue-100"
+                        )}>
+                          {r.type === 'credit' ? 'Nota de Crédito' : 'Nota de Débito'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
                         <div className="flex flex-wrap gap-1 max-w-xs">
                           {(r.items || []).map((item: any, i: number) => (
-                            <span key={i} className="px-2 py-0.5 bg-rose-50 text-rose-600 rounded text-[10px] font-bold">
+                            <span key={i} className={cn(
+                              "px-2 py-0.5 rounded text-[10px] font-bold",
+                              r.type === 'credit' ? "bg-rose-50 text-rose-600" : "bg-blue-50 text-blue-600"
+                            )}>
                               {item.quantity}x {item.name}
                             </span>
                           ))}
@@ -611,7 +635,12 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                         <p className="text-sm text-zinc-600">{r.reason}</p>
                       </td>
                       <td className="px-6 py-4">
-                        <p className="text-sm font-bold text-rose-600">Kz {r.total_amount.toLocaleString()}</p>
+                        <p className={cn(
+                          "text-sm font-bold",
+                          r.type === 'credit' ? "text-rose-600" : "text-blue-600"
+                        )}>
+                          Kz {r.total_amount.toLocaleString()}
+                        </p>
                       </td>
                       <td className="px-6 py-4">
                         <p className="text-sm text-zinc-500">{new Date(r.timestamp).toLocaleDateString()}</p>
@@ -901,26 +930,86 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
         </form>
       </Modal>
 
-      {/* Return Modal */}
+      {/* Note Modal (Credit/Debit) */}
       <Modal 
         isOpen={isReturnModalOpen} 
         onClose={() => setIsReturnModalOpen(false)} 
-        title="Registar Devolução"
+        title="Registar Nota de Crédito/Débito"
       >
         <form onSubmit={handleSaveReturn} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <button
+              type="button"
+              onClick={() => setReturnForm({ ...returnForm, type: 'credit' })}
+              className={cn(
+                "flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all",
+                returnForm.type === 'credit' 
+                  ? "border-emerald-500 bg-emerald-50 text-emerald-700" 
+                  : "border-zinc-100 bg-zinc-50 text-zinc-400 grayscale opacity-50 hover:grayscale-0 hover:opacity-100"
+              )}
+            >
+              <ArrowDownCircle size={24} />
+              <span className="text-xs font-black uppercase tracking-widest">Nota de Crédito</span>
+              <span className="text-[10px] opacity-70">Devolução / Desconto</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setReturnForm({ ...returnForm, type: 'debit' })}
+              className={cn(
+                "flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all",
+                returnForm.type === 'debit' 
+                  ? "border-blue-500 bg-blue-50 text-blue-700" 
+                  : "border-zinc-100 bg-zinc-50 text-zinc-400 grayscale opacity-50 hover:grayscale-0 hover:opacity-100"
+              )}
+            >
+              <ArrowUpCircle size={24} />
+              <span className="text-xs font-black uppercase tracking-widest">Nota de Débito</span>
+              <span className="text-[10px] opacity-70">Acréscimo de Valor</span>
+            </button>
+          </div>
+
+          {!returnForm.purchase_id && (
+            <div className="space-y-1.5">
+              <label className="text-sm font-bold text-zinc-700">Selecionar Compra/Fatura</label>
+              <select 
+                required
+                onChange={e => {
+                  const p = purchases.find(pur => pur.id.toString() === e.target.value);
+                  if (p) {
+                    setReturnForm({
+                      ...returnForm,
+                      supplier_id: p.supplier_id,
+                      purchase_id: p.id,
+                      items: (typeof p.items === 'string' ? JSON.parse(p.items) : p.items).map((item: any) => ({ ...item, maxQuantity: item.quantity, selected: true })),
+                      total_amount: p.total_amount
+                    });
+                  }
+                }}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black/5"
+              >
+                <option value="">Selecionar uma fatura...</option>
+                {purchases.filter(p => p.delivery_status === 'received' || p.is_direct).map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.supplier_name} - Fatura: {p.invoice_number || '---'} (Kz {p.total_amount.toLocaleString()})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="space-y-1.5">
-            <label className="text-sm font-bold text-zinc-700">Motivo da Devolução</label>
+            <label className="text-sm font-bold text-zinc-700">Motivo</label>
             <textarea 
               required
               value={returnForm.reason}
               onChange={e => setReturnForm({ ...returnForm, reason: e.target.value })}
-              placeholder="Ex: Produto danificado, fora de validade..."
-              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black/5 min-h-[100px]"
+              placeholder="Ex: Produto danificado, erro de faturação, acréscimo de itens..."
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black/5 min-h-[80px]"
             />
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-bold text-zinc-700">Itens a Devolver</label>
+            <label className="text-sm font-bold text-zinc-700">Itens da Nota</label>
             <div className="border border-zinc-100 rounded-xl overflow-hidden">
               <table className="w-full text-left">
                 <thead className="bg-zinc-50 border-b border-zinc-100">
@@ -942,7 +1031,10 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                               newItems[index] = { ...newItems[index], selected: e.target.checked };
                               setReturnForm({ ...returnForm, items: newItems });
                             }}
-                            className="rounded border-zinc-300 text-rose-600 focus:ring-rose-500"
+                            className={cn(
+                              "rounded border-zinc-300 focus:ring-offset-0",
+                              returnForm.type === 'credit' ? "text-emerald-600 focus:ring-emerald-500" : "text-blue-600 focus:ring-blue-500"
+                            )}
                           />
                           <span className="text-sm font-bold">{item.name}</span>
                         </div>
@@ -951,7 +1043,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                         <input 
                           type="number" 
                           min="1"
-                          max={item.maxQuantity || item.quantity}
+                          max={returnForm.type === 'credit' ? (item.maxQuantity || item.quantity) : undefined}
                           disabled={item.selected === false}
                           value={isNaN(item.quantity) ? '' : item.quantity}
                           onChange={e => {
@@ -975,9 +1067,14 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
           <button 
             type="submit"
             disabled={loading}
-            className="w-full bg-rose-600 text-white py-3 rounded-xl font-bold hover:bg-rose-700 transition-all active:scale-[0.98] shadow-lg shadow-rose-200"
+            className={cn(
+              "w-full py-3 rounded-xl font-bold transition-all active:scale-[0.98] disabled:opacity-50 shadow-lg",
+              returnForm.type === 'credit' 
+                ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-200" 
+                : "bg-blue-500 text-white hover:bg-blue-600 shadow-blue-200"
+            )}
           >
-            {loading ? "A processar..." : "Confirmar Devolução"}
+            {loading ? "A processar..." : `Confirmar ${returnForm.type === 'credit' ? 'Nota de Crédito' : 'Nota de Débito'}`}
           </button>
         </form>
       </Modal>
