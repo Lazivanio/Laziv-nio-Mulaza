@@ -90,6 +90,7 @@ import { OwnerRH } from './components/OwnerRH';
 import { OwnerPartners } from './components/OwnerPartners';
 import { OwnerPurchases } from './components/OwnerPurchases';
 import { OwnerServices } from './components/OwnerServices';
+import OwnerFiscalDocuments from './components/OwnerFiscalDocuments';
 import { OwnerOverview } from './components/OwnerOverview';
 import { MyStores } from './components/MyStores';
 import { OwnerReports } from './components/OwnerReports';
@@ -389,6 +390,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
                 <SidebarItem icon={Users} label="Parceiros" to="/owner/partners" onClick={closeSidebar} />
                 <SidebarItem icon={ShoppingCart} label="Compras" to="/owner/purchases" onClick={closeSidebar} />
                 <SidebarItem icon={Sparkles} label="Serviços" to="/owner/services" onClick={closeSidebar} />
+                <SidebarItem icon={FileText} label="Documentos" to="/owner/documents" onClick={closeSidebar} />
                 <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
                 <SidebarItem icon={Settings} label="Configurações" to="/owner/settings" onClick={closeSidebar} />
               </>
@@ -3358,7 +3360,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          store_id: storeId,
+          store_id: Number(storeId),
           seller_id: user.id,
           cash_register_id: registerId,
           opening_amount: parseFloat(amount)
@@ -3376,6 +3378,41 @@ const StoreAdmin = ({ user }: { user: User }) => {
     } catch (error) {
       console.error("Error opening session:", error);
       alert('Erro de conexão ao abrir caixa.');
+    }
+  };
+
+  const handleCloseSessionDashboard = async (sessionId: number) => {
+    const amount = prompt('Insira o valor físico em caixa para fechar:');
+    if (amount === null) return;
+    
+    const physicalAmount = parseFloat(amount);
+    if (isNaN(physicalAmount)) {
+      alert('Por favor, insira um valor válido.');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/seller/close-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          physical_amount: physicalAmount,
+          closing_amount: 0, // Server will calculate expected if 0 or not provided
+          seller_id: user.id
+        })
+      });
+
+      if (res.ok) {
+        fetchData();
+        alert('Caixa fechado com sucesso!');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Erro ao fechar caixa.');
+      }
+    } catch (error) {
+      console.error("Error closing session:", error);
+      alert('Erro de conexão ao fechar caixa.');
     }
   };
 
@@ -3728,7 +3765,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
           name: product.name, 
           price: product.price, 
           quantity: 1,
-          tax: 14
+          tax: 14,
+          type: 'product'
         }]
       });
     }
@@ -3763,7 +3801,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
     const tax_amount = items_tax; // Assuming adjustment_amount is tax-exempt or tax is already included? 
     // Usually, adjustments are financial. Let's stick to items tax for now.
 
-    const res = await fetch('/api/owner/credit-invoices', {
+    try {
+      const res = await fetch('/api/owner/credit-invoices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
@@ -3775,26 +3814,34 @@ const StoreAdmin = ({ user }: { user: User }) => {
       })
     });
 
-    if (res.ok) {
-      setIsCreditInvoiceModalOpen(false);
-      setCreditInvoiceForm({
-        client_nif: '',
-        client_name: '',
-        address: '',
-        country: 'Angola',
-        doc_type: 'FT',
-        series: new Date().getFullYear().toString(),
-        invoice_number: '',
-        invoice_date: new Date().toISOString().split('T')[0],
-        currency: 'AOA',
-        items: [] as any[],
-        parent_invoice_id: '',
-        reason: '',
-        note_category: 'return',
-        adjustment_amount: 0,
-        observations: ''
-      });
-      fetchData();
+      if (res.ok) {
+        setIsCreditInvoiceModalOpen(false);
+        setCreditInvoiceForm({
+          client_nif: '',
+          client_name: '',
+          address: '',
+          country: 'Angola',
+          doc_type: 'FT',
+          series: new Date().getFullYear().toString(),
+          invoice_number: '',
+          invoice_date: new Date().toISOString().split('T')[0],
+          currency: 'AOA',
+          items: [] as any[],
+          parent_invoice_id: '',
+          reason: '',
+          note_category: 'return',
+          adjustment_amount: 0,
+          observations: ''
+        });
+        fetchData();
+        alert('Documento emitido com sucesso!');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Erro ao emitir documento.');
+      }
+    } catch (error) {
+      console.error("Error creating credit invoice:", error);
+      alert('Erro de conexão ao emitir documento.');
     }
   };
 
@@ -4686,17 +4733,17 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   creditInvoiceForm.doc_type === 'NC' ? "Nova Nota de Crédito" :
                   "Nova Nota de Débito"
                 }
-                maxWidth="max-w-5xl"
+                maxWidth="max-w-4xl"
               >
-                <form onSubmit={handleCreateCreditInvoice} className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="md:col-span-2 space-y-6">
+                <form onSubmit={handleCreateCreditInvoice} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="md:col-span-2 space-y-4">
                       {/* Selection of Associated Invoice for NC/ND */}
                       {(creditInvoiceForm.doc_type === 'NC' || creditInvoiceForm.doc_type === 'ND') && (
-                        <div className="p-6 bg-zinc-50 rounded-3xl border border-zinc-100 space-y-4">
-                          <h4 className="text-sm font-black uppercase tracking-widest text-zinc-400">Fatura Associada</h4>
+                        <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100 space-y-2">
+                          <h4 className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Fatura Associada</h4>
                           <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Selecionar Fatura (Obrigatório)</label>
+                            <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Selecionar Fatura (Obrigatório)</label>
                             <select 
                               required
                               value={creditInvoiceForm.parent_invoice_id}
@@ -4720,7 +4767,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                                   });
                                 }
                               }}
-                              className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
+                              className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-xs"
                             >
                               <option value="">Selecione uma fatura...</option>
                               {creditInvoices
@@ -4735,52 +4782,52 @@ const StoreAdmin = ({ user }: { user: User }) => {
                           </div>
                           
                           <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Motivo da Nota (Obrigatório)</label>
+                            <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Motivo da Nota (Obrigatório)</label>
                             <textarea 
                               required
                               value={creditInvoiceForm.reason}
                               onChange={e => setCreditInvoiceForm({...creditInvoiceForm, reason: e.target.value})}
-                              placeholder={creditInvoiceForm.doc_type === 'NC' ? "Ex: Devolução de produto, erro na fatura..." : "Ex: Faltou cobrar algo, erro no preço..."}
-                              className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm min-h-[80px]"
+                              placeholder={creditInvoiceForm.doc_type === 'NC' ? "Ex: Devolução..." : "Ex: Erro no preço..."}
+                              className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-xs min-h-[40px]"
                             />
                           </div>
 
                           {creditInvoiceForm.doc_type === 'NC' && (
-                            <div className="space-y-4">
-                              <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Tipo de Nota</label>
-                              <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Tipo de Nota</label>
+                              <div className="grid grid-cols-2 gap-2">
                                 <button 
                                   type="button"
                                   onClick={() => setCreditInvoiceForm({...creditInvoiceForm, note_category: 'return'})}
                                   className={cn(
-                                    "p-4 rounded-2xl border-2 transition-all text-left",
+                                    "p-2 rounded-xl border-2 transition-all text-left",
                                     creditInvoiceForm.note_category === 'return' ? "border-orange-500 bg-orange-50" : "border-zinc-100 bg-white hover:border-zinc-200"
                                   )}
                                 >
-                                  <p className="font-bold text-sm">Devolução de Produto</p>
-                                  <p className="text-[10px] text-zinc-500">O produto volta para o stock.</p>
+                                  <p className="font-bold text-[10px]">Devolução</p>
+                                  <p className="text-[7px] text-zinc-500">Volta ao stock.</p>
                                 </button>
                                 <button 
                                   type="button"
                                   onClick={() => setCreditInvoiceForm({...creditInvoiceForm, note_category: 'correction'})}
                                   className={cn(
-                                    "p-4 rounded-2xl border-2 transition-all text-left",
+                                    "p-2 rounded-xl border-2 transition-all text-left",
                                     creditInvoiceForm.note_category === 'correction' ? "border-orange-500 bg-orange-50" : "border-zinc-100 bg-white hover:border-zinc-200"
                                   )}
                                 >
-                                  <p className="font-bold text-sm">Correção de Valor</p>
-                                  <p className="text-[10px] text-zinc-500">Apenas ajuste financeiro.</p>
+                                  <p className="font-bold text-[10px]">Correção</p>
+                                  <p className="text-[7px] text-zinc-500">Apenas financeiro.</p>
                                 </button>
                               </div>
 
                               {creditInvoiceForm.note_category === 'correction' && (
                                 <div>
-                                  <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Valor da Correção (Ajuste Manual)</label>
+                                  <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Valor da Correção</label>
                                   <input 
                                     type="number"
                                     value={creditInvoiceForm.adjustment_amount}
                                     onChange={e => setCreditInvoiceForm({...creditInvoiceForm, adjustment_amount: parseFloat(e.target.value) || 0})}
-                                    className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
+                                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-xs"
                                     placeholder="Valor a descontar..."
                                   />
                                 </div>
@@ -4789,23 +4836,23 @@ const StoreAdmin = ({ user }: { user: User }) => {
                           )}
 
                           {creditInvoiceForm.doc_type === 'ND' && (
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-2 gap-3">
                               <div>
-                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Valor Adicional (Ajuste Manual)</label>
+                                <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Valor Adicional</label>
                                 <input 
                                   type="number"
                                   value={creditInvoiceForm.adjustment_amount}
                                   onChange={e => setCreditInvoiceForm({...creditInvoiceForm, adjustment_amount: parseFloat(e.target.value) || 0})}
-                                  className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
+                                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-xs"
                                 />
                               </div>
                               <div>
-                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Observação</label>
+                                <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Observação</label>
                                 <input 
                                   type="text"
                                   value={creditInvoiceForm.observations}
                                   onChange={e => setCreditInvoiceForm({...creditInvoiceForm, observations: e.target.value})}
-                                  className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-sm"
+                                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-xs"
                                 />
                               </div>
                             </div>
@@ -4813,11 +4860,11 @@ const StoreAdmin = ({ user }: { user: User }) => {
                         </div>
                       )}
 
-                      <div className="p-6 bg-zinc-50 rounded-3xl border border-zinc-100 space-y-4">
-                        <h4 className="text-sm font-black uppercase tracking-widest text-zinc-400">Dados do Cliente</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100 space-y-2">
+                        <h4 className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Dados do Cliente</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                           <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">NIF do Cliente</label>
+                            <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">NIF do Cliente</label>
                             <input 
                               type="text"
                               required
@@ -4825,13 +4872,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
                               value={creditInvoiceForm.client_nif}
                               onChange={e => setCreditInvoiceForm({...creditInvoiceForm, client_nif: e.target.value})}
                               className={cn(
-                                "w-full px-4 py-3 border border-zinc-200 rounded-xl outline-none focus:border-black text-sm",
+                                "w-full px-3 py-2 border border-zinc-200 rounded-lg outline-none focus:border-black text-xs",
                                 creditInvoiceForm.parent_invoice_id ? "bg-zinc-100 cursor-not-allowed" : "bg-white"
                               )}
                             />
                           </div>
                           <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Nome do Cliente</label>
+                            <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Nome do Cliente</label>
                             <input 
                               type="text"
                               required
@@ -4839,13 +4886,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
                               value={creditInvoiceForm.client_name}
                               onChange={e => setCreditInvoiceForm({...creditInvoiceForm, client_name: e.target.value})}
                               className={cn(
-                                "w-full px-4 py-3 border border-zinc-200 rounded-xl outline-none focus:border-black text-sm",
+                                "w-full px-3 py-2 border border-zinc-200 rounded-lg outline-none focus:border-black text-xs",
                                 creditInvoiceForm.parent_invoice_id ? "bg-zinc-100 cursor-not-allowed" : "bg-white"
                               )}
                             />
                           </div>
                           <div className="md:col-span-2">
-                            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Endereço</label>
+                            <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Endereço</label>
                             <input 
                               type="text"
                               required
@@ -4853,7 +4900,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                               value={creditInvoiceForm.address}
                               onChange={e => setCreditInvoiceForm({...creditInvoiceForm, address: e.target.value})}
                               className={cn(
-                                "w-full px-4 py-3 border border-zinc-200 rounded-xl outline-none focus:border-black text-sm",
+                                "w-full px-3 py-2 border border-zinc-200 rounded-lg outline-none focus:border-black text-xs",
                                 creditInvoiceForm.parent_invoice_id ? "bg-zinc-100 cursor-not-allowed" : "bg-white"
                               )}
                             />
@@ -4863,18 +4910,18 @@ const StoreAdmin = ({ user }: { user: User }) => {
 
                       {/* Item Table logic for NC/ND */}
                       {(creditInvoiceForm.doc_type === 'FT' || creditInvoiceForm.doc_type === 'FR' || (creditInvoiceForm.doc_type === 'NC' && creditInvoiceForm.note_category === 'return') || creditInvoiceForm.doc_type === 'ND') && (
-                        <div className="p-6 bg-zinc-50 rounded-3xl border border-zinc-100 space-y-4">
+                        <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100 space-y-2">
                           <div className="flex items-center justify-between">
-                            <h4 className="text-sm font-black uppercase tracking-widest text-zinc-400">
+                            <h4 className="text-[9px] font-black uppercase tracking-widest text-zinc-400">
                               {creditInvoiceForm.doc_type === 'NC' ? "Produtos a Devolver" : "Itens da Fatura"}
                             </h4>
                             {(creditInvoiceForm.doc_type === 'FT' || creditInvoiceForm.doc_type === 'FR' || creditInvoiceForm.doc_type === 'ND') && (
-                              <div className="relative w-64">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={14} />
+                              <div className="relative w-40">
+                                <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400" size={10} />
                                 <input 
                                   type="text"
                                   placeholder="Adicionar produto..."
-                                  className="w-full pl-9 pr-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black text-xs"
+                                  className="w-full pl-7 pr-2 py-1 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-[9px]"
                                   onChange={(e) => {
                                     const query = e.target.value.toLowerCase();
                                     if (query.length > 2) {
@@ -4890,30 +4937,30 @@ const StoreAdmin = ({ user }: { user: User }) => {
                           <div className="overflow-x-auto">
                             <table className="w-full text-left">
                               <thead>
-                                <tr className="text-[10px] font-black text-zinc-400 uppercase tracking-widest border-b border-zinc-200">
-                                  <th className="pb-2">Código</th>
-                                  <th className="pb-2">Descrição</th>
-                                  <th className="pb-2 text-center">Qtd</th>
-                                  <th className="pb-2 text-right">Preço</th>
-                                  <th className="pb-2 text-right">IVA</th>
-                                  <th className="pb-2 text-right">Ação</th>
+                                <tr className="text-[9px] font-black text-zinc-400 uppercase tracking-widest border-b border-zinc-200">
+                                  <th className="pb-1.5">Código</th>
+                                  <th className="pb-1.5">Descrição</th>
+                                  <th className="pb-1.5 text-center">Qtd</th>
+                                  <th className="pb-1.5 text-right">Preço</th>
+                                  <th className="pb-1.5 text-right">IVA</th>
+                                  <th className="pb-1.5 text-right">Ação</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-zinc-100">
                                 {creditInvoiceForm.items.map((item) => (
-                                  <tr key={item.product_id} className="text-sm">
-                                    <td className="py-3 font-mono text-xs">{item.code}</td>
-                                    <td className="py-3 font-bold">{item.name}</td>
-                                    <td className="py-3">
-                                      <div className="flex items-center justify-center gap-2">
+                                  <tr key={item.product_id} className="text-xs">
+                                    <td className="py-1.5 font-mono text-[9px]">{item.code}</td>
+                                    <td className="py-1.5 font-bold text-[10px]">{item.name}</td>
+                                    <td className="py-1.5">
+                                      <div className="flex items-center justify-center gap-1">
                                         <button 
                                           type="button"
                                           onClick={() => updateCreditInvoiceItemQuantity(item.product_id, item.quantity - 1)}
-                                          className="p-1 hover:bg-zinc-200 rounded-lg"
+                                          className="p-0.5 hover:bg-zinc-200 rounded-md"
                                         >
-                                          <Minus size={12} />
+                                          <Minus size={8} />
                                         </button>
-                                        <span className="w-8 text-center font-bold">{item.quantity}</span>
+                                        <span className="w-5 text-center font-bold text-[10px]">{item.quantity}</span>
                                         <button 
                                           type="button"
                                           onClick={() => {
@@ -4921,33 +4968,33 @@ const StoreAdmin = ({ user }: { user: User }) => {
                                             updateCreditInvoiceItemQuantity(item.product_id, item.quantity + 1);
                                           }}
                                           className={cn(
-                                            "p-1 hover:bg-zinc-200 rounded-lg",
+                                            "p-0.5 hover:bg-zinc-200 rounded-md",
                                             creditInvoiceForm.doc_type === 'NC' && item.max_quantity && item.quantity >= item.max_quantity && "opacity-20 cursor-not-allowed"
                                           )}
                                         >
-                                          <Plus size={12} />
+                                          <Plus size={8} />
                                         </button>
                                       </div>
                                       {item.max_quantity && (
-                                        <p className="text-[8px] text-center text-zinc-400 uppercase font-bold mt-1">Máx: {item.max_quantity}</p>
+                                        <p className="text-[6px] text-center text-zinc-400 uppercase font-bold mt-0.5">Máx: {item.max_quantity}</p>
                                       )}
                                     </td>
-                                    <td className="py-3 text-right">Kz {item.price.toLocaleString()}</td>
-                                    <td className="py-3 text-right">{item.tax}%</td>
-                                    <td className="py-3 text-right">
+                                    <td className="py-1.5 text-right text-[10px]">Kz {item.price.toLocaleString()}</td>
+                                    <td className="py-1.5 text-right text-[10px]">{item.tax}%</td>
+                                    <td className="py-1.5 text-right">
                                       <button 
                                         type="button"
                                         onClick={() => removeProductFromCreditInvoice(item.product_id)}
-                                        className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                                        className="p-1 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
                                       >
-                                        <Trash2 size={16} />
+                                        <Trash2 size={12} />
                                       </button>
                                     </td>
                                   </tr>
                                 ))}
                                 {creditInvoiceForm.items.length === 0 && (
                                   <tr>
-                                    <td colSpan={6} className="py-8 text-center text-zinc-400 text-xs italic">
+                                    <td colSpan={6} className="py-4 text-center text-zinc-400 text-[10px] italic">
                                       Nenhum item adicionado.
                                     </td>
                                   </tr>
@@ -4959,83 +5006,84 @@ const StoreAdmin = ({ user }: { user: User }) => {
                       )}
                     </div>
 
-                    <div className="space-y-6">
-                      <div className="p-6 bg-zinc-900 text-white rounded-3xl space-y-6 shadow-xl shadow-black/20">
+                    <div className="space-y-4">
+                      <div className="p-4 bg-zinc-900 text-white rounded-2xl space-y-4 shadow-xl shadow-black/20">
                         {(creditInvoiceForm.doc_type === 'FT' || creditInvoiceForm.doc_type === 'FR') && (
                           <>
-                            <h4 className="text-sm font-black uppercase tracking-widest text-zinc-500">Detalhes do Documento</h4>
-                            <div className="space-y-4">
+                            <h4 className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Detalhes do Documento</h4>
+                            <div className="space-y-2">
                               <div>
-                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Tipo de Documento</label>
+                                <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Tipo de Documento</label>
                                 <select 
                                   value={creditInvoiceForm.doc_type}
                                   onChange={e => setCreditInvoiceForm({...creditInvoiceForm, doc_type: e.target.value})}
-                                  className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
+                                  className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded-lg outline-none focus:border-orange-500 text-xs"
                                 >
-                                  <option value="FT">Fatura</option>
+                                  <option value="FT">Fatura Crédito</option>
                                   <option value="FR">Fatura Recibo</option>
                                 </select>
                               </div>
-                              <div>
-                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Série</label>
-                                <input 
-                                  type="text"
-                                  required
-                                  value={creditInvoiceForm.series}
-                                  onChange={e => setCreditInvoiceForm({...creditInvoiceForm, series: e.target.value})}
-                                  className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
-                                />
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Série</label>
+                                  <input 
+                                    type="text"
+                                    value={creditInvoiceForm.series}
+                                    onChange={e => setCreditInvoiceForm({...creditInvoiceForm, series: e.target.value})}
+                                    placeholder="Auto"
+                                    className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded-lg outline-none focus:border-orange-500 text-xs"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Nº Fatura</label>
+                                  <input 
+                                    type="text"
+                                    value={creditInvoiceForm.invoice_number}
+                                    onChange={e => setCreditInvoiceForm({...creditInvoiceForm, invoice_number: e.target.value})}
+                                    className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded-lg outline-none focus:border-orange-500 text-xs"
+                                    placeholder="Auto"
+                                  />
+                                </div>
                               </div>
                               <div>
-                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Número da Fatura</label>
-                                <input 
-                                  type="text"
-                                  required
-                                  value={creditInvoiceForm.invoice_number}
-                                  onChange={e => setCreditInvoiceForm({...creditInvoiceForm, invoice_number: e.target.value})}
-                                  className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
-                                  placeholder="Ex: 001"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Data da Fatura</label>
+                                <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Data da Fatura</label>
                                 <input 
                                   type="date"
                                   required
                                   value={creditInvoiceForm.invoice_date}
                                   onChange={e => setCreditInvoiceForm({...creditInvoiceForm, invoice_date: e.target.value})}
-                                  className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none focus:border-orange-500 text-sm"
+                                  className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded-lg outline-none focus:border-orange-500 text-xs"
                                 />
                               </div>
                               <div>
-                                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Moeda</label>
+                                <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Moeda</label>
                                 <input 
                                   type="text"
                                   readOnly
                                   value={creditInvoiceForm.currency}
-                                  className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl outline-none text-sm opacity-50"
+                                  className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded-lg outline-none text-xs opacity-50"
                                 />
                               </div>
                             </div>
                           </>
                         )}
 
-                        <div className="pt-6 border-t border-zinc-800 space-y-2">
-                          <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase">
+                        <div className="pt-4 border-t border-zinc-800 space-y-1.5">
+                          <div className="flex justify-between text-[10px] font-bold text-zinc-500 uppercase">
                             <span>Subtotal Itens</span>
                             <span>Kz {creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0).toLocaleString()}</span>
                           </div>
                           {creditInvoiceForm.doc_type === 'ND' && creditInvoiceForm.adjustment_amount > 0 && (
-                            <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase">
+                            <div className="flex justify-between text-[10px] font-bold text-zinc-500 uppercase">
                               <span>Ajuste Manual</span>
                               <span>Kz {creditInvoiceForm.adjustment_amount.toLocaleString()}</span>
                             </div>
                           )}
-                          <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase">
+                          <div className="flex justify-between text-[10px] font-bold text-zinc-500 uppercase">
                             <span>IVA (14%)</span>
                             <span>Kz {creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * 0.14), 0).toLocaleString()}</span>
                           </div>
-                          <div className="flex justify-between text-xl font-black pt-4">
+                          <div className="flex justify-between text-lg font-black pt-2">
                             <span>{creditInvoiceForm.doc_type === 'NC' ? 'VALOR NOTA' : 'TOTAL'}</span>
                             <span className={cn(
                               creditInvoiceForm.doc_type === 'NC' ? "text-orange-500" : "text-blue-500"
@@ -5048,13 +5096,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
                           </div>
 
                           {creditInvoiceForm.parent_invoice_id && (
-                            <div className="mt-4 p-4 bg-zinc-800 rounded-2xl border border-zinc-700">
-                              <p className="text-[10px] font-bold text-zinc-500 uppercase mb-2">Resumo da Fatura</p>
-                              <div className="flex justify-between text-xs mb-1">
+                            <div className="mt-3 p-3 bg-zinc-800 rounded-xl border border-zinc-700">
+                              <p className="text-[9px] font-bold text-zinc-500 uppercase mb-1.5">Resumo da Fatura</p>
+                              <div className="flex justify-between text-[10px] mb-0.5">
                                 <span className="text-zinc-400">Valor Original:</span>
                                 <span>Kz {creditInvoices.find(i => i.id.toString() === creditInvoiceForm.parent_invoice_id)?.total_amount.toLocaleString()}</span>
                               </div>
-                              <div className="flex justify-between text-xs font-bold pt-2 border-t border-zinc-700">
+                              <div className="flex justify-between text-[10px] font-bold pt-1.5 border-t border-zinc-700">
                                 <span className="text-zinc-400">Novo Valor:</span>
                                 <span className="text-emerald-500">
                                   Kz {(() => {
@@ -5073,7 +5121,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                           type="submit"
                           disabled={creditInvoiceForm.items.length === 0}
                           className={cn(
-                            "w-full py-4 text-white rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg disabled:opacity-50 disabled:shadow-none",
+                            "w-full py-3 text-white rounded-xl font-black uppercase tracking-widest transition-all shadow-lg disabled:opacity-50 disabled:shadow-none text-xs",
                             creditInvoiceForm.doc_type === 'NC' ? "bg-orange-500 hover:bg-orange-600 shadow-orange-500/20" :
                             creditInvoiceForm.doc_type === 'ND' ? "bg-blue-500 hover:bg-blue-600 shadow-blue-500/20" :
                             "bg-black hover:bg-zinc-800 shadow-black/20"
@@ -5509,6 +5557,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                           <th className="px-6 py-4 font-semibold">Nome</th>
                           <th className="px-6 py-4 font-semibold">Código</th>
                           <th className="px-6 py-4 font-semibold">Estado</th>
+                          <th className="px-6 py-4 font-semibold">Operador</th>
                           <th className="px-6 py-4 font-semibold">Saldo Inicial Padrão</th>
                           <th className="px-6 py-4 font-semibold">Limite Máximo</th>
                           <th className="px-6 py-4 font-semibold text-right">Ações</th>
@@ -5529,11 +5578,30 @@ const StoreAdmin = ({ user }: { user: User }) => {
                                 {register.session_status === 'open' ? 'Aberto' : 'Fechado'}
                               </span>
                             </td>
+                            <td className="px-6 py-4">
+                              {register.session_status === 'open' ? (
+                                <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 bg-zinc-100 rounded-full flex items-center justify-center text-[10px] text-zinc-600 font-bold">
+                                    {register.current_seller_name?.charAt(0) || 'U'}
+                                  </div>
+                                  <span className="text-xs font-medium text-zinc-600">{register.current_seller_name || 'Desconhecido'}</span>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-zinc-300">-</span>
+                              )}
+                            </td>
                             <td className="px-6 py-4 text-sm font-medium">Kz {register.default_initial_balance.toLocaleString()}</td>
                             <td className="px-6 py-4 text-sm font-medium text-rose-600">Kz {register.max_limit.toLocaleString()}</td>
                             <td className="px-6 py-4 text-right">
                               <div className="flex justify-end gap-2">
-                                {register.session_status !== 'open' && (
+                                {register.session_status === 'open' ? (
+                                  <button 
+                                    onClick={() => handleCloseSessionDashboard(register.current_session_id!)}
+                                    className="bg-orange-500 text-white px-3 py-1 rounded text-xs font-bold hover:bg-orange-600 transition-all mr-4"
+                                  >
+                                    Fechar Caixa
+                                  </button>
+                                ) : (
                                   <div className="flex items-center gap-2 mr-4">
                                     <input 
                                       type="number" 
@@ -5543,8 +5611,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
                                       className="w-24 px-2 py-1 text-xs border border-zinc-200 rounded outline-none focus:border-orange-500"
                                     />
                                     <button 
-                                      onClick={() => handleOpenSession(register.id, openingAmounts[register.id] || register.default_initial_balance.toString())}
-                                      className="bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold hover:bg-emerald-600 transition-all"
+                                      onClick={() => handleOpenSession(register.id, openingAmounts[register.id] || '')}
+                                      className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-700 transition-all"
                                     >
                                       Abrir Caixa
                                     </button>
@@ -5616,6 +5684,23 @@ const StoreAdmin = ({ user }: { user: User }) => {
                         </div>
                         <div className="grid grid-cols-2 gap-4 pt-2 border-t border-zinc-50">
                           <div>
+                            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Estado</p>
+                            <span className={cn(
+                              "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider inline-block",
+                              register.session_status === 'open' ? "bg-emerald-100 text-emerald-600" : "bg-zinc-100 text-zinc-400"
+                            )}>
+                              {register.session_status === 'open' ? 'Aberto' : 'Fechado'}
+                            </span>
+                          </div>
+                          {register.session_status === 'open' && (
+                            <div>
+                              <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Operador</p>
+                              <p className="text-xs font-bold text-zinc-600">{register.current_seller_name || 'Desconhecido'}</p>
+                            </div>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 pt-2 border-t border-zinc-50">
+                          <div>
                             <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Saldo Inicial</p>
                             <p className="text-xs font-bold">Kz {register.default_initial_balance.toLocaleString()}</p>
                           </div>
@@ -5624,7 +5709,16 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             <p className="text-xs font-bold text-rose-600">Kz {register.max_limit.toLocaleString()}</p>
                           </div>
                         </div>
-                        {register.session_status !== 'open' && (
+                        {register.session_status === 'open' ? (
+                          <div className="pt-2 border-t border-zinc-50">
+                            <button 
+                              onClick={() => handleCloseSessionDashboard(register.current_session_id!)}
+                              className="w-full bg-orange-500 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-orange-600 transition-all"
+                            >
+                              Fechar Caixa
+                            </button>
+                          </div>
+                        ) : (
                           <div className="flex items-center gap-2 pt-2 border-t border-zinc-50">
                             <input 
                               type="number" 
@@ -5634,8 +5728,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
                               className="flex-1 px-3 py-2 text-xs border border-zinc-200 rounded-lg outline-none focus:border-orange-500"
                             />
                             <button 
-                              onClick={() => handleOpenSession(register.id, openingAmounts[register.id] || register.default_initial_balance.toString())}
-                              className="bg-emerald-500 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-emerald-600 transition-all"
+                              onClick={() => handleOpenSession(register.id, openingAmounts[register.id] || '')}
+                              className="bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-green-700 transition-all"
                             >
                               Abrir Caixa
                             </button>
@@ -6837,7 +6931,7 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
 
   const subtotal = invoice.items.reduce((acc: number, item: any) => acc + (item.price * item.quantity), 0);
   const taxTotal = invoice.items.reduce((acc: number, item: any) => acc + (item.price * item.quantity * (item.tax / 100)), 0);
-  const total = subtotal + taxTotal;
+  const total = subtotal + taxTotal + (invoice.adjustment_amount || 0);
 
   return (
     <div className="space-y-6">
@@ -6884,7 +6978,6 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
             </h1>
             <div className="space-y-1 text-xs font-bold text-zinc-500 uppercase tracking-widest">
               <p>Nº {invoice.invoice_number}</p>
-              <p>SÉRIE {invoice.series || 'A'}</p>
               <p>DATA {new Date(invoice.invoice_date || invoice.timestamp || invoice.created_at).toLocaleDateString()}</p>
               <p>MOEDA {invoice.currency || 'Kz'}</p>
               <p>PAGAMENTO {
@@ -6964,6 +7057,12 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
                 <span>IVA Total</span>
                 <span>Kz {taxTotal.toLocaleString()}</span>
               </div>
+              {invoice.adjustment_amount !== 0 && (
+                <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase tracking-widest">
+                  <span>Ajuste</span>
+                  <span>Kz {invoice.adjustment_amount.toLocaleString()}</span>
+                </div>
+              )}
               <div className="flex justify-between text-lg font-black text-zinc-900 uppercase tracking-tight pt-3 border-t border-zinc-100">
                 <span>Total</span>
                 <span>Kz {total.toLocaleString()}</span>
@@ -7153,7 +7252,7 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
                 <div className="text-right">
                   <h1 className="text-4xl font-black text-orange-500 uppercase mb-2">PROFORMA</h1>
                   <div className="space-y-1 text-sm text-zinc-600">
-                    <p><span className="font-bold">Nº:</span> {proforma.id.toString().padStart(6, '0')}</p>
+                    <p><span className="font-bold">Nº:</span> {proforma.invoice_number}</p>
                     <p><span className="font-bold">Data:</span> {new Date(proforma.created_at).toLocaleDateString()}</p>
                     <p><span className="font-bold">Vencimento:</span> {new Date(new Date(proforma.created_at).getTime() + 15 * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>
                   </div>
@@ -7301,7 +7400,8 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
             <img src={store.logo_url || undefined} alt="" className="w-10 h-10 mx-auto mb-2 object-contain grayscale" referrerPolicy="no-referrer" />
           )}
           <h2 className="text-base font-black uppercase tracking-tight">{store.name}</h2>
-          <p className="text-[8px] leading-tight text-zinc-500 mb-1">{store.address}</p>
+          <h1 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] mt-1">Fatura Simplificada</h1>
+          <p className="text-[8px] leading-tight text-zinc-500 mb-1 mt-1">{store.address}</p>
           <div className="text-[7px] font-bold flex flex-wrap justify-center gap-x-2">
             <span>NIF: {store.nif}</span>
             <span>TEL: {store.phone}</span>
@@ -7945,9 +8045,14 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         setDiscount(0);
         setClient({ name: 'Consumidor Final', nif: '999999999' });
         fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
+        alert('Fatura Recibo emitida com sucesso!');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Erro ao emitir fatura recibo.');
       }
     } catch (error) {
       console.error("Error creating formal invoice:", error);
+      alert('Erro de conexão ao emitir fatura recibo.');
     } finally {
       setIsProcessing(false);
     }
@@ -8030,7 +8135,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 {hasPermission(user, 'pos_open_cashier') ? (
                   <button 
                     onClick={() => window.location.hash = '#/seller/close'}
-                    className="px-6 py-2 bg-rose-600 text-white rounded-xl text-sm font-bold hover:bg-rose-700 transition-all active:scale-95 shadow-lg shadow-rose-200"
+                    className="px-6 py-2 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-all active:scale-95 shadow-lg shadow-green-200"
                   >
                     Abrir Caixa Agora
                   </button>
@@ -9433,7 +9538,10 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
                     )}
                     <button
                       onClick={() => handleSelectRegister(register.id)}
-                      className="w-full bg-emerald-500 text-white py-3 rounded-xl font-bold hover:bg-emerald-600 transition-all active:scale-95"
+                      className={cn(
+                        "w-full py-3 rounded-xl font-bold transition-all active:scale-95",
+                        isOpenedByMe ? "bg-orange-500 hover:bg-orange-600 text-white" : "bg-green-600 hover:bg-green-700 text-white"
+                      )}
                     >
                       {isOpenedByMe ? 'Fechar Meu Caixa' : 'Entrar no Caixa'}
                     </button>
@@ -9458,7 +9566,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
                         />
                         <button
                           onClick={(e) => handleOpenSession(e, register.id, openingAmounts[register.id] || '')}
-                          className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100"
+                          className="w-full bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 transition-all active:scale-95 shadow-lg shadow-green-100"
                         >
                           Abrir Caixa
                         </button>
@@ -9553,7 +9661,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
             <button
               onClick={handleCloseSession}
               disabled={!physicalAmount}
-              className="w-full bg-zinc-900 text-white py-5 rounded-2xl font-black text-lg hover:bg-black transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed"
+              className="w-full bg-orange-500 text-white py-5 rounded-2xl font-black text-lg hover:bg-orange-600 transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed shadow-lg shadow-orange-100"
             >
               Fechar Caixa Agora
             </button>
@@ -10046,6 +10154,7 @@ export default function App() {
                 <Route path="/owner/partners" element={<OwnerPartners user={user} />} />
                 <Route path="/owner/purchases" element={<OwnerPurchases user={user} />} />
                 <Route path="/owner/services" element={<OwnerServices user={user} />} />
+                <Route path="/owner/documents" element={<OwnerFiscalDocuments user={user} />} />
                 <Route path="/owner/rh" element={<OwnerRH user={user} />} />
                 <Route path="/owner/reports" element={<OwnerReports user={user} />} />
                 <Route path="/owner/settings" element={<OwnerSettings user={user} />} />

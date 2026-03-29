@@ -141,6 +141,45 @@ export const MyStores = ({ user }: { user: User }) => {
     }
   };
 
+  const handleCloseSession = async (sessionId: number) => {
+    const amount = prompt('Insira o valor físico em caixa para fechar:');
+    if (amount === null) return;
+    
+    const physicalAmount = parseFloat(amount);
+    if (isNaN(physicalAmount)) {
+      alert('Por favor, insira um valor válido.');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/seller/close-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          physical_amount: physicalAmount,
+          closing_amount: 0,
+          seller_id: user.id
+        })
+      });
+
+      if (res.ok) {
+        if (selectedStoreForOpening) {
+          fetch(`/api/owner/stores/${selectedStoreForOpening.id}/cash-registers`)
+            .then(res => res.json())
+            .then(setRegistersForSelectedStore);
+        }
+        alert('Caixa fechado com sucesso!');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Erro ao fechar caixa.');
+      }
+    } catch (error) {
+      console.error("Error closing session:", error);
+      alert('Erro de conexão ao fechar caixa.');
+    }
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const url = editingStore ? `/api/owner/stores/${editingStore.id}` : '/api/owner/stores';
@@ -528,12 +567,22 @@ export const MyStores = ({ user }: { user: User }) => {
                   </div>
 
                   {register.session_status === 'open' ? (
-                    <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl flex items-center gap-3">
-                      <CheckCircle size={20} className="text-emerald-600" />
-                      <div>
-                        <p className="text-xs font-bold text-emerald-900">Caixa em Operação</p>
-                        <p className="text-[10px] text-emerald-700">{isOpenedByMe ? 'Aberto por você' : 'Aberto por outro funcionário'}</p>
+                    <div className="space-y-3">
+                      <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl flex items-center gap-3">
+                        <CheckCircle size={20} className="text-emerald-600" />
+                        <div>
+                          <p className="text-xs font-bold text-emerald-900">Caixa em Operação</p>
+                          <p className="text-[10px] text-emerald-700">{isOpenedByMe ? 'Aberto por você' : 'Aberto por outro funcionário'}</p>
+                        </div>
                       </div>
+                      {(user.role === 'owner' || user.role === 'manager') && (
+                        <button
+                          onClick={() => handleCloseSession(register.current_session_id!)}
+                          className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100"
+                        >
+                          Fechar Caixa
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -548,8 +597,8 @@ export const MyStores = ({ user }: { user: User }) => {
                         />
                       </div>
                       <button
-                        onClick={() => handleOpenSession(register.id, openingAmounts[register.id] || register.default_initial_balance.toString())}
-                        className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100"
+                        onClick={() => handleOpenSession(register.id, openingAmounts[register.id] || '')}
+                        className="w-full bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 transition-all active:scale-95 shadow-lg shadow-green-100"
                       >
                         Abrir Caixa
                       </button>

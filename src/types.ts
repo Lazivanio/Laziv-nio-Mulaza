@@ -9,6 +9,8 @@ export interface CashRegister {
   max_limit: number;
   created_at: string;
   session_status?: 'open' | 'closed';
+  current_session_id?: number;
+  current_seller_name?: string;
 }
 
 export interface CashSession {

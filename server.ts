@@ -1,6 +1,7 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
+import * as XLSX from "xlsx";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -161,6 +162,17 @@ db.exec(`
     FOREIGN KEY(store_id) REFERENCES stores(id)
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_products_store_barcode ON products(store_id, barcode);
+
+  CREATE TABLE IF NOT EXISTS generated_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER,
+    name TEXT,
+    type TEXT, -- 'SAFT', 'Excel', 'PDF'
+    generated_by TEXT, -- User name
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    file_data BLOB,
+    FOREIGN KEY(owner_id) REFERENCES users(id)
+  );
 `);
 
 try {
@@ -1456,9 +1468,13 @@ async function startServer() {
     const { storeId } = req.params;
     const registers = db.prepare(`
       SELECT cr.*, 
-             (SELECT status FROM cashier_sessions WHERE cash_register_id = cr.id AND status = 'open' LIMIT 1) as session_status,
-             (SELECT seller_id FROM cashier_sessions WHERE cash_register_id = cr.id AND status = 'open' LIMIT 1) as seller_id
+             s.status as session_status,
+             s.seller_id as current_seller_id,
+             u.name as current_seller_name,
+             s.id as current_session_id
       FROM cash_registers cr 
+      LEFT JOIN cashier_sessions s ON s.cash_register_id = cr.id AND s.status = 'open'
+      LEFT JOIN users u ON s.seller_id = u.id
       WHERE cr.store_id = ?
     `).all(storeId);
     res.json(registers);
@@ -1562,6 +1578,204 @@ async function startServer() {
       WHERE id = ?
     `).run(name, address, phone, email, nif, logo_url, status, JSON.stringify(bank_accounts || []), req.params.storeId);
     res.json({ success: true });
+  });
+
+  // --- Fiscal Documents Endpoints ---
+  app.get("/api/owner/generated-files/:ownerId", (req, res) => {
+    try {
+      const files = db.prepare("SELECT id, owner_id, name, type, generated_by, created_at FROM generated_files WHERE owner_id = ? ORDER BY created_at DESC").all(req.params.ownerId) as any[];
+      res.json(files);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/owner/download-file/:fileId", (req, res) => {
+    try {
+      const file = db.prepare("SELECT * FROM generated_files WHERE id = ?").get(req.params.fileId) as any;
+      if (!file) return res.status(404).json({ error: "Ficheiro não encontrado." });
+      
+      res.setHeader('Content-Disposition', `attachment; filename="${file.name}"`);
+      res.send(file.file_data);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/owner/generate-saft", (req, res) => {
+    const { owner_id, store_id, start_date, end_date, doc_type, user_name } = req.body;
+    try {
+      // Get all store IDs for this owner if no specific store is selected
+      let storeIds: number[] = [];
+      if (store_id) {
+        storeIds = [parseInt(store_id)];
+      } else {
+        const stores = db.prepare("SELECT id FROM stores WHERE owner_id = ?").all(owner_id) as { id: number }[];
+        storeIds = stores.map(s => s.id);
+      }
+
+      if (storeIds.length === 0) {
+        return res.status(400).json({ error: "Nenhuma loja encontrada para este utilizador." });
+      }
+
+      const placeholders = storeIds.map(() => '?').join(',');
+
+      // Fetch invoices from credit_invoices (FR, FT)
+      let ciQuery = `SELECT * FROM credit_invoices WHERE store_id IN (${placeholders})`;
+      let ciParams: any[] = [...storeIds];
+      ciQuery += " AND date(created_at) BETWEEN ? AND ?";
+      ciParams.push(start_date, end_date);
+      if (doc_type && doc_type !== 'FS') {
+        ciQuery += " AND doc_type = ?";
+        ciParams.push(doc_type);
+      } else if (doc_type === 'FS') {
+        // If FS is requested, credit_invoices should return nothing
+        ciQuery += " AND 1=0";
+      }
+      const creditInvoices = db.prepare(ciQuery).all(...ciParams) as any[];
+
+      // Fetch invoices from transactions (FS)
+      let tInvoices: any[] = [];
+      if (!doc_type || doc_type === 'FS') {
+        let tQuery = `SELECT * FROM transactions WHERE store_id IN (${placeholders})`;
+        let tParams: any[] = [...storeIds];
+        tQuery += " AND date(timestamp) BETWEEN ? AND ?";
+        tParams.push(start_date, end_date);
+        tInvoices = db.prepare(tQuery).all(...tParams) as any[];
+      }
+
+      // Combine and format XML
+      let invoicesXml = "";
+      
+      creditInvoices.forEach(inv => {
+        invoicesXml += `
+      <Invoice>
+        <InvoiceNo>${inv.invoice_number}</InvoiceNo>
+        <DocumentStatus>
+          <InvoiceStatus>N</InvoiceStatus>
+          <InvoiceStatusDate>${inv.created_at}</InvoiceStatusDate>
+          <SourceID>${inv.seller_id}</SourceID>
+          <SourceBilling>P</SourceBilling>
+        </DocumentStatus>
+        <Hash>...</Hash>
+        <InvoiceDate>${inv.invoice_date || (inv.created_at ? inv.created_at.split(' ')[0] : start_date)}</InvoiceDate>
+        <InvoiceType>${inv.doc_type}</InvoiceType>
+        <CustomerID>${inv.client_name}</CustomerID>
+        <Line>
+          <LineNumber>1</LineNumber>
+          <Description>Venda de Produtos/Serviços</Description>
+          <Quantity>1</Quantity>
+          <UnitPrice>${inv.total_amount}</UnitPrice>
+          <CreditAmount>${inv.total_amount}</CreditAmount>
+        </Line>
+        <DocumentTotals>
+          <TaxPayable>${inv.tax_amount || 0}</TaxPayable>
+          <NetTotal>${inv.total_amount - (inv.tax_amount || 0)}</NetTotal>
+          <GrossTotal>${inv.total_amount}</GrossTotal>
+        </DocumentTotals>
+      </Invoice>`;
+      });
+
+      tInvoices.forEach(inv => {
+        invoicesXml += `
+      <Invoice>
+        <InvoiceNo>${inv.invoice_number}</InvoiceNo>
+        <DocumentStatus>
+          <InvoiceStatus>N</InvoiceStatus>
+          <InvoiceStatusDate>${inv.timestamp}</InvoiceStatusDate>
+          <SourceID>${inv.seller_id}</SourceID>
+          <SourceBilling>P</SourceBilling>
+        </DocumentStatus>
+        <Hash>...</Hash>
+        <InvoiceDate>${inv.timestamp ? inv.timestamp.split(' ')[0] : start_date}</InvoiceDate>
+        <InvoiceType>FS</InvoiceType>
+        <CustomerID>${inv.client_name || 'Consumidor Final'}</CustomerID>
+        <Line>
+          <LineNumber>1</LineNumber>
+          <Description>Venda Simplificada (PDV)</Description>
+          <Quantity>1</Quantity>
+          <UnitPrice>${inv.total_amount}</UnitPrice>
+          <CreditAmount>${inv.total_amount}</CreditAmount>
+        </Line>
+        <DocumentTotals>
+          <TaxPayable>${inv.tax_amount || 0}</TaxPayable>
+          <NetTotal>${inv.total_amount - (inv.tax_amount || 0)}</NetTotal>
+          <GrossTotal>${inv.total_amount}</GrossTotal>
+        </DocumentTotals>
+      </Invoice>`;
+      });
+
+      const totalCredit = (creditInvoices.reduce((sum, inv) => sum + inv.total_amount, 0) + tInvoices.reduce((sum, inv) => sum + inv.total_amount, 0)).toFixed(2);
+
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<AuditFile xmlns="urn:OECD:StandardAuditFile-Tax:AO:1.01_01">
+  <Header>
+    <AuditFileVersion>1.01_01</AuditFileVersion>
+    <CompanyID>${owner_id}</CompanyID>
+    <TaxRegistrationNumber>...</TaxRegistrationNumber>
+    <StartDate>${start_date}</StartDate>
+    <EndDate>${end_date}</EndDate>
+    <CurrencyCode>AOA</CurrencyCode>
+    <DateCreated>${new Date().toISOString().split('T')[0]}</DateCreated>
+  </Header>
+  <SourceDocuments>
+    <SalesInvoices>
+      <NumberOfEntries>${creditInvoices.length + tInvoices.length}</NumberOfEntries>
+      <TotalDebit>0.00</TotalDebit>
+      <TotalCredit>${totalCredit}</TotalCredit>
+      ${invoicesXml}
+    </SalesInvoices>
+  </SourceDocuments>
+</AuditFile>`;
+
+      const fileName = `SAFT_AO_${new Date().toISOString().replace(/[:.]/g, '-')}.xml`;
+      db.prepare("INSERT INTO generated_files (owner_id, name, type, generated_by, file_data) VALUES (?, ?, ?, ?, ?)").run(owner_id, fileName, 'SAFT', user_name, Buffer.from(xml));
+      
+      res.json({ success: true, fileName });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/owner/export", (req, res) => {
+    const { owner_id, export_type, store_id, user_name } = req.body;
+    try {
+      let data: any[] = [];
+      let fileName = "";
+      let type = "Excel";
+      
+      if (export_type === 'sales') {
+        data = db.prepare("SELECT * FROM transactions WHERE store_id = ?").all(store_id) as any[];
+        fileName = `Vendas_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+      } else if (export_type === 'purchases') {
+        data = db.prepare("SELECT * FROM purchases WHERE store_id = ?").all(store_id) as any[];
+        fileName = `Compras_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+      } else if (export_type === 'clients') {
+        data = db.prepare("SELECT * FROM users WHERE role = 'client'").all() as any[];
+        fileName = `Clientes_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+      } else if (export_type === 'products') {
+        data = db.prepare("SELECT * FROM products WHERE store_id = ?").all(store_id) as any[];
+        fileName = `Produtos_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+      } else if (export_type === 'invoices') {
+        // Mock PDF export
+        type = "PDF";
+        fileName = `Faturas_${new Date().toISOString().replace(/[:.]/g, '-')}.pdf`;
+        const dummyPdf = Buffer.from("%PDF-1.4\n1 0 obj <</Type /Catalog /Pages 2 0 R>> endobj\n2 0 obj <</Type /Pages /Kids [3 0 R] /Count 1>> endobj\n3 0 obj <</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R>> endobj\n4 0 obj <</Length 44>> stream\nBT /F1 24 Tf 100 700 Td (Faturas Exportadas) Tj ET\nendstream endobj\nxref\n0 5\n0000000000 65535 f\n0000000009 00000 n\n0000000058 00000 n\n0000000115 00000 n\n0000000212 00000 n\ntrailer <</Size 5 /Root 1 0 R>>\nstartxref\n306\n%%EOF");
+        db.prepare("INSERT INTO generated_files (owner_id, name, type, generated_by, file_data) VALUES (?, ?, ?, ?, ?)").run(owner_id, fileName, type, user_name, dummyPdf);
+        return res.json({ success: true, fileName });
+      }
+
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Data");
+      const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+      db.prepare("INSERT INTO generated_files (owner_id, name, type, generated_by, file_data) VALUES (?, ?, ?, ?, ?)").run(owner_id, fileName, type, user_name, buffer);
+      
+      res.json({ success: true, fileName });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
   });
 
   // --- Owner Support Endpoints ---
@@ -2705,7 +2919,7 @@ async function startServer() {
     
     // Generate Sequential Invoice Number
     const year = new Date().getFullYear();
-    const lastInvoice = db.prepare("SELECT invoice_number FROM transactions WHERE invoice_number LIKE ? ORDER BY id DESC LIMIT 1").get(`FS ${year}/%`) as { invoice_number: string } | undefined;
+    const lastInvoice = db.prepare("SELECT invoice_number FROM transactions WHERE store_id = ? AND invoice_number LIKE ? ORDER BY id DESC LIMIT 1").get(store_id, `FS ${year}/%`) as { invoice_number: string } | undefined;
     let sequence = 1;
     if (lastInvoice) {
       const parts = lastInvoice.invoice_number.split('/');
@@ -2713,7 +2927,7 @@ async function startServer() {
         sequence = parseInt(parts[1]) + 1;
       }
     }
-    const invoice_number = `FS ${year}/${sequence}`;
+    const invoice_number = `FS ${year}/${sequence.toString().padStart(3, '0')}`;
 
     const info = db.prepare(`
       INSERT INTO transactions (
@@ -2940,15 +3154,19 @@ async function startServer() {
 
   app.post("/api/seller/open-session", (req, res) => {
     const { store_id, seller_id, opening_amount, cash_register_id } = req.body;
+    console.log("Opening session request:", { store_id, seller_id, opening_amount, cash_register_id });
     
     if (!hasPermission(seller_id, 'pos_open_cashier')) {
       return res.status(403).json({ error: "Você não tem permissão para abrir o caixa." });
     }
 
-    // Check if seller already has an open session
-    const existingSellerSession = db.prepare("SELECT id FROM cashier_sessions WHERE seller_id = ? AND status = 'open'").get(seller_id);
-    if (existingSellerSession) {
-      return res.status(400).json({ error: "Você já possui uma sessão de caixa aberta. Feche-a antes de abrir outra." });
+    // Check if seller already has an open session (exempt owners and admins)
+    const user = db.prepare("SELECT role FROM users WHERE id = ?").get(seller_id) as any;
+    if (user && user.role !== 'owner' && user.role !== 'admin') {
+      const existingSellerSession = db.prepare("SELECT id FROM cashier_sessions WHERE seller_id = ? AND status = 'open'").get(seller_id);
+      if (existingSellerSession) {
+        return res.status(400).json({ error: "Você já possui uma sessão de caixa aberta. Feche-a antes de abrir outra." });
+      }
     }
 
     // Check if register already has an open session
@@ -2962,17 +3180,39 @@ async function startServer() {
   });
 
   app.post("/api/seller/close-session", (req, res) => {
-    const { session_id, physical_amount, closing_amount, seller_id } = req.body;
+    let { session_id, physical_amount, closing_amount, seller_id } = req.body;
+    console.log("Closing session request:", { session_id, physical_amount, closing_amount, seller_id });
 
     if (!hasPermission(seller_id, 'pos_close_cashier')) {
       return res.status(403).json({ error: "Você não tem permissão para fechar o caixa." });
+    }
+
+    // If closing_amount is 0 or not provided, calculate it from transactions
+    if (!closing_amount || closing_amount === 0) {
+      const session = db.prepare("SELECT * FROM cashier_sessions WHERE id = ?").get(session_id) as any;
+      if (session) {
+        // Sum cash sales from transactions
+        const sales = db.prepare(`
+          SELECT SUM(total_amount) as total 
+          FROM transactions 
+          WHERE store_id = ? AND cash_register_id = ? AND timestamp >= ?
+        `).get(session.store_id, session.cash_register_id, session.opening_time) as any;
+        
+        const movements = db.prepare(`
+          SELECT SUM(CASE WHEN type = 'in' THEN amount ELSE -amount END) as total
+          FROM cash_movements
+          WHERE session_id = ?
+        `).get(session_id) as any;
+
+        closing_amount = (session.opening_amount || 0) + (sales?.total || 0) + (movements?.total || 0);
+      }
     }
 
     db.prepare(`
       UPDATE cashier_sessions 
       SET physical_amount = ?, closing_amount = ?, closing_time = CURRENT_TIMESTAMP, status = 'closed' 
       WHERE id = ?
-    `).run(physical_amount, closing_amount, session_id);
+    `).run(physical_amount, closing_amount || 0, session_id);
     res.json({ success: true });
   });
 
@@ -3093,7 +3333,7 @@ async function startServer() {
       // Generate invoice number
       const year = new Date().getFullYear();
       const count = db.prepare("SELECT count(*) as count FROM proforma_invoices WHERE store_id = ? AND strftime('%Y', created_at) = ?").get(store_id, year.toString()) as any;
-      const invoice_number = `PF/${year}/${(count.count + 1).toString().padStart(4, '0')}`;
+      const invoice_number = `PF ${year}/${(count.count + 1).toString().padStart(3, '0')}`;
 
       const result = db.prepare(`
         INSERT INTO proforma_invoices (store_id, owner_id, client_name, client_nif, client_address, total_amount, items, bank_accounts, invoice_number)
@@ -3122,14 +3362,41 @@ async function startServer() {
   app.post("/api/owner/credit-invoices", (req, res) => {
     const { 
       store_id, client_nif, client_name, address, country, 
-      doc_type, series, invoice_number, invoice_date, 
+      doc_type, series: providedSeries, invoice_number: providedNumber, invoice_date, 
       currency, total_amount, tax_amount, items, seller_id,
       payment_method, parent_invoice_id, reason, note_category,
       adjustment_amount, observations
     } = req.body;
 
+    console.log("Creating credit invoice request:", { store_id, doc_type, items_count: items?.length });
+
     try {
+      let finalInvoice: any = null;
       db.transaction(() => {
+        let finalSeries = providedSeries;
+        let finalNumber = providedNumber;
+
+        // Auto-generate series and number if not provided
+        if (!finalSeries) {
+          finalSeries = new Date().getFullYear().toString();
+        }
+
+        if (!finalNumber) {
+          const lastInvoice = db.prepare(`
+            SELECT invoice_number FROM credit_invoices 
+            WHERE store_id = ? AND doc_type = ? AND series = ?
+            ORDER BY id DESC LIMIT 1
+          `).get(store_id, doc_type, finalSeries) as { invoice_number: string } | undefined;
+
+          let nextNum = 1;
+          if (lastInvoice) {
+            const lastNumMatch = lastInvoice.invoice_number.match(/\/(\d+)$/);
+            const lastNum = lastNumMatch ? parseInt(lastNumMatch[1]) : 0;
+            nextNum = lastNum + 1;
+          }
+          finalNumber = `${doc_type} ${finalSeries}/${nextNum.toString().padStart(3, '0')}`;
+        }
+
         const result = db.prepare(`
           INSERT INTO credit_invoices (
             store_id, client_nif, client_name, address, country, 
@@ -3140,7 +3407,7 @@ async function startServer() {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           store_id, client_nif, client_name, address, country, 
-          doc_type, series, invoice_number, invoice_date, 
+          doc_type, finalSeries, finalNumber, invoice_date, 
           currency, total_amount, tax_amount, JSON.stringify(items), seller_id || null,
           payment_method || 'cash', parent_invoice_id || null, reason || null, 
           note_category || null, adjustment_amount || 0, observations || null
@@ -3159,9 +3426,8 @@ async function startServer() {
                 db.prepare(`
                   INSERT INTO stock_movements (store_id, product_id, type, quantity, reason)
                   VALUES (?, ?, 'in', ?, ?)
-                `).run(store_id, item.product_id || item.id, item.quantity, `Nota de Crédito (Devolução) - Fatura: ${invoice_number}`);
+                `).run(store_id, item.product_id || item.id, item.quantity, `Nota de Crédito (Devolução) - Fatura: ${finalNumber}`);
               }
-              // If 'correction', stock is not affected
             } else {
               // FT, FR, ND - Stock goes OUT
               db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.product_id || item.id);
@@ -3170,17 +3436,22 @@ async function startServer() {
               db.prepare(`
                 INSERT INTO stock_movements (store_id, product_id, type, quantity, reason)
                 VALUES (?, ?, 'out', ?, ?)
-              `).run(store_id, item.product_id || item.id, item.quantity, `${doc_type === 'ND' ? 'Nota de Débito' : 'Fatura'} - Nº: ${invoice_number}`);
+              `).run(store_id, item.product_id || item.id, item.quantity, `${doc_type === 'ND' ? 'Nota de Débito' : 'Fatura'} - Nº: ${finalNumber}`);
             }
           }
         }
 
-        const newInvoice = db.prepare("SELECT * FROM credit_invoices WHERE id = ?").get(result.lastInsertRowid) as any;
-        res.json({
-          ...newInvoice,
-          items: typeof newInvoice.items === 'string' ? JSON.parse(newInvoice.items) : (newInvoice.items || [])
-        });
+        finalInvoice = db.prepare("SELECT * FROM credit_invoices WHERE id = ?").get(result.lastInsertRowid) as any;
       })();
+
+      if (finalInvoice) {
+        res.json({
+          ...finalInvoice,
+          items: typeof finalInvoice.items === 'string' ? JSON.parse(finalInvoice.items) : (finalInvoice.items || [])
+        });
+      } else {
+        res.status(500).json({ error: "Failed to create invoice" });
+      }
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
