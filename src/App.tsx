@@ -392,7 +392,6 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
                 <SidebarItem icon={Sparkles} label="Serviços" to="/owner/services" onClick={closeSidebar} />
                 <SidebarItem icon={FileText} label="Documentos" to="/owner/documents" onClick={closeSidebar} />
                 <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
-                {hasPermission(user, 'pos_close_cashier') && <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />}
                 <SidebarItem icon={Settings} label="Configurações" to="/owner/settings" onClick={closeSidebar} />
               </>
             )}
@@ -3258,6 +3257,9 @@ const StoreAdmin = ({ user }: { user: User }) => {
   });
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
   const [isOpeningModalOpen, setIsOpeningModalOpen] = useState(false);
+  const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
+  const [closingSessionId, setClosingSessionId] = useState<number | null>(null);
+  const [closingAmount, setClosingAmount] = useState('');
   const navigate = useNavigate();
 
   const fetchData = () => {
@@ -3382,19 +3384,23 @@ const StoreAdmin = ({ user }: { user: User }) => {
     }
   };
 
-  const handleCloseSessionDashboard = async (sessionId: number) => {
-    console.log('handleCloseSessionDashboard called with sessionId:', sessionId);
-    if (!sessionId) {
-      alert('Sessão não encontrada.');
-      return;
-    }
-    const amount = prompt('Informe o valor físico em caixa:');
-    if (amount === null) {
-      console.log('Close session cancelled by user');
-      return;
-    }
+  const handleCloseSessionDashboard = (sessionId: number) => {
+    console.log('Opening close session modal for sessionId:', sessionId);
+    setClosingSessionId(sessionId);
+    setClosingAmount('');
+    setIsClosingModalOpen(true);
+  };
+
+  const confirmCloseSession = async () => {
+    if (!closingSessionId) return;
     
-    const normalizedAmount = amount.replace(',', '.').trim();
+    const sessionRegister = cashRegisters.find(r => r.current_session_id === closingSessionId);
+    if (user.role !== 'owner' && sessionRegister?.seller_id !== user.id) {
+      alert('Você não tem permissão para fechar este caixa.');
+      return;
+    }
+
+    const normalizedAmount = closingAmount.replace(',', '.').trim();
     if (normalizedAmount === '') {
       alert('Por favor, informe um valor.');
       return;
@@ -3413,15 +3419,16 @@ const StoreAdmin = ({ user }: { user: User }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          session_id: sessionId,
+          session_id: closingSessionId,
           physical_amount,
-          closing_amount: 0, // Server will calculate expected if 0 or not provided
+          closing_amount: 0,
           seller_id: user.id
         })
       });
 
       if (res.ok) {
         console.log('Session closed successfully');
+        setIsClosingModalOpen(false);
         fetchData();
         alert('Caixa fechado com sucesso!');
       } else {
@@ -5613,13 +5620,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             <td className="px-6 py-4 text-sm font-medium text-rose-600">Kz {register.max_limit.toLocaleString()}</td>
                             <td className="px-6 py-4 text-right">
                               <div className="flex justify-end gap-2">
-                                {register.session_status === 'open' ? (
+                                {register.session_status === 'open' && (user.role === 'owner' || register.seller_id === user.id) ? (
                                   <button 
                                     onClick={() => handleCloseSessionDashboard(register.current_session_id!)}
                                     className="bg-orange-500 text-white px-3 py-1 rounded text-xs font-bold hover:bg-orange-600 transition-all mr-4"
                                   >
                                     Fechar Caixa
                                   </button>
+                                ) : register.session_status === 'open' ? (
+                                  <span className="text-[10px] font-bold text-zinc-400 uppercase mr-4">Em Operação</span>
                                 ) : (
                                   <div className="flex items-center gap-2 mr-4">
                                     <input 
@@ -6369,6 +6378,44 @@ const StoreAdmin = ({ user }: { user: User }) => {
                 Nenhum caixa registado para esta loja.
               </div>
             )}
+          </div>
+        </div>
+      </Modal>
+
+      {/* Cash Register Closing Modal */}
+      <Modal 
+        isOpen={isClosingModalOpen} 
+        onClose={() => setIsClosingModalOpen(false)} 
+        title="Fechar Caixa"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-600">
+            Informe o valor físico total presente no caixa para encerrar a sessão.
+          </p>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 font-bold text-sm">Kz</span>
+            <input
+              type="text"
+              placeholder="0,00"
+              value={closingAmount}
+              onChange={e => setClosingAmount(e.target.value)}
+              className="w-full pl-10 pr-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold"
+              autoFocus
+            />
+          </div>
+          <div className="flex gap-3 pt-4">
+            <button
+              onClick={() => setIsClosingModalOpen(false)}
+              className="flex-1 py-3 border border-zinc-200 rounded-xl font-bold text-zinc-600 hover:bg-zinc-50 transition-all"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={confirmCloseSession}
+              className="flex-1 py-3 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-100"
+            >
+              Confirmar Fechamento
+            </button>
           </div>
         </div>
       </Modal>
@@ -9547,6 +9594,11 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
       return;
     }
 
+    if (user.role !== 'owner' && session.seller_id !== user.id) {
+      alert('Apenas o funcionário que abriu este caixa ou o proprietário podem fechá-lo.');
+      return;
+    }
+
     try {
       const res = await fetch('/api/seller/close-session', {
         method: 'POST',
@@ -9632,7 +9684,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
                         isOpenedByMe ? "bg-orange-500 hover:bg-orange-600 text-white" : "bg-green-600 hover:bg-green-700 text-white"
                       )}
                     >
-                      {isOpenedByMe ? 'Fechar Meu Caixa' : (hasPermission(user, 'pos_close_cashier') ? 'Fechar Caixa' : 'Entrar no Caixa')}
+                      {isOpenedByMe ? 'Fechar Meu Caixa' : (user.role === 'owner' && hasPermission(user, 'pos_close_cashier') ? 'Fechar Caixa' : 'Entrar no Caixa')}
                     </button>
                   </div>
                 ) : hasPermission(user, 'pos_open_cashier') ? (
@@ -9746,7 +9798,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
             <h4 className="font-bold text-xl mb-2">Encerrar Operações</h4>
             <p className="text-sm text-zinc-500">Ao fechar o caixa, você não poderá realizar novas vendas nesta sessão.</p>
           </div>
-          {hasPermission(user, 'pos_close_cashier') ? (
+          {hasPermission(user, 'pos_close_cashier') && (user.role === 'owner' || session.seller_id === user.id) ? (
             <button
               onClick={handleCloseSession}
               disabled={!physicalAmount}
@@ -9758,7 +9810,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
             <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl text-center">
               <Lock size={20} className="mx-auto mb-2 text-rose-400" />
               <p className="text-xs font-bold text-rose-600 uppercase tracking-wider">Sem Permissão</p>
-              <p className="text-[10px] text-rose-400 mt-1">Apenas supervisores podem fechar o caixa.</p>
+              <p className="text-[10px] text-rose-400 mt-1">Apenas o funcionário que abriu este caixa ou o proprietário podem fechá-lo.</p>
             </div>
           )}
         </Card>

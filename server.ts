@@ -2439,9 +2439,16 @@ async function startServer() {
     
     // Sales of the day
     const todaySales = db.prepare(`
-      SELECT SUM(total_amount) as total 
+      SELECT SUM(total_amount) as total, COUNT(*) as count
       FROM transactions 
       WHERE ${whereClause} AND date(timestamp) = date('now')
+    `).get(...params) as any;
+
+    // Sales of the month
+    const monthlySales = db.prepare(`
+      SELECT SUM(total_amount) as total
+      FROM transactions 
+      WHERE ${whereClause} AND strftime('%Y-%m', timestamp) = strftime('%Y-%m', 'now')
     `).get(...params) as any;
 
     // Low stock count (below 5)
@@ -2458,10 +2465,79 @@ async function startServer() {
       WHERE ${whereClause}
     `).get(...params) as any;
 
+    // Top Products
+    const topProducts = db.prepare(`
+      SELECT p.name, SUM(CAST(json_extract(j.value, '$.quantity') AS INTEGER)) as total_qty
+      FROM transactions t, json_each(t.items) j
+      JOIN products p ON p.id = json_extract(j.value, '$.id')
+      WHERE t.${whereClause}
+      GROUP BY p.id
+      ORDER BY total_qty DESC
+      LIMIT 5
+    `).all(...params) as any[];
+
+    // Recent Transactions
+    const recentTransactions = db.prepare(`
+      SELECT t.*, s.name as store_name
+      FROM transactions t
+      JOIN stores s ON t.store_id = s.id
+      WHERE t.${whereClause}
+      ORDER BY t.timestamp DESC
+      LIMIT 5
+    `).all(...params) as any[];
+
+    // Sales by Day (Last 7 days)
+    const salesByDay = db.prepare(`
+      SELECT date(timestamp) as day, SUM(total_amount) as total
+      FROM transactions
+      WHERE ${whereClause} AND timestamp >= date('now', '-7 days')
+      GROUP BY day
+      ORDER BY day ASC
+    `).all(...params) as any[];
+
+    // Sales by Store
+    const salesByStore = db.prepare(`
+      SELECT s.name, SUM(t.total_amount) as total
+      FROM transactions t
+      JOIN stores s ON t.store_id = s.id
+      WHERE s.owner_id = ?
+      GROUP BY s.id
+      ORDER BY total DESC
+    `).all(ownerId) as any[];
+
+    // Payment Methods Distribution
+    const paymentMethods = db.prepare(`
+      SELECT payment_method as name, SUM(total_amount) as value
+      FROM transactions
+      WHERE ${whereClause}
+      GROUP BY payment_method
+    `).all(...params) as any[];
+
+    // Expenses (Purchases + Salaries)
+    const totalPurchases = db.prepare(`
+      SELECT SUM(total_amount) as total
+      FROM purchases
+      WHERE store_id IN (SELECT id FROM stores WHERE owner_id = ?)
+    `).get(ownerId) as any;
+
+    const totalSalaries = db.prepare(`
+      SELECT SUM(amount) as total
+      FROM hr_salary_payments
+      WHERE salary_id IN (SELECT id FROM hr_salaries WHERE user_id IN (SELECT id FROM users WHERE store_id IN (SELECT id FROM stores WHERE owner_id = ?)))
+    `).get(ownerId) as any;
+
     res.json({
       todaySales: todaySales?.total || 0,
+      todayCount: todaySales?.count || 0,
+      monthlySales: monthlySales?.total || 0,
       lowStockCount: lowStock?.count || 0,
-      staffCount: staffCount?.count || 0
+      staffCount: staffCount?.count || 0,
+      topProducts,
+      recentTransactions,
+      salesByDay,
+      salesByStore,
+      paymentMethods,
+      totalExpenses: (totalPurchases?.total || 0) + (totalSalaries?.total || 0)
     });
   });
 

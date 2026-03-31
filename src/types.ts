@@ -11,6 +11,7 @@ export interface CashRegister {
   session_status?: 'open' | 'closed';
   current_session_id?: number;
   current_seller_name?: string;
+  seller_id?: number;
 }
 
 export interface CashSession {
