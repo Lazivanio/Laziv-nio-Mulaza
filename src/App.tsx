@@ -1,5 +1,5 @@
 import { useState, useEffect, ReactNode, FormEvent, useRef } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useLocation, useParams } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable';
 import html2canvas from "html2canvas";
@@ -392,6 +392,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
                 <SidebarItem icon={Sparkles} label="Serviços" to="/owner/services" onClick={closeSidebar} />
                 <SidebarItem icon={FileText} label="Documentos" to="/owner/documents" onClick={closeSidebar} />
                 <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
+                {hasPermission(user, 'pos_close_cashier') && <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />}
                 <SidebarItem icon={Settings} label="Configurações" to="/owner/settings" onClick={closeSidebar} />
               </>
             )}
@@ -3382,14 +3383,30 @@ const StoreAdmin = ({ user }: { user: User }) => {
   };
 
   const handleCloseSessionDashboard = async (sessionId: number) => {
-    const amount = prompt('Insira o valor físico em caixa para fechar:');
-    if (amount === null) return;
-    
-    const physicalAmount = parseFloat(amount);
-    if (isNaN(physicalAmount)) {
-      alert('Por favor, insira um valor válido.');
+    console.log('handleCloseSessionDashboard called with sessionId:', sessionId);
+    if (!sessionId) {
+      alert('Sessão não encontrada.');
       return;
     }
+    const amount = prompt('Informe o valor físico em caixa:');
+    if (amount === null) {
+      console.log('Close session cancelled by user');
+      return;
+    }
+    
+    const normalizedAmount = amount.replace(',', '.').trim();
+    if (normalizedAmount === '') {
+      alert('Por favor, informe um valor.');
+      return;
+    }
+
+    const physical_amount = parseFloat(normalizedAmount);
+    if (isNaN(physical_amount)) {
+      alert('Valor inválido. Use apenas números.');
+      return;
+    }
+
+    console.log('Attempting to close session with physical_amount:', physical_amount);
 
     try {
       const res = await fetch('/api/seller/close-session', {
@@ -3397,21 +3414,23 @@ const StoreAdmin = ({ user }: { user: User }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId,
-          physical_amount: physicalAmount,
+          physical_amount,
           closing_amount: 0, // Server will calculate expected if 0 or not provided
           seller_id: user.id
         })
       });
 
       if (res.ok) {
+        console.log('Session closed successfully');
         fetchData();
         alert('Caixa fechado com sucesso!');
       } else {
         const data = await res.json();
+        console.error('Failed to close session:', data);
         alert(data.error || 'Erro ao fechar caixa.');
       }
     } catch (error) {
-      console.error("Error closing session:", error);
+      console.error('Error closing session:', error);
       alert('Erro de conexão ao fechar caixa.');
     }
   };
@@ -6909,7 +6928,29 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
     const canvas = await html2canvas(invoiceRef.current, {
       scale: 2,
       useCORS: true,
-      logging: false
+      logging: false,
+      onclone: (clonedDoc) => {
+        const styles = clonedDoc.querySelectorAll('style');
+        styles.forEach(style => {
+          if (style.textContent) {
+            style.textContent = style.textContent.replace(/oklab\([^)]+\)/g, '#000');
+            style.textContent = style.textContent.replace(/oklch\([^)]+\)/g, '#000');
+            style.textContent = style.textContent.replace(/color-mix\([^)]+\)/g, '#000');
+            style.textContent = style.textContent.replace(/light-dark\([^)]+\)/g, '#000');
+          }
+        });
+        const elementsWithStyle = clonedDoc.querySelectorAll('[style]');
+        elementsWithStyle.forEach(el => {
+          const styleAttr = el.getAttribute('style');
+          if (styleAttr) {
+            let newStyle = styleAttr.replace(/oklab\([^)]+\)/g, '#000');
+            newStyle = newStyle.replace(/oklch\([^)]+\)/g, '#000');
+            newStyle = newStyle.replace(/color-mix\([^)]+\)/g, '#000');
+            newStyle = newStyle.replace(/light-dark\([^)]+\)/g, '#000');
+            el.setAttribute('style', newStyle);
+          }
+        });
+      }
     });
     
     const imgData = canvas.toDataURL('image/png');
@@ -7101,7 +7142,29 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
         scale: 2,
         useCORS: true,
         logging: false,
-        windowWidth: 800
+        windowWidth: 800,
+        onclone: (clonedDoc) => {
+          const styles = clonedDoc.querySelectorAll('style');
+          styles.forEach(style => {
+            if (style.textContent) {
+              style.textContent = style.textContent.replace(/oklab\([^)]+\)/g, '#000');
+              style.textContent = style.textContent.replace(/oklch\([^)]+\)/g, '#000');
+              style.textContent = style.textContent.replace(/color-mix\([^)]+\)/g, '#000');
+              style.textContent = style.textContent.replace(/light-dark\([^)]+\)/g, '#000');
+            }
+          });
+          const elementsWithStyle = clonedDoc.querySelectorAll('[style]');
+          elementsWithStyle.forEach(el => {
+            const styleAttr = el.getAttribute('style');
+            if (styleAttr) {
+              let newStyle = styleAttr.replace(/oklab\([^)]+\)/g, '#000');
+              newStyle = newStyle.replace(/oklch\([^)]+\)/g, '#000');
+              newStyle = newStyle.replace(/color-mix\([^)]+\)/g, '#000');
+              newStyle = newStyle.replace(/light-dark\([^)]+\)/g, '#000');
+              el.setAttribute('style', newStyle);
+            }
+          });
+        }
       });
       
       const imgData = canvas.toDataURL('image/png');
@@ -7369,7 +7432,29 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
     const canvas = await html2canvas(invoiceRef.current, {
       scale: 2,
       useCORS: true,
-      logging: false
+      logging: false,
+      onclone: (clonedDoc) => {
+        const styles = clonedDoc.querySelectorAll('style');
+        styles.forEach(style => {
+          if (style.textContent) {
+            style.textContent = style.textContent.replace(/oklab\([^)]+\)/g, '#000');
+            style.textContent = style.textContent.replace(/oklch\([^)]+\)/g, '#000');
+            style.textContent = style.textContent.replace(/color-mix\([^)]+\)/g, '#000');
+            style.textContent = style.textContent.replace(/light-dark\([^)]+\)/g, '#000');
+          }
+        });
+        const elementsWithStyle = clonedDoc.querySelectorAll('[style]');
+        elementsWithStyle.forEach(el => {
+          const styleAttr = el.getAttribute('style');
+          if (styleAttr) {
+            let newStyle = styleAttr.replace(/oklab\([^)]+\)/g, '#000');
+            newStyle = newStyle.replace(/oklch\([^)]+\)/g, '#000');
+            newStyle = newStyle.replace(/color-mix\([^)]+\)/g, '#000');
+            newStyle = newStyle.replace(/light-dark\([^)]+\)/g, '#000');
+            el.setAttribute('style', newStyle);
+          }
+        });
+      }
     });
     
     const imgData = canvas.toDataURL('image/png');
@@ -9359,10 +9444,14 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
   const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
   const [selectedRegisterId, setSelectedRegisterId] = useState<string>(user.cash_register_id?.toString() || '');
 
+  const [searchParams] = useSearchParams();
+  const queryStoreId = searchParams.get('storeId');
+  const queryRegisterId = searchParams.get('registerId');
+
   const fetchSession = async () => {
     setLoading(true);
-    const storeId = user.store_id || 1;
-    const registerId = selectedRegisterId || user.cash_register_id;
+    const storeId = queryStoreId || user.store_id || 1;
+    const registerId = queryRegisterId || selectedRegisterId || user.cash_register_id;
     
     if (!registerId) {
       setSession(null);
@@ -9543,7 +9632,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
                         isOpenedByMe ? "bg-orange-500 hover:bg-orange-600 text-white" : "bg-green-600 hover:bg-green-700 text-white"
                       )}
                     >
-                      {isOpenedByMe ? 'Fechar Meu Caixa' : 'Entrar no Caixa'}
+                      {isOpenedByMe ? 'Fechar Meu Caixa' : (hasPermission(user, 'pos_close_cashier') ? 'Fechar Caixa' : 'Entrar no Caixa')}
                     </button>
                   </div>
                 ) : hasPermission(user, 'pos_open_cashier') ? (
@@ -10161,12 +10250,14 @@ export default function App() {
                 <Route path="*" element={<Navigate to="/owner" replace />} />
               </>
             )}
-            {user.role === 'seller' && (
+            {(user.role === 'seller' || user.role === 'owner') && (
+              <Route path="/seller/close" element={<SellerCloseCashier user={user} onUpdate={setUser} />} />
+            )}
+            {(user.role === 'seller' || user.role === 'owner') && (
               <>
                 <Route path="/seller" element={<SellerPOS user={user} onUpdate={setUser} />} />
                 <Route path="/seller/dashboard" element={<SellerDashboard user={user} />} />
                 <Route path="/seller/movements" element={<SellerCashMovements user={user} />} />
-                <Route path="/seller/close" element={<SellerCloseCashier user={user} onUpdate={setUser} />} />
                 <Route path="/seller/history" element={<SellerHistory user={user} />} />
                 <Route path="/seller/settings" element={<SellerSettings user={user} onUpdate={handleLogin} />} />
                 <Route path="*" element={<Navigate to="/seller" replace />} />

@@ -330,6 +330,18 @@ db.exec(`
     if (!columns.some(col => col.name === 'type')) {
       db.exec("ALTER TABLE purchase_returns ADD COLUMN type TEXT DEFAULT 'credit'");
     }
+    if (!columns.some(col => col.name === 'note_category')) {
+      db.exec("ALTER TABLE purchase_returns ADD COLUMN note_category TEXT DEFAULT 'return'");
+    }
+    if (!columns.some(col => col.name === 'adjustment_amount')) {
+      db.exec("ALTER TABLE purchase_returns ADD COLUMN adjustment_amount REAL DEFAULT 0");
+    }
+    if (!columns.some(col => col.name === 'observations')) {
+      db.exec("ALTER TABLE purchase_returns ADD COLUMN observations TEXT");
+    }
+    if (!columns.some(col => col.name === 'invoice_number')) {
+      db.exec("ALTER TABLE purchase_returns ADD COLUMN invoice_number TEXT");
+    }
   } catch (e) {
     console.error("Migration error (purchase_returns):", e);
   }
@@ -683,6 +695,11 @@ try {
       total_amount REAL,
       reason TEXT,
       items TEXT, -- JSON string of items returned
+      type TEXT DEFAULT 'credit', -- 'credit', 'debit'
+      note_category TEXT DEFAULT 'return', -- 'return', 'correction'
+      adjustment_amount REAL DEFAULT 0,
+      observations TEXT,
+      invoice_number TEXT,
       status TEXT DEFAULT 'pending', -- 'pending', 'completed'
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(store_id) REFERENCES stores(id),
@@ -1605,10 +1622,18 @@ async function startServer() {
   app.post("/api/owner/generate-saft", (req, res) => {
     const { owner_id, store_id, start_date, end_date, doc_type, user_name } = req.body;
     try {
+      // Fetch owner info
+      const owner = db.prepare("SELECT * FROM users WHERE id = ?").get(owner_id) as any;
+      if (!owner) {
+        return res.status(404).json({ error: "Proprietário não encontrado." });
+      }
+
       // Get all store IDs for this owner if no specific store is selected
       let storeIds: number[] = [];
+      let selectedStore: any = null;
       if (store_id) {
         storeIds = [parseInt(store_id)];
+        selectedStore = db.prepare("SELECT * FROM stores WHERE id = ?").get(store_id);
       } else {
         const stores = db.prepare("SELECT id FROM stores WHERE owner_id = ?").all(owner_id) as { id: number }[];
         storeIds = stores.map(s => s.id);
@@ -1629,7 +1654,6 @@ async function startServer() {
         ciQuery += " AND doc_type = ?";
         ciParams.push(doc_type);
       } else if (doc_type === 'FS') {
-        // If FS is requested, credit_invoices should return nothing
         ciQuery += " AND 1=0";
       }
       const creditInvoices = db.prepare(ciQuery).all(...ciParams) as any[];
@@ -1646,8 +1670,67 @@ async function startServer() {
 
       // Combine and format XML
       let invoicesXml = "";
+      let totalEntries = 0;
+      let totalCreditAmount = 0;
+      const uniqueCustomers = new Map<string, any>();
       
       creditInvoices.forEach(inv => {
+        totalEntries++;
+        totalCreditAmount += inv.total_amount;
+        
+        if (inv.client_nif && inv.client_nif !== '999999999') {
+          uniqueCustomers.set(inv.client_nif, {
+            name: inv.client_name,
+            nif: inv.client_nif,
+            address: inv.address || 'Endereço não especificado'
+          });
+        }
+
+        const items = JSON.parse(inv.items || '[]');
+        let linesXml = "";
+        
+        if (items.length > 0) {
+          items.forEach((item: any, index: number) => {
+            linesXml += `
+          <Line>
+            <LineNumber>${index + 1}</LineNumber>
+            <ProductCode>${item.id || '000'}</ProductCode>
+            <ProductDescription>${item.name || 'Produto'}</ProductDescription>
+            <Quantity>${item.quantity || 1}</Quantity>
+            <UnitOfMeasure>UN</UnitOfMeasure>
+            <UnitPrice>${(item.price || 0).toFixed(2)}</UnitPrice>
+            <TaxPointDate>${inv.invoice_date || (inv.created_at ? inv.created_at.split(' ')[0] : start_date)}</TaxPointDate>
+            <Description>${item.name || 'Venda de Produtos/Serviços'}</Description>
+            <CreditAmount>${((item.price || 0) * (item.quantity || 1)).toFixed(2)}</CreditAmount>
+            <Tax>
+              <TaxType>IVA</TaxType>
+              <TaxCountryRegion>AO</TaxCountryRegion>
+              <TaxCode>NOR</TaxCode>
+              <TaxPercentage>14.00</TaxPercentage>
+            </Tax>
+          </Line>`;
+          });
+        } else {
+          linesXml = `
+          <Line>
+            <LineNumber>1</LineNumber>
+            <ProductCode>000</ProductCode>
+            <ProductDescription>Venda de Produtos/Serviços</ProductDescription>
+            <Quantity>1</Quantity>
+            <UnitOfMeasure>UN</UnitOfMeasure>
+            <UnitPrice>${inv.total_amount.toFixed(2)}</UnitPrice>
+            <TaxPointDate>${inv.invoice_date || (inv.created_at ? inv.created_at.split(' ')[0] : start_date)}</TaxPointDate>
+            <Description>Venda de Produtos/Serviços</Description>
+            <CreditAmount>${inv.total_amount.toFixed(2)}</CreditAmount>
+            <Tax>
+              <TaxType>IVA</TaxType>
+              <TaxCountryRegion>AO</TaxCountryRegion>
+              <TaxCode>NOR</TaxCode>
+              <TaxPercentage>14.00</TaxPercentage>
+            </Tax>
+          </Line>`;
+        }
+
         invoicesXml += `
       <Invoice>
         <InvoiceNo>${inv.invoice_number}</InvoiceNo>
@@ -1657,72 +1740,181 @@ async function startServer() {
           <SourceID>${inv.seller_id}</SourceID>
           <SourceBilling>P</SourceBilling>
         </DocumentStatus>
-        <Hash>...</Hash>
+        <Hash>0</Hash>
+        <HashControl>1</HashControl>
+        <Period>${new Date(inv.created_at).getMonth() + 1}</Period>
         <InvoiceDate>${inv.invoice_date || (inv.created_at ? inv.created_at.split(' ')[0] : start_date)}</InvoiceDate>
         <InvoiceType>${inv.doc_type}</InvoiceType>
-        <CustomerID>${inv.client_name}</CustomerID>
-        <Line>
-          <LineNumber>1</LineNumber>
-          <Description>Venda de Produtos/Serviços</Description>
-          <Quantity>1</Quantity>
-          <UnitPrice>${inv.total_amount}</UnitPrice>
-          <CreditAmount>${inv.total_amount}</CreditAmount>
-        </Line>
+        <SourceBilling>P</SourceBilling>
+        <CustomerID>${inv.client_nif || '999999999'}</CustomerID>
+        ${linesXml}
         <DocumentTotals>
-          <TaxPayable>${inv.tax_amount || 0}</TaxPayable>
-          <NetTotal>${inv.total_amount - (inv.tax_amount || 0)}</NetTotal>
-          <GrossTotal>${inv.total_amount}</GrossTotal>
+          <TaxPayable>${(inv.tax_amount || 0).toFixed(2)}</TaxPayable>
+          <NetTotal>${(inv.total_amount - (inv.tax_amount || 0)).toFixed(2)}</NetTotal>
+          <GrossTotal>${inv.total_amount.toFixed(2)}</GrossTotal>
         </DocumentTotals>
       </Invoice>`;
       });
 
       tInvoices.forEach(inv => {
+        totalEntries++;
+        totalCreditAmount += inv.total_amount;
+        const items = JSON.parse(inv.items || '[]');
+        let linesXml = "";
+        
+        if (items.length > 0) {
+          items.forEach((item: any, index: number) => {
+            linesXml += `
+          <Line>
+            <LineNumber>${index + 1}</LineNumber>
+            <ProductCode>${item.id || '000'}</ProductCode>
+            <ProductDescription>${item.name || 'Produto'}</ProductDescription>
+            <Quantity>${item.quantity || 1}</Quantity>
+            <UnitOfMeasure>UN</UnitOfMeasure>
+            <UnitPrice>${(item.price || 0).toFixed(2)}</UnitPrice>
+            <TaxPointDate>${inv.timestamp ? inv.timestamp.split(' ')[0] : start_date}</TaxPointDate>
+            <Description>${item.name || 'Venda Simplificada (PDV)'}</Description>
+            <CreditAmount>${((item.price || 0) * (item.quantity || 1)).toFixed(2)}</CreditAmount>
+            <Tax>
+              <TaxType>IVA</TaxType>
+              <TaxCountryRegion>AO</TaxCountryRegion>
+              <TaxCode>NOR</TaxCode>
+              <TaxPercentage>14.00</TaxPercentage>
+            </Tax>
+          </Line>`;
+          });
+        } else {
+          linesXml = `
+          <Line>
+            <LineNumber>1</LineNumber>
+            <ProductCode>000</ProductCode>
+            <ProductDescription>Venda Simplificada (PDV)</ProductDescription>
+            <Quantity>1</Quantity>
+            <UnitOfMeasure>UN</UnitOfMeasure>
+            <UnitPrice>${inv.total_amount.toFixed(2)}</UnitPrice>
+            <TaxPointDate>${inv.timestamp ? inv.timestamp.split(' ')[0] : start_date}</TaxPointDate>
+            <Description>Venda Simplificada (PDV)</Description>
+            <CreditAmount>${inv.total_amount.toFixed(2)}</CreditAmount>
+            <Tax>
+              <TaxType>IVA</TaxType>
+              <TaxCountryRegion>AO</TaxCountryRegion>
+              <TaxCode>NOR</TaxCode>
+              <TaxPercentage>14.00</TaxPercentage>
+            </Tax>
+          </Line>`;
+        }
+
         invoicesXml += `
       <Invoice>
-        <InvoiceNo>${inv.invoice_number}</InvoiceNo>
+        <InvoiceNo>${inv.invoice_number || 'FS ' + inv.id}</InvoiceNo>
         <DocumentStatus>
           <InvoiceStatus>N</InvoiceStatus>
           <InvoiceStatusDate>${inv.timestamp}</InvoiceStatusDate>
           <SourceID>${inv.seller_id}</SourceID>
           <SourceBilling>P</SourceBilling>
         </DocumentStatus>
-        <Hash>...</Hash>
+        <Hash>0</Hash>
+        <HashControl>1</HashControl>
+        <Period>${new Date(inv.timestamp).getMonth() + 1}</Period>
         <InvoiceDate>${inv.timestamp ? inv.timestamp.split(' ')[0] : start_date}</InvoiceDate>
         <InvoiceType>FS</InvoiceType>
-        <CustomerID>${inv.client_name || 'Consumidor Final'}</CustomerID>
-        <Line>
-          <LineNumber>1</LineNumber>
-          <Description>Venda Simplificada (PDV)</Description>
-          <Quantity>1</Quantity>
-          <UnitPrice>${inv.total_amount}</UnitPrice>
-          <CreditAmount>${inv.total_amount}</CreditAmount>
-        </Line>
+        <SourceBilling>P</SourceBilling>
+        <CustomerID>999999999</CustomerID>
+        ${linesXml}
         <DocumentTotals>
-          <TaxPayable>${inv.tax_amount || 0}</TaxPayable>
-          <NetTotal>${inv.total_amount - (inv.tax_amount || 0)}</NetTotal>
-          <GrossTotal>${inv.total_amount}</GrossTotal>
+          <TaxPayable>${(inv.tax_amount || 0).toFixed(2)}</TaxPayable>
+          <NetTotal>${(inv.total_amount - (inv.tax_amount || 0)).toFixed(2)}</NetTotal>
+          <GrossTotal>${inv.total_amount.toFixed(2)}</GrossTotal>
         </DocumentTotals>
       </Invoice>`;
       });
 
-      const totalCredit = (creditInvoices.reduce((sum, inv) => sum + inv.total_amount, 0) + tInvoices.reduce((sum, inv) => sum + inv.total_amount, 0)).toFixed(2);
+      // Fetch products for MasterFiles
+      const products = db.prepare(`SELECT * FROM products WHERE store_id IN (${placeholders})`).all(...storeIds) as any[];
+      let productsXml = "";
+      products.forEach(prod => {
+        productsXml += `
+    <Product>
+      <ProductType>P</ProductType>
+      <ProductCode>${prod.id}</ProductCode>
+      <ProductGroup>${prod.category || 'Geral'}</ProductGroup>
+      <ProductDescription>${prod.name}</ProductDescription>
+      <ProductNumberCode>${prod.barcode || prod.id}</ProductNumberCode>
+    </Product>`;
+      });
 
       const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <AuditFile xmlns="urn:OECD:StandardAuditFile-Tax:AO:1.01_01">
   <Header>
     <AuditFileVersion>1.01_01</AuditFileVersion>
-    <CompanyID>${owner_id}</CompanyID>
-    <TaxRegistrationNumber>...</TaxRegistrationNumber>
+    <CompanyID>${owner.nif || '999999999'}</CompanyID>
+    <TaxRegistrationNumber>${owner.nif || '999999999'}</TaxRegistrationNumber>
+    <TaxAccountingBasis>F</TaxAccountingBasis>
+    <CompanyName>${owner.company_name || owner.name}</CompanyName>
+    <BusinessName>${selectedStore ? selectedStore.name : (owner.company_name || owner.name)}</BusinessName>
+    <CompanyAddress>
+      <AddressDetail>${selectedStore ? selectedStore.address : (owner.address || 'Endereço não especificado')}</AddressDetail>
+      <City>Luanda</City>
+      <Country>AO</Country>
+    </CompanyAddress>
+    <FiscalYear>${new Date(start_date).getFullYear()}</FiscalYear>
     <StartDate>${start_date}</StartDate>
     <EndDate>${end_date}</EndDate>
     <CurrencyCode>AOA</CurrencyCode>
     <DateCreated>${new Date().toISOString().split('T')[0]}</DateCreated>
+    <TaxEntity>Global</TaxEntity>
+    <ProductSoftwareCertificateNumber>0/AGT/2024</ProductSoftwareCertificateNumber>
+    <SoftwareID>AIS-ERP/1.0</SoftwareID>
   </Header>
+  <MasterFiles>
+    <Customer>
+      <CustomerID>999999999</CustomerID>
+      <AccountID>Desconhecido</AccountID>
+      <CustomerTaxID>999999999</CustomerTaxID>
+      <CompanyName>Consumidor Final</CompanyName>
+      <BillingAddress>
+        <AddressDetail>Consumidor Final</AddressDetail>
+        <City>Luanda</City>
+        <Country>AO</Country>
+      </BillingAddress>
+      <SelfBillingIndicator>0</SelfBillingIndicator>
+    </Customer>
+    ${Array.from(uniqueCustomers.values()).map(cust => `
+    <Customer>
+      <CustomerID>${cust.nif}</CustomerID>
+      <AccountID>Desconhecido</AccountID>
+      <CustomerTaxID>${cust.nif}</CustomerTaxID>
+      <CompanyName>${cust.name}</CompanyName>
+      <BillingAddress>
+        <AddressDetail>${cust.address}</AddressDetail>
+        <City>Luanda</City>
+        <Country>AO</Country>
+      </BillingAddress>
+      <SelfBillingIndicator>0</SelfBillingIndicator>
+    </Customer>`).join('')}
+    ${productsXml}
+    <TaxTable>
+      <TaxTableEntry>
+        <TaxType>IVA</TaxType>
+        <TaxCountryRegion>AO</TaxCountryRegion>
+        <TaxCode>NOR</TaxCode>
+        <Description>Taxa Normal</Description>
+        <TaxPercentage>14.00</TaxPercentage>
+      </TaxTableEntry>
+      <TaxTableEntry>
+        <TaxType>IVA</TaxType>
+        <TaxCountryRegion>AO</TaxCountryRegion>
+        <TaxCode>ISE</TaxCode>
+        <Description>Isento</Description>
+        <TaxPercentage>0.00</TaxPercentage>
+      </TaxTableEntry>
+    </TaxTable>
+  </MasterFiles>
   <SourceDocuments>
     <SalesInvoices>
-      <NumberOfEntries>${creditInvoices.length + tInvoices.length}</NumberOfEntries>
+      <NumberOfEntries>${totalEntries}</NumberOfEntries>
       <TotalDebit>0.00</TotalDebit>
-      <TotalCredit>${totalCredit}</TotalCredit>
+      <TotalCredit>${totalCreditAmount.toFixed(2)}</TotalCredit>
       ${invoicesXml}
     </SalesInvoices>
   </SourceDocuments>
@@ -1733,6 +1925,7 @@ async function startServer() {
       
       res.json({ success: true, fileName });
     } catch (e: any) {
+      console.error("Error generating SAFT:", e);
       res.status(400).json({ error: e.message });
     }
   });
@@ -2738,18 +2931,30 @@ async function startServer() {
 
   // Purchase Returns / Notes
   app.post("/api/owner/purchase-returns", (req, res) => {
-    const { store_id, supplier_id, purchase_id, total_amount, reason, items, type = 'credit' } = req.body;
+    const { store_id, supplier_id, purchase_id, total_amount, reason, items, type = 'credit', note_category = 'return', adjustment_amount = 0, observations = '' } = req.body;
     
     try {
       const transaction = db.transaction(() => {
+        // Generate invoice number for the note
+        const year = new Date().getFullYear();
+        const prefix = type === 'credit' ? 'NC' : 'ND';
+        const lastNote = db.prepare("SELECT invoice_number FROM purchase_returns WHERE store_id = ? AND type = ? AND invoice_number LIKE ? ORDER BY id DESC LIMIT 1").get(store_id, type, `${prefix}-${year}-%`) as { invoice_number: string } | undefined;
+        
+        let sequence = 1;
+        if (lastNote && lastNote.invoice_number) {
+          const parts = lastNote.invoice_number.split('-');
+          sequence = parseInt(parts[parts.length - 1]) + 1;
+        }
+        const invoice_number = `${prefix}-${year}-${sequence.toString().padStart(3, '0')}`;
+
         const stmt = db.prepare(`
-          INSERT INTO purchase_returns (store_id, supplier_id, purchase_id, total_amount, reason, items, type)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO purchase_returns (store_id, supplier_id, purchase_id, total_amount, reason, items, type, note_category, adjustment_amount, observations, invoice_number)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        const result = stmt.run(store_id, supplier_id, purchase_id, total_amount, reason, JSON.stringify(items), type);
+        const result = stmt.run(store_id, supplier_id, purchase_id, total_amount, reason, JSON.stringify(items), type, note_category, adjustment_amount, observations, invoice_number);
         
         // Update stock for returned items (only if it's a credit note / return)
-        if (type === 'credit') {
+        if (type === 'credit' && note_category === 'return') {
           for (const item of items) {
             db.prepare("UPDATE products SET stock = stock - ? WHERE id = ? AND store_id = ?").run(item.quantity, item.product_id, store_id);
             
@@ -2759,8 +2964,8 @@ async function startServer() {
               VALUES (?, ?, 'out', ?, ?, ?)
             `).run(store_id, item.product_id, item.quantity, `Nota de Crédito (Devolução) - Motivo: ${reason}`, purchase_id);
           }
-        } else if (type === 'debit') {
-          // For debit notes, if it involves items, stock should go IN
+        } else if (type === 'debit' && note_category === 'return') {
+          // For debit notes, if it involves items (acréscimo), stock should go IN
           for (const item of items) {
             db.prepare("UPDATE products SET stock = stock + ? WHERE id = ? AND store_id = ?").run(item.quantity, item.product_id, store_id);
             
@@ -2768,7 +2973,7 @@ async function startServer() {
             db.prepare(`
               INSERT INTO stock_movements (store_id, product_id, type, quantity, reason, purchase_id)
               VALUES (?, ?, 'in', ?, ?, ?)
-            `).run(store_id, item.product_id, item.quantity, `Nota de Débito - Motivo: ${reason}`, purchase_id);
+            `).run(store_id, item.product_id, item.quantity, `Nota de Débito (Acréscimo) - Motivo: ${reason}`, purchase_id);
           }
         }
         
@@ -2786,9 +2991,10 @@ async function startServer() {
   app.get("/api/owner/purchase-returns/:storeId", (req, res) => {
     try {
       const returns = db.prepare(`
-        SELECT r.*, s.name as supplier_name 
+        SELECT r.*, s.name as supplier_name, p.invoice_number as purchase_invoice_number
         FROM purchase_returns r
         JOIN suppliers s ON r.supplier_id = s.id
+        LEFT JOIN purchases p ON r.purchase_id = p.id
         WHERE r.store_id = ?
         ORDER BY r.timestamp DESC
       `).all(req.params.storeId);
@@ -3195,14 +3401,14 @@ async function startServer() {
         const sales = db.prepare(`
           SELECT SUM(total_amount) as total 
           FROM transactions 
-          WHERE store_id = ? AND cash_register_id = ? AND timestamp >= ?
-        `).get(session.store_id, session.cash_register_id, session.opening_time) as any;
+          WHERE store_id = ? AND timestamp >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+        `).get(session.store_id, session.opening_time, session.cash_register_id) as any;
         
         const movements = db.prepare(`
           SELECT SUM(CASE WHEN type = 'in' THEN amount ELSE -amount END) as total
           FROM cash_movements
-          WHERE session_id = ?
-        `).get(session_id) as any;
+          WHERE store_id = ? AND timestamp >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+        `).get(session.store_id, session.opening_time, session.cash_register_id) as any;
 
         closing_amount = (session.opening_amount || 0) + (sales?.total || 0) + (movements?.total || 0);
       }

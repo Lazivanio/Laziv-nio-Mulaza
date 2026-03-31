@@ -20,10 +20,14 @@ import {
   Calendar,
   FileText,
   ArrowDownCircle,
-  ArrowUpCircle
+  ArrowUpCircle,
+  Download,
+  History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Store as StoreType } from '../types';
+import { generatePurchasePDF, generatePurchaseNotePDF } from '../lib/purchaseDocumentGenerator';
+import { PurchaseDocument } from './PurchaseDocument';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -66,7 +70,7 @@ const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-lg" }: { is
 );
 
 export const OwnerPurchases = ({ user }: { user: User }) => {
-  const [activeTab, setActiveTab] = useState<'direct' | 'orders' | 'receipts' | 'notes'>('direct');
+  const [activeTab, setActiveTab] = useState<'direct' | 'orders' | 'receipts' | 'notes' | 'history'>('direct');
   const [purchases, setPurchases] = useState<any[]>([]);
   const [notes, setNotes] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -76,11 +80,17 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
 
+  const combinedHistory = [...purchases, ...notes].sort((a, b) => 
+    new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+
   // Modals
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
   const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isManageOrderModalOpen, setIsManageOrderModalOpen] = useState(false);
+  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+  const [previewData, setPreviewData] = useState<{ type: 'purchase' | 'credit_note' | 'debit_note', data: any } | null>(null);
   const [selectedPurchase, setSelectedPurchase] = useState<any>(null);
   const [isDirectPurchase, setIsDirectPurchase] = useState(false);
 
@@ -100,7 +110,10 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     reason: '',
     items: [] as any[],
     total_amount: 0,
-    type: 'credit' as 'credit' | 'debit'
+    type: 'credit' as 'credit' | 'debit',
+    note_category: 'return' as 'return' | 'correction',
+    adjustment_amount: 0,
+    observations: ''
   });
 
   const [paymentData, setPaymentData] = useState({
@@ -190,6 +203,16 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     const newItems = [...purchaseForm.items];
     newItems[index] = { ...newItems[index], [field]: value };
     setPurchaseForm({ ...purchaseForm, items: newItems });
+  };
+
+  const handleDownloadPurchase = (purchase: any) => {
+    setPreviewData({ type: 'purchase', data: purchase });
+    setIsPreviewModalOpen(true);
+  };
+
+  const handleDownloadNote = (note: any) => {
+    setPreviewData({ type: note.type === 'credit' ? 'credit_note' : 'debit_note', data: note });
+    setIsPreviewModalOpen(true);
   };
 
   const handleSavePurchase = async (e: FormEvent) => {
@@ -282,12 +305,18 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
 
   const handleSaveReturn = async (e: FormEvent) => {
     e.preventDefault();
-    const selectedItems = returnForm.items.filter(item => item.selected !== false);
-    if (selectedItems.length === 0) return;
+    const selectedItems = returnForm.note_category === 'return' 
+      ? returnForm.items.filter(item => item.selected !== false)
+      : [];
+    
+    if (returnForm.note_category === 'return' && selectedItems.length === 0) return;
+    if (returnForm.note_category === 'correction' && !returnForm.adjustment_amount) return;
 
     setLoading(true);
     try {
-      const total_amount = selectedItems.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+      const items_total = selectedItems.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+      const total_amount = returnForm.note_category === 'return' ? items_total : returnForm.adjustment_amount;
+      
       const res = await fetch('/api/owner/purchase-returns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -298,7 +327,10 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
           total_amount,
           reason: returnForm.reason,
           items: selectedItems,
-          type: returnForm.type
+          type: returnForm.type,
+          note_category: returnForm.note_category,
+          adjustment_amount: returnForm.adjustment_amount,
+          observations: returnForm.observations
         })
       });
 
@@ -411,6 +443,16 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
             <RotateCcw size={18} />
             Notas
           </button>
+          <button 
+            onClick={() => setActiveTab('history')}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap",
+              activeTab === 'history' ? "bg-black text-white shadow-lg shadow-black/20" : "bg-white text-zinc-500 hover:bg-zinc-100"
+            )}
+          >
+            <History size={18} />
+            Histórico
+          </button>
         </div>
       </div>
 
@@ -443,7 +485,10 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                 reason: '',
                 items: [],
                 total_amount: 0,
-                type: 'credit'
+                type: 'credit',
+                note_category: 'return',
+                adjustment_amount: 0,
+                observations: ''
               });
               setIsReturnModalOpen(true);
               return;
@@ -566,23 +611,35 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                             </button>
                           )}
                           {activeTab === 'direct' && (
-                            <button 
-                              onClick={() => {
-                                setReturnForm({
-                                  supplier_id: p.supplier_id,
-                                  purchase_id: p.id,
-                                  reason: '',
-                                  items: (typeof p.items === 'string' ? JSON.parse(p.items) : p.items).map((item: any) => ({ ...item, maxQuantity: item.quantity, selected: true })),
-                                  total_amount: p.total_amount,
-                                  type: 'credit'
-                                });
-                                setIsReturnModalOpen(true);
-                              }}
-                              className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
-                              title="Criar Nota"
-                            >
-                              <FileText size={18} />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button 
+                                onClick={() => handleDownloadPurchase(p)}
+                                className="p-2 text-zinc-500 hover:bg-zinc-50 rounded-lg transition-all"
+                                title="Baixar PDF"
+                              >
+                                <Download size={18} />
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  setReturnForm({
+                                    supplier_id: p.supplier_id,
+                                    purchase_id: p.id,
+                                    reason: '',
+                                    items: (typeof p.items === 'string' ? JSON.parse(p.items) : p.items).map((item: any) => ({ ...item, maxQuantity: item.quantity, selected: true })),
+                                    total_amount: p.total_amount,
+                                    type: 'credit',
+                                    note_category: 'return',
+                                    adjustment_amount: 0,
+                                    observations: ''
+                                  });
+                                  setIsReturnModalOpen(true);
+                                }}
+                                className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
+                                title="Criar Nota"
+                              >
+                                <FileText size={18} />
+                              </button>
+                            </div>
                           )}
                         </div>
                       </td>
@@ -591,14 +648,15 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                 </tbody>
               </table>
             </div>
-          ) : (
+          ) : activeTab === 'notes' ? (
             <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-zinc-50 border-b border-zinc-200">
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Fornecedor</th>
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Tipo</th>
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Produtos</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Categoria</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Produtos / Ajuste</th>
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Motivo</th>
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Total</th>
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Data</th>
@@ -620,16 +678,27 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-1 max-w-xs">
-                          {(r.items || []).map((item: any, i: number) => (
-                            <span key={i} className={cn(
-                              "px-2 py-0.5 rounded text-[10px] font-bold",
-                              r.type === 'credit' ? "bg-rose-50 text-rose-600" : "bg-blue-50 text-blue-600"
-                            )}>
-                              {item.quantity}x {item.name}
-                            </span>
-                          ))}
-                        </div>
+                        <span className="text-xs font-bold text-zinc-500">
+                          {r.note_category === 'return' ? 'Devolução' : 'Ajuste'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        {r.note_category === 'return' ? (
+                          <div className="flex flex-wrap gap-1 max-w-xs">
+                            {(r.items || []).map((item: any, i: number) => (
+                              <span key={i} className={cn(
+                                "px-2 py-0.5 rounded text-[10px] font-bold",
+                                r.type === 'credit' ? "bg-rose-50 text-rose-600" : "bg-blue-50 text-blue-600"
+                              )}>
+                                {item.quantity}x {item.name}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm font-bold text-zinc-600">
+                            Ajuste: Kz {r.adjustment_amount?.toLocaleString()}
+                          </p>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <p className="text-sm text-zinc-600">{r.reason}</p>
@@ -643,10 +712,91 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                         </p>
                       </td>
                       <td className="px-6 py-4">
-                        <p className="text-sm text-zinc-500">{new Date(r.timestamp).toLocaleDateString()}</p>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => handleDownloadNote(r)}
+                            className="p-2 text-zinc-500 hover:bg-zinc-50 rounded-lg transition-all"
+                            title="Baixar PDF"
+                          >
+                            <Download size={18} />
+                          </button>
+                          <p className="text-sm text-zinc-500">{new Date(r.timestamp).toLocaleDateString()}</p>
+                        </div>
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-zinc-50 border-b border-zinc-200">
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Documento</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Fornecedor</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Tipo</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Total</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Data</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {combinedHistory.map((item) => {
+                    const isNote = !!item.type;
+                    return (
+                      <tr key={`${isNote ? 'note' : 'purchase'}-${item.id}`} className="hover:bg-zinc-50/50 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className={cn(
+                              "p-2 rounded-lg",
+                              isNote ? "bg-amber-50 text-amber-600" : "bg-blue-50 text-blue-600"
+                            )}>
+                              {isNote ? <FileText size={18} /> : <ShoppingBag size={18} />}
+                            </div>
+                            <div>
+                              <p className="font-bold text-zinc-900">{item.invoice_number || `#${item.id}`}</p>
+                              <p className="text-[10px] text-zinc-400 font-black uppercase tracking-widest">
+                                {isNote ? (item.type === 'credit' ? 'Nota Crédito' : 'Nota Débito') : 'Fatura Compra'}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className="text-sm font-medium text-zinc-700">{item.supplier_name}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={cn(
+                            "px-2 py-1 rounded-full text-[10px] font-black uppercase border",
+                            !isNote ? "bg-zinc-50 text-zinc-600 border-zinc-100" :
+                            item.type === 'credit' ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-blue-50 text-blue-600 border-blue-100"
+                          )}>
+                            {!isNote ? 'Compra' : item.type === 'credit' ? 'Crédito' : 'Débito'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className={cn(
+                            "text-sm font-bold",
+                            isNote && item.type === 'credit' ? "text-rose-600" : "text-zinc-900"
+                          )}>
+                            {isNote && item.type === 'credit' ? '-' : ''}Kz {item.total_amount.toLocaleString()}
+                          </p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className="text-sm text-zinc-500">{new Date(item.timestamp).toLocaleDateString()}</p>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button 
+                            onClick={() => isNote ? handleDownloadNote(item) : handleDownloadPurchase(item)}
+                            className="p-2 text-zinc-500 hover:bg-zinc-50 rounded-lg transition-all"
+                            title="Baixar PDF"
+                          >
+                            <Download size={18} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -968,6 +1118,29 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
             </button>
           </div>
 
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setReturnForm({ ...returnForm, note_category: 'return' })}
+              className={cn(
+                "py-2 rounded-lg border text-xs font-bold transition-all",
+                returnForm.note_category === 'return' ? "bg-black text-white border-black" : "bg-white text-zinc-500 border-zinc-200 hover:bg-zinc-50"
+              )}
+            >
+              Devolução de Itens
+            </button>
+            <button
+              type="button"
+              onClick={() => setReturnForm({ ...returnForm, note_category: 'correction' })}
+              className={cn(
+                "py-2 rounded-lg border text-xs font-bold transition-all",
+                returnForm.note_category === 'correction' ? "bg-black text-white border-black" : "bg-white text-zinc-500 border-zinc-200 hover:bg-zinc-50"
+              )}
+            >
+              Ajuste de Valor
+            </button>
+          </div>
+
           {!returnForm.purchase_id && (
             <div className="space-y-1.5">
               <label className="text-sm font-bold text-zinc-700">Selecionar Compra/Fatura</label>
@@ -997,6 +1170,20 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
             </div>
           )}
 
+          {returnForm.note_category === 'correction' && (
+            <div className="space-y-1.5">
+              <label className="text-sm font-bold text-zinc-700">Valor do Ajuste (Kz)</label>
+              <input 
+                type="number" 
+                required
+                min="1"
+                value={isNaN(returnForm.adjustment_amount) ? '' : returnForm.adjustment_amount}
+                onChange={e => setReturnForm({ ...returnForm, adjustment_amount: parseFloat(e.target.value) })}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black/5 font-bold"
+              />
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-zinc-700">Motivo</label>
             <textarea 
@@ -1008,60 +1195,72 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
             />
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-sm font-bold text-zinc-700">Itens da Nota</label>
-            <div className="border border-zinc-100 rounded-xl overflow-hidden">
-              <table className="w-full text-left">
-                <thead className="bg-zinc-50 border-b border-zinc-100">
-                  <tr>
-                    <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Produto</th>
-                    <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Qtd</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-50">
-                  {returnForm.items.map((item, index) => (
-                    <tr key={index}>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
+          {returnForm.note_category === 'return' && (
+            <div className="space-y-1.5">
+              <label className="text-sm font-bold text-zinc-700">Itens da Nota</label>
+              <div className="border border-zinc-100 rounded-xl overflow-hidden">
+                <table className="w-full text-left">
+                  <thead className="bg-zinc-50 border-b border-zinc-100">
+                    <tr>
+                      <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Produto</th>
+                      <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Qtd</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-50">
+                    {returnForm.items.map((item, index) => (
+                      <tr key={index}>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="checkbox"
+                              checked={item.selected !== false}
+                              onChange={e => {
+                                const newItems = [...returnForm.items];
+                                newItems[index] = { ...newItems[index], selected: e.target.checked };
+                                setReturnForm({ ...returnForm, items: newItems });
+                              }}
+                              className={cn(
+                                "rounded border-zinc-300 focus:ring-offset-0",
+                                returnForm.type === 'credit' ? "text-emerald-600 focus:ring-emerald-500" : "text-blue-600 focus:ring-blue-500"
+                              )}
+                            />
+                            <span className="text-sm font-bold">{item.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
                           <input 
-                            type="checkbox"
-                            checked={item.selected !== false}
+                            type="number" 
+                            min="1"
+                            max={returnForm.type === 'credit' ? (item.maxQuantity || item.quantity) : undefined}
+                            disabled={item.selected === false}
+                            value={isNaN(item.quantity) ? '' : item.quantity}
                             onChange={e => {
                               const newItems = [...returnForm.items];
-                              newItems[index] = { ...newItems[index], selected: e.target.checked };
+                              newItems[index] = { ...newItems[index], quantity: parseInt(e.target.value) };
                               setReturnForm({ ...returnForm, items: newItems });
                             }}
                             className={cn(
-                              "rounded border-zinc-300 focus:ring-offset-0",
-                              returnForm.type === 'credit' ? "text-emerald-600 focus:ring-emerald-500" : "text-blue-600 focus:ring-blue-500"
+                              "w-16 px-2 py-1 bg-zinc-100 rounded border-none text-center font-bold",
+                              item.selected === false && "opacity-30"
                             )}
                           />
-                          <span className="text-sm font-bold">{item.name}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <input 
-                          type="number" 
-                          min="1"
-                          max={returnForm.type === 'credit' ? (item.maxQuantity || item.quantity) : undefined}
-                          disabled={item.selected === false}
-                          value={isNaN(item.quantity) ? '' : item.quantity}
-                          onChange={e => {
-                            const newItems = [...returnForm.items];
-                            newItems[index] = { ...newItems[index], quantity: parseInt(e.target.value) };
-                            setReturnForm({ ...returnForm, items: newItems });
-                          }}
-                          className={cn(
-                            "w-16 px-2 py-1 bg-zinc-100 rounded border-none text-center font-bold",
-                            item.selected === false && "opacity-30"
-                          )}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
+          )}
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-bold text-zinc-700">Observações Internas</label>
+            <textarea 
+              value={returnForm.observations}
+              onChange={e => setReturnForm({ ...returnForm, observations: e.target.value })}
+              placeholder="Notas adicionais para controlo interno..."
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black/5 min-h-[60px]"
+            />
           </div>
 
           <button 
@@ -1077,6 +1276,22 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
             {loading ? "A processar..." : `Confirmar ${returnForm.type === 'credit' ? 'Nota de Crédito' : 'Nota de Débito'}`}
           </button>
         </form>
+      </Modal>
+
+      <Modal 
+        isOpen={isPreviewModalOpen} 
+        onClose={() => setIsPreviewModalOpen(false)} 
+        title="Visualização do Documento"
+        maxWidth="max-w-4xl"
+      >
+        {previewData && (
+          <PurchaseDocument 
+            document={previewData.data}
+            type={previewData.type}
+            store={stores.find(s => s.id.toString() === selectedStoreId) || {}}
+            owner={user}
+          />
+        )}
       </Modal>
     </div>
   );

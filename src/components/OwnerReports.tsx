@@ -49,7 +49,31 @@ export const OwnerReports = ({ user }: { user: User }) => {
 
   const exportToPDF = async () => {
     if (!reportRef.current) return;
-    const canvas = await html2canvas(reportRef.current, { scale: 2 });
+    const canvas = await html2canvas(reportRef.current, { 
+      scale: 2,
+      onclone: (clonedDoc) => {
+        const styles = clonedDoc.querySelectorAll('style');
+        styles.forEach(style => {
+          if (style.textContent) {
+            style.textContent = style.textContent.replace(/oklab\([^)]+\)/g, '#000');
+            style.textContent = style.textContent.replace(/oklch\([^)]+\)/g, '#000');
+            style.textContent = style.textContent.replace(/color-mix\([^)]+\)/g, '#000');
+            style.textContent = style.textContent.replace(/light-dark\([^)]+\)/g, '#000');
+          }
+        });
+        const elementsWithStyle = clonedDoc.querySelectorAll('[style]');
+        elementsWithStyle.forEach(el => {
+          const styleAttr = el.getAttribute('style');
+          if (styleAttr) {
+            let newStyle = styleAttr.replace(/oklab\([^)]+\)/g, '#000');
+            newStyle = newStyle.replace(/oklch\([^)]+\)/g, '#000');
+            newStyle = newStyle.replace(/color-mix\([^)]+\)/g, '#000');
+            newStyle = newStyle.replace(/light-dark\([^)]+\)/g, '#000');
+            el.setAttribute('style', newStyle);
+          }
+        });
+      }
+    });
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF('p', 'mm', 'a4');
     const pdfWidth = pdf.internal.pageSize.getWidth();
