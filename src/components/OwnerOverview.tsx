@@ -10,6 +10,8 @@ import {
   BarChart3,
   Clock,
   ArrowUpRight,
+  ArrowUpCircle,
+  ArrowDownCircle,
   ShoppingCart,
   DollarSign,
   AlertCircle,
@@ -141,12 +143,19 @@ export const OwnerOverview = ({ user }: { user: User }) => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
-          label="Faturamento Hoje" 
+          label="Entradas Hoje" 
           value={`Kz ${(stats.todaySales || 0).toLocaleString()}`} 
-          icon={TrendingUp} 
+          icon={ArrowUpCircle} 
           trend="+5.2%" 
           color="emerald"
           subtitle={`${stats.todayCount} vendas realizadas`}
+        />
+        <StatCard 
+          label="Saídas Hoje" 
+          value={`Kz ${(stats.todayExpense || 0).toLocaleString()}`} 
+          icon={ArrowDownCircle} 
+          color="rose" 
+          subtitle="Total de despesas do dia"
         />
         <StatCard 
           label="Faturamento Mensal" 
@@ -154,13 +163,6 @@ export const OwnerOverview = ({ user }: { user: User }) => {
           icon={DollarSign} 
           color="blue" 
           subtitle={`Estimativa de lucro: Kz ${profit.toLocaleString()}`}
-        />
-        <StatCard 
-          label="Alertas de Stock" 
-          value={`${stats.lowStockCount} itens`} 
-          icon={Package} 
-          color={stats.lowStockCount > 0 ? "rose" : "blue"} 
-          subtitle={stats.lowStockCount > 0 ? "Reposição necessária" : "Stock saudável"}
         />
         <StatCard 
           label="Margem Operacional" 

@@ -182,3 +182,42 @@ export interface Service {
   show_in_pos: number;
   created_at: string;
 }
+
+export interface FinancialTransaction {
+  id: number;
+  store_id: number;
+  owner_id: number;
+  type: 'income' | 'expense';
+  category: string;
+  amount: number;
+  payment_method: 'cash' | 'transfer' | 'multicaixa' | 'other';
+  description: string;
+  date: string;
+  status: 'paid' | 'pending';
+  reference_id?: number;
+  created_at: string;
+}
+
+export interface AccountReceivable {
+  id: number;
+  store_id: number;
+  owner_id: number;
+  client_name: string;
+  amount: number;
+  due_date: string;
+  status: 'pending' | 'paid' | 'overdue';
+  description: string;
+  created_at: string;
+}
+
+export interface AccountPayable {
+  id: number;
+  store_id: number;
+  owner_id: number;
+  supplier_name: string;
+  amount: number;
+  due_date: string;
+  status: 'pending' | 'paid' | 'overdue';
+  description: string;
+  created_at: string;
+}

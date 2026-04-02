@@ -81,6 +81,7 @@ import {
   CheckCircle2,
   CheckCircle,
   Receipt,
+  Warehouse,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -95,6 +96,8 @@ import { OwnerOverview } from './components/OwnerOverview';
 import { MyStores } from './components/MyStores';
 import { OwnerReports } from './components/OwnerReports';
 import { OwnerSettings } from './components/OwnerSettings';
+import { OwnerWarehouses } from './components/OwnerWarehouses';
+import { OwnerFinance } from './components/OwnerFinance';
 import { Service } from './types';
 
 // --- Utilities ---
@@ -391,6 +394,8 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
                 <SidebarItem icon={ShoppingCart} label="Compras" to="/owner/purchases" onClick={closeSidebar} />
                 <SidebarItem icon={Sparkles} label="Serviços" to="/owner/services" onClick={closeSidebar} />
                 <SidebarItem icon={FileText} label="Documentos" to="/owner/documents" onClick={closeSidebar} />
+                <SidebarItem icon={Warehouse} label="Armazéns" to="/owner/warehouses" onClick={closeSidebar} />
+                <SidebarItem icon={DollarSign} label="Financeiro" to="/owner/finance" onClick={closeSidebar} />
                 <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
                 <SidebarItem icon={Settings} label="Configurações" to="/owner/settings" onClick={closeSidebar} />
               </>
@@ -10296,6 +10301,8 @@ export default function App() {
                 <Route path="/owner/purchases" element={<OwnerPurchases user={user} />} />
                 <Route path="/owner/services" element={<OwnerServices user={user} />} />
                 <Route path="/owner/documents" element={<OwnerFiscalDocuments user={user} />} />
+                <Route path="/owner/warehouses" element={<OwnerWarehouses user={user} />} />
+                <Route path="/owner/finance" element={<OwnerFinance user={user} />} />
                 <Route path="/owner/rh" element={<OwnerRH user={user} />} />
                 <Route path="/owner/reports" element={<OwnerReports user={user} />} />
                 <Route path="/owner/settings" element={<OwnerSettings user={user} />} />

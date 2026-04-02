@@ -203,28 +203,120 @@ export const OwnerReports = ({ user }: { user: User }) => {
           <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
             <h4 className="text-lg font-black mb-6 flex items-center gap-2">
               <PieChartIcon size={20} className="text-blue-500" />
-              Receita por Loja
+              Lucro por Loja
             </h4>
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.revenueByStore} layout="vertical">
+                <BarChart data={data.storeComparison} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
                   <XAxis type="number" hide />
                   <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 600}} width={100} />
                   <Tooltip 
                     cursor={{fill: '#f8fafc'}}
                     contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                    formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Receita']}
+                    formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Lucro']}
                   />
-                  <Bar dataKey="revenue" fill="#3b82f6" radius={[0, 8, 8, 0]} barSize={24} />
+                  <Bar dataKey="profit" fill="#10b981" radius={[0, 8, 8, 0]} barSize={24} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </Card>
         </div>
 
+        <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
+          <h4 className="text-lg font-black mb-6">Análise Comparativa entre Lojas</h4>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">
+                  <th className="pb-4">Loja</th>
+                  <th className="pb-4 text-right">Vendas</th>
+                  <th className="pb-4 text-right">Receita</th>
+                  <th className="pb-4 text-right">Despesas</th>
+                  <th className="pb-4 text-right">Lucro</th>
+                  <th className="pb-4 text-right">Ticket Médio</th>
+                  <th className="pb-4 text-right">Margem</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-50">
+                {data.storeComparison.map((s: any, i: number) => (
+                  <tr key={i} className="group hover:bg-zinc-50/50 transition-colors">
+                    <td className="py-4 font-bold text-zinc-800">{s.name}</td>
+                    <td className="py-4 text-right font-medium text-zinc-600">{s.salesCount}</td>
+                    <td className="py-4 text-right font-bold text-zinc-900">Kz {s.revenue.toLocaleString()}</td>
+                    <td className="py-4 text-right font-medium text-rose-500">Kz {s.expenses.toLocaleString()}</td>
+                    <td className="py-4 text-right font-black text-emerald-600">Kz {s.profit.toLocaleString()}</td>
+                    <td className="py-4 text-right font-medium text-zinc-600">Kz {s.ticketMedio.toLocaleString()}</td>
+                    <td className="py-4 text-right font-bold text-zinc-900">{s.margin.toFixed(1)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <Card className="lg:col-span-2 p-8 border-zinc-100 rounded-3xl shadow-sm">
+            <h4 className="text-lg font-black mb-6">Eficiência de Promoções</h4>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">
+                    <th className="pb-4">Promoção</th>
+                    <th className="pb-4 text-center">Desconto</th>
+                    <th className="pb-4 text-center">Itens Vendidos</th>
+                    <th className="pb-4 text-right">Receita Gerada</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-50">
+                  {data.promotionsEfficiency.length > 0 ? data.promotionsEfficiency.map((p: any, i: number) => (
+                    <tr key={i} className="group hover:bg-zinc-50/50 transition-colors">
+                      <td className="py-4 font-bold text-zinc-800">{p.name}</td>
+                      <td className="py-4 text-center font-medium text-orange-500">{p.discount}%</td>
+                      <td className="py-4 text-center font-medium text-zinc-600">{p.sales}</td>
+                      <td className="py-4 text-right font-black text-zinc-900">Kz {p.revenue.toLocaleString()}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={4} className="py-8 text-center text-zinc-400 text-sm">Nenhuma promoção registrada ou ativa no período.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
+            <h4 className="text-lg font-black mb-6">Vendas por Canal (Pagamento)</h4>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={data.paymentMethods}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {data.paymentMethods.map((entry: any, index: number) => (
+                      <Cell key={`cell-${index}`} fill={['#f97316', '#3b82f6', '#10b981', '#6366f1', '#f43f5e'][index % 5]} />
+                    ))}
+                  </Pie>
+                  <Tooltip 
+                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                    formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Total']}
+                  />
+                  <Legend verticalAlign="bottom" height={36}/>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 gap-8">
+          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
             <h4 className="text-lg font-black mb-6">Top 10 Produtos (Global)</h4>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
@@ -245,33 +337,6 @@ export const OwnerReports = ({ user }: { user: User }) => {
                   ))}
                 </tbody>
               </table>
-            </div>
-          </Card>
-
-          <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
-            <h4 className="text-lg font-black mb-6">Métodos de Pagamento</h4>
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={data.paymentMethods}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {data.paymentMethods.map((entry: any, index: number) => (
-                      <Cell key={`cell-${index}`} fill={['#f97316', '#3b82f6', '#10b981', '#6366f1'][index % 4]} />
-                    ))}
-                  </Pie>
-                  <Tooltip 
-                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                  />
-                  <Legend verticalAlign="bottom" height={36}/>
-                </PieChart>
-              </ResponsiveContainer>
             </div>
           </Card>
         </div>
