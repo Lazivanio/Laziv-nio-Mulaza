@@ -7807,7 +7807,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         setStoreInfo(currentStore);
       }
     });
-    fetch(`/api/owner/taxes/${storeId}`).then(res => res.json()).then(taxes => {
+    fetch(`/api/owner/taxes/store/${storeId}`).then(res => res.json()).then(taxes => {
       if (Array.isArray(taxes)) {
         const defTax = taxes.find((t: any) => t.is_default === 1 && t.status === 'active');
         setDefaultTax(defTax || taxes.find((t: any) => t.status === 'active'));

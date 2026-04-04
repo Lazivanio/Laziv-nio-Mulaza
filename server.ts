@@ -270,6 +270,306 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(store_id) REFERENCES stores(id)
   );
+
+  CREATE TABLE IF NOT EXISTS transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    seller_id INTEGER,
+    cash_register_id INTEGER,
+    total_amount REAL,
+    payment_method TEXT,
+    cash_received REAL,
+    discount_percent REAL DEFAULT 0,
+    discount_amount REAL DEFAULT 0,
+    tax_amount REAL DEFAULT 0,
+    invoice_number TEXT,
+    agt_status TEXT DEFAULT 'pending',
+    split_details TEXT,
+    client_name TEXT,
+    client_nif TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    items TEXT,
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(seller_id) REFERENCES users(id),
+    FOREIGN KEY(cash_register_id) REFERENCES cash_registers(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS staff (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    user_id INTEGER,
+    salary REAL,
+    shift_info TEXT,
+    UNIQUE(store_id, user_id),
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS cash_movements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    seller_id INTEGER,
+    cash_register_id INTEGER,
+    type TEXT, -- 'in' or 'out'
+    amount REAL,
+    description TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(seller_id) REFERENCES users(id),
+    FOREIGN KEY(cash_register_id) REFERENCES cash_registers(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS cash_registers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    name TEXT,
+    code TEXT UNIQUE,
+    default_initial_balance REAL DEFAULT 0,
+    max_limit REAL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS cashier_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    cash_register_id INTEGER,
+    seller_id INTEGER,
+    opening_amount REAL,
+    closing_amount REAL,
+    physical_amount REAL,
+    opening_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    closing_time DATETIME,
+    status TEXT DEFAULT 'open', -- 'open' or 'closed'
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(cash_register_id) REFERENCES cash_registers(id),
+    FOREIGN KEY(seller_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS promotions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    name TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    discount_percent REAL,
+    FOREIGN KEY(store_id) REFERENCES stores(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS promotion_products (
+    promotion_id INTEGER,
+    product_id INTEGER,
+    PRIMARY KEY(promotion_id, product_id),
+    FOREIGN KEY(promotion_id) REFERENCES promotions(id),
+    FOREIGN KEY(product_id) REFERENCES products(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS proforma_invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    owner_id INTEGER,
+    client_name TEXT,
+    client_nif TEXT,
+    client_address TEXT,
+    total_amount REAL,
+    items TEXT, -- JSON string
+    bank_accounts TEXT, -- JSON string
+    status TEXT DEFAULT 'draft', -- 'draft', 'sent', 'converted'
+    invoice_number TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(owner_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS credit_invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    owner_id INTEGER,
+    seller_id INTEGER,
+    parent_invoice_id INTEGER,
+    client_name TEXT,
+    client_nif TEXT,
+    address TEXT,
+    country TEXT,
+    doc_type TEXT,
+    series TEXT,
+    invoice_number TEXT,
+    invoice_date TEXT,
+    currency TEXT,
+    total_amount REAL,
+    tax_amount REAL,
+    payment_method TEXT,
+    reason TEXT,
+    note_category TEXT,
+    adjustment_amount REAL DEFAULT 0,
+    observations TEXT,
+    items TEXT, -- JSON string
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(owner_id) REFERENCES users(id),
+    FOREIGN KEY(seller_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS clients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    name TEXT,
+    nif TEXT,
+    email TEXT,
+    phone TEXT,
+    address TEXT,
+    type TEXT DEFAULT 'individual',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS hr_roles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER,
+    name TEXT,
+    base_role TEXT DEFAULT 'seller', -- 'seller' or 'manager'
+    permissions TEXT, -- JSON string
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(owner_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS hr_salaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER UNIQUE,
+    base_salary REAL DEFAULT 0,
+    bonuses REAL DEFAULT 0,
+    discounts REAL DEFAULT 0,
+    vacation_days_per_year INTEGER DEFAULT 22,
+    last_payment_date TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS hr_salary_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    salary_id INTEGER,
+    amount REAL,
+    type TEXT, -- 'base', 'bonus', 'discount', 'full_payment'
+    description TEXT,
+    month TEXT, -- Format: YYYY-MM
+    bonus REAL DEFAULT 0,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(salary_id) REFERENCES hr_salaries(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS services (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER,
+    store_id INTEGER,
+    name TEXT,
+    code TEXT,
+    description TEXT,
+    price REAL,
+    availability_condition TEXT, -- 'always' or 'product_purchased'
+    show_in_pos INTEGER DEFAULT 1, -- 0 for NO, 1 for YES
+    tax_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(owner_id) REFERENCES users(id),
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(tax_id) REFERENCES taxes(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS hr_attendance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    store_id INTEGER,
+    entry_time DATETIME,
+    exit_time DATETIME,
+    status TEXT, -- 'present', 'late', 'absent', 'half_day'
+    date TEXT, -- YYYY-MM-DD
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id),
+    FOREIGN KEY(store_id) REFERENCES stores(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS hr_vacations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    start_date TEXT,
+    end_date TEXT,
+    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+    days_count INTEGER,
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS suppliers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER,
+    name TEXT NOT NULL,
+    company_name TEXT,
+    nif TEXT,
+    phone TEXT,
+    email TEXT,
+    country TEXT,
+    city TEXT,
+    address TEXT,
+    responsible_person TEXT,
+    payment_method TEXT,
+    payment_term TEXT,
+    observations TEXT,
+    status TEXT DEFAULT 'active', -- 'active', 'inactive'
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(owner_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    supplier_id INTEGER,
+    total_amount REAL,
+    paid_amount REAL DEFAULT 0,
+    tax_amount REAL DEFAULT 0,
+    status TEXT DEFAULT 'pending', -- 'pending', 'partial', 'paid'
+    delivery_status TEXT DEFAULT 'pending',
+    received_at DATETIME,
+    is_direct INTEGER DEFAULT 0,
+    is_stock_updated INTEGER DEFAULT 0,
+    is_closed INTEGER DEFAULT 0,
+    invoice_number TEXT,
+    items TEXT, -- JSON string of items purchased
+    due_date DATETIME,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(supplier_id) REFERENCES suppliers(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS purchase_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    purchase_id INTEGER,
+    amount REAL,
+    payment_method TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(purchase_id) REFERENCES purchases(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS purchase_returns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id INTEGER,
+    supplier_id INTEGER,
+    purchase_id INTEGER,
+    total_amount REAL,
+    tax_amount REAL DEFAULT 0,
+    reason TEXT,
+    items TEXT,
+    type TEXT DEFAULT 'credit',
+    note_category TEXT DEFAULT 'return',
+    adjustment_amount REAL DEFAULT 0,
+    observations TEXT,
+    invoice_number TEXT,
+    status TEXT DEFAULT 'pending',
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
+    FOREIGN KEY(purchase_id) REFERENCES purchases(id)
+  );
 `);
 
 try {
@@ -443,152 +743,6 @@ db.exec(`
     console.error("Migration error (purchase_returns):", e);
   }
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    store_id INTEGER,
-    seller_id INTEGER,
-    total_amount REAL,
-    payment_method TEXT,
-    cash_received REAL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    items TEXT,
-    FOREIGN KEY(store_id) REFERENCES stores(id),
-    FOREIGN KEY(seller_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS staff (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    store_id INTEGER,
-    user_id INTEGER,
-    salary REAL,
-    shift_info TEXT,
-    UNIQUE(store_id, user_id),
-    FOREIGN KEY(store_id) REFERENCES stores(id),
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS cash_movements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    store_id INTEGER,
-    seller_id INTEGER,
-    type TEXT, -- 'in' or 'out'
-    amount REAL,
-    description TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(store_id) REFERENCES stores(id),
-    FOREIGN KEY(seller_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS cash_registers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    store_id INTEGER,
-    name TEXT,
-    code TEXT UNIQUE,
-    default_initial_balance REAL DEFAULT 0,
-    max_limit REAL DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(store_id) REFERENCES stores(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS cashier_sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    store_id INTEGER,
-    cash_register_id INTEGER,
-    seller_id INTEGER,
-    opening_amount REAL,
-    closing_amount REAL,
-    physical_amount REAL,
-    opening_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-    closing_time DATETIME,
-    status TEXT DEFAULT 'open', -- 'open' or 'closed'
-    FOREIGN KEY(store_id) REFERENCES stores(id),
-    FOREIGN KEY(cash_register_id) REFERENCES cash_registers(id),
-    FOREIGN KEY(seller_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS promotions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    store_id INTEGER,
-    name TEXT,
-    start_date TEXT,
-    end_date TEXT,
-    discount_percent REAL,
-    FOREIGN KEY(store_id) REFERENCES stores(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS promotion_products (
-    promotion_id INTEGER,
-    product_id INTEGER,
-    PRIMARY KEY(promotion_id, product_id),
-    FOREIGN KEY(promotion_id) REFERENCES promotions(id),
-    FOREIGN KEY(product_id) REFERENCES products(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS proforma_invoices (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    store_id INTEGER,
-    owner_id INTEGER,
-    client_name TEXT,
-    client_nif TEXT,
-    client_address TEXT,
-    total_amount REAL,
-    items TEXT, -- JSON string
-    bank_accounts TEXT, -- JSON string
-    status TEXT DEFAULT 'draft', -- 'draft', 'sent', 'converted'
-    invoice_number TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(store_id) REFERENCES stores(id),
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS credit_invoices (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    store_id INTEGER,
-    owner_id INTEGER,
-    seller_id INTEGER,
-    client_name TEXT,
-    client_nif TEXT,
-    address TEXT,
-    country TEXT,
-    doc_type TEXT,
-    series TEXT,
-    invoice_number TEXT,
-    invoice_date TEXT,
-    currency TEXT,
-    total_amount REAL,
-    tax_amount REAL,
-    payment_method TEXT,
-    items TEXT, -- JSON string
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(store_id) REFERENCES stores(id),
-    FOREIGN KEY(owner_id) REFERENCES users(id),
-    FOREIGN KEY(seller_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS clients (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    store_id INTEGER,
-    name TEXT,
-    nif TEXT,
-    email TEXT,
-    phone TEXT,
-    address TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(store_id) REFERENCES stores(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS hr_roles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    name TEXT,
-    base_role TEXT DEFAULT 'seller', -- 'seller' or 'manager'
-    permissions TEXT, -- JSON string
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-  `);
-
   try {
     db.prepare("ALTER TABLE hr_roles ADD COLUMN base_role TEXT DEFAULT 'seller'").run();
   } catch (e) {}
@@ -619,8 +773,7 @@ db.exec(`
   } catch (e) {
     console.error("Migration error (cash_movements):", e);
   }
-
-db.exec(`
+  db.exec(`
   CREATE TABLE IF NOT EXISTS hr_salaries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER UNIQUE,
@@ -742,6 +895,7 @@ db.exec(`
   );
 `);
 
+
 try {
   const columnsTransactions = db.prepare("PRAGMA table_info(transactions)").all() as any[];
   if (!columnsTransactions.some(col => col.name === 'split_details')) {
@@ -793,28 +947,6 @@ try {
   if (!columnsPurchaseReturns.some(col => col.name === 'tax_amount')) {
     db.exec("ALTER TABLE purchase_returns ADD COLUMN tax_amount REAL DEFAULT 0");
   }
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS purchase_returns (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      store_id INTEGER,
-      supplier_id INTEGER,
-      purchase_id INTEGER,
-      total_amount REAL,
-      reason TEXT,
-      items TEXT,
-      type TEXT DEFAULT 'credit',
-      note_category TEXT DEFAULT 'return',
-      adjustment_amount REAL DEFAULT 0,
-      observations TEXT,
-      invoice_number TEXT,
-      status TEXT DEFAULT 'pending',
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(store_id) REFERENCES stores(id),
-      FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
-      FOREIGN KEY(purchase_id) REFERENCES purchases(id)
-    );
-  `);
 } catch (e) {
   console.error("Migration error (purchases/returns/transactions):", e);
 }
@@ -4430,6 +4562,17 @@ async function startServer() {
   });
 
   // --- Taxes ---
+  app.get("/api/owner/taxes/store/:storeId", (req, res) => {
+    const storeId = req.params.storeId;
+    const taxes = db.prepare(`
+      SELECT t.*, st.name as store_name 
+      FROM taxes t
+      JOIN stores st ON t.store_id = st.id
+      WHERE t.store_id = ?
+    `).all(storeId);
+    res.json(taxes);
+  });
+
   app.get("/api/owner/taxes/:ownerId", (req, res) => {
     const ownerId = req.params.ownerId;
     const taxes = db.prepare(`

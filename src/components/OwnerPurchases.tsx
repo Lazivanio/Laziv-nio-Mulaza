@@ -137,9 +137,11 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
 
   const fetchTaxes = async () => {
     try {
-      const res = await fetch(`/api/owner/taxes-by-owner/${user.id}`);
+      const res = await fetch(`/api/owner/taxes/${user.id}`);
       const data = await res.json();
-      setTaxes(data);
+      if (Array.isArray(data)) {
+        setTaxes(data);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -154,11 +156,14 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
       const storesData = await storesRes.json();
       const suppliersData = await suppliersRes.json();
       
-      setStores(storesData);
-      setSuppliers(suppliersData);
-      
-      if (storesData.length > 0) {
-        setSelectedStoreId(storesData[0].id.toString());
+      if (Array.isArray(storesData)) {
+        setStores(storesData);
+        if (storesData.length > 0 && !selectedStoreId) {
+          setSelectedStoreId(storesData[0].id.toString());
+        }
+      }
+      if (Array.isArray(suppliersData)) {
+        setSuppliers(suppliersData);
       }
     } catch (e) {
       console.error(e);
@@ -169,7 +174,9 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     try {
       const res = await fetch(`/api/owner/purchases/${selectedStoreId}`);
       const data = await res.json();
-      setPurchases(data);
+      if (Array.isArray(data)) {
+        setPurchases(data);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -179,7 +186,9 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     try {
       const res = await fetch(`/api/owner/purchase-returns/${selectedStoreId}`);
       const data = await res.json();
-      setNotes(data);
+      if (Array.isArray(data)) {
+        setNotes(data);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -189,7 +198,9 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     try {
       const res = await fetch(`/api/owner/products/${selectedStoreId}`);
       const data = await res.json();
-      setProducts(data);
+      if (Array.isArray(data)) {
+        setProducts(data);
+      }
     } catch (e) {
       console.error(e);
     }
