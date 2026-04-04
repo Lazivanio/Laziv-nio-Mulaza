@@ -3315,7 +3315,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
     fetch(`/api/owner/reports/${storeId}`)
       .then(res => res.json())
       .then(setReportsData);
-    fetch(`/api/owner/taxes/${storeId}`)
+    fetch(`/api/owner/taxes/store/${storeId}`)
       .then(res => res.json())
       .then(setTaxes);
     fetch(`/api/owner/proforma/${storeId}`)

@@ -110,7 +110,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
       const [servicesRes, storesRes, taxesRes] = await Promise.all([
         fetch(`/api/owner/services/${user.id}`),
         fetch(`/api/admin/stores`),
-        fetch(`/api/owner/taxes-by-owner/${user.id}`)
+        fetch(`/api/owner/taxes/${user.id}`)
       ]);
       
       const servicesData = await servicesRes.json();

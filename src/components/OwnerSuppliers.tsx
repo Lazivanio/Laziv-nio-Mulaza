@@ -119,7 +119,7 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
 
   const fetchHistory = async (supplierId: number) => {
     try {
-      const res = await fetch(`/api/owner/suppliers/${supplierId}/history`);
+      const res = await fetch(`/api/owner/suppliers/${supplierId}/purchases`);
       const data = await res.json();
       setHistory(Array.isArray(data) ? data : []);
     } catch (e) {
