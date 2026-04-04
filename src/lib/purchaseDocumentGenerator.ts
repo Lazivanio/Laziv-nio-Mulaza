@@ -51,12 +51,13 @@ export const generatePurchasePDF = (purchase: any, store: any, owner: any) => {
     item.name,
     item.quantity,
     `Kz ${item.price.toLocaleString()}`,
-    `Kz ${(item.quantity * item.price).toLocaleString()}`
+    `${item.tax_code} (${item.tax_percentage || 0}%)`,
+    `Kz ${(item.quantity * item.price * (1 + ((item.tax_percentage || 0) / 100))).toLocaleString()}`
   ]);
 
   autoTable(doc, {
     startY: 75,
-    head: [['Produto', 'Qtd', 'Preço Unit.', 'Subtotal']],
+    head: [['Produto', 'Qtd', 'Unit.', 'Taxa', 'Total']],
     body: tableData,
     theme: 'striped',
     headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255] },
@@ -70,15 +71,17 @@ export const generatePurchasePDF = (purchase: any, store: any, owner: any) => {
   doc.setTextColor(100, 100, 100);
   doc.text('RESUMO:', pageWidth - 80, finalY);
   doc.setFont('helvetica', 'normal');
-  doc.text('Total Ilíquido:', pageWidth - 80, finalY + 7);
-  doc.setTextColor(0, 0, 0);
-  doc.text(`Kz ${purchase.total_amount.toLocaleString()}`, pageWidth - 30, finalY + 7, { align: 'right' });
+  doc.text('Subtotal:', pageWidth - 80, finalY + 7);
+  doc.text(`Kz ${(purchase.total_amount - (purchase.tax_amount || 0)).toLocaleString()}`, pageWidth - 30, finalY + 7, { align: 'right' });
+  
+  doc.text('Impostos:', pageWidth - 80, finalY + 14);
+  doc.text(`Kz ${(purchase.tax_amount || 0).toLocaleString()}`, pageWidth - 30, finalY + 14, { align: 'right' });
   
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(234, 88, 12);
-  doc.text('TOTAL:', pageWidth - 80, finalY + 15);
-  doc.text(`Kz ${purchase.total_amount.toLocaleString()}`, pageWidth - 30, finalY + 15, { align: 'right' });
+  doc.text('TOTAL:', pageWidth - 80, finalY + 22);
+  doc.text(`Kz ${purchase.total_amount.toLocaleString()}`, pageWidth - 30, finalY + 22, { align: 'right' });
 
   // Footer
   doc.setFontSize(8);
@@ -150,12 +153,13 @@ export const generatePurchaseNotePDF = (note: any, store: any, owner: any) => {
       item.name,
       item.quantity,
       `Kz ${item.price.toLocaleString()}`,
-      `Kz ${(item.quantity * item.price).toLocaleString()}`
+      `${item.tax_code} (${item.tax_percentage || 0}%)`,
+      `Kz ${(item.quantity * item.price * (1 + ((item.tax_percentage || 0) / 100))).toLocaleString()}`
     ]);
 
     autoTable(doc, {
       startY: 95,
-      head: [['Produto', 'Qtd', 'Preço Unit.', 'Subtotal']],
+      head: [['Produto', 'Qtd', 'Unit.', 'Taxa', 'Total']],
       body: tableData,
       theme: 'striped',
       headStyles: { fillColor: [0, 0, 0], textColor: [255, 255, 255] },
@@ -170,18 +174,24 @@ export const generatePurchaseNotePDF = (note: any, store: any, owner: any) => {
   doc.setTextColor(100, 100, 100);
   doc.text('RESUMO:', pageWidth - 80, finalY);
   
+  doc.setFont('helvetica', 'normal');
+  doc.text('Subtotal:', pageWidth - 80, finalY + 7);
+  doc.text(`Kz ${(note.total_amount - (note.tax_amount || 0)).toLocaleString()}`, pageWidth - 30, finalY + 7, { align: 'right' });
+  
+  doc.text('Impostos:', pageWidth - 80, finalY + 14);
+  doc.text(`Kz ${(note.tax_amount || 0).toLocaleString()}`, pageWidth - 30, finalY + 14, { align: 'right' });
+
   if (note.adjustment_amount > 0) {
-    doc.setFont('helvetica', 'normal');
-    doc.text('Ajuste de Valor:', pageWidth - 80, finalY + 7);
+    doc.text('Ajuste de Valor:', pageWidth - 80, finalY + 21);
     doc.setTextColor(0, 0, 0);
-    doc.text(`Kz ${note.adjustment_amount.toLocaleString()}`, pageWidth - 30, finalY + 7, { align: 'right' });
+    doc.text(`Kz ${note.adjustment_amount.toLocaleString()}`, pageWidth - 30, finalY + 21, { align: 'right' });
   }
 
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(234, 88, 12);
-  doc.text('TOTAL DA NOTA:', pageWidth - 80, finalY + 15);
-  doc.text(`Kz ${note.total_amount.toLocaleString()}`, pageWidth - 30, finalY + 15, { align: 'right' });
+  doc.text('TOTAL DA NOTA:', pageWidth - 80, finalY + 29);
+  doc.text(`Kz ${note.total_amount.toLocaleString()}`, pageWidth - 30, finalY + 29, { align: 'right' });
 
   doc.save(`${isCredit ? 'NC' : 'ND'}_Compra_${note.invoice_number}.pdf`);
 };

@@ -142,6 +142,9 @@ export interface Product {
   discount_percent?: number;
   promo_name?: string;
   barcode: string;
+  tax_id?: number;
+  tax_percentage?: number;
+  tax_code?: string;
 }
 
 export interface Transaction {
@@ -180,6 +183,9 @@ export interface Service {
   price: number;
   availability_condition: 'always' | 'product_purchased';
   show_in_pos: number;
+  tax_id?: number;
+  tax_percentage?: number;
+  tax_code?: string;
   created_at: string;
 }
 

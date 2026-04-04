@@ -204,7 +204,9 @@ db.exec(`
     is_promo INTEGER DEFAULT 0,
     min_stock INTEGER DEFAULT 5,
     barcode TEXT,
-    FOREIGN KEY(store_id) REFERENCES stores(id)
+    tax_id INTEGER,
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(tax_id) REFERENCES taxes(id)
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_products_store_barcode ON products(store_id, barcode);
 
@@ -236,6 +238,8 @@ db.exec(`
     store_id INTEGER,
     name TEXT,
     percentage REAL,
+    tax_code TEXT DEFAULT 'NOR', -- 'NOR', 'ISE', 'OUT'
+    is_default INTEGER DEFAULT 0,
     status TEXT DEFAULT 'active', -- 'active', 'inactive'
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(store_id) REFERENCES stores(id)
@@ -658,9 +662,11 @@ db.exec(`
     price REAL,
     availability_condition TEXT, -- 'always' or 'product_purchased'
     show_in_pos INTEGER DEFAULT 1, -- 0 for NO, 1 for YES
+    tax_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(owner_id) REFERENCES users(id),
-    FOREIGN KEY(store_id) REFERENCES stores(id)
+    FOREIGN KEY(store_id) REFERENCES stores(id),
+    FOREIGN KEY(tax_id) REFERENCES taxes(id)
   );
   `);
 
@@ -760,11 +766,12 @@ try {
     db.exec("ALTER TABLE transactions ADD COLUMN invoice_number TEXT");
   }
   if (!columnsTransactions.some(col => col.name === 'agt_status')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN agt_status TEXT DEFAULT 'pending'"); // 'pending', 'sent', 'error'
+    db.exec("ALTER TABLE transactions ADD COLUMN agt_status TEXT DEFAULT 'pending'");
   }
+
   const columnsPurchases = db.prepare("PRAGMA table_info(purchases)").all() as any[];
   if (!columnsPurchases.some(col => col.name === 'delivery_status')) {
-    db.exec("ALTER TABLE purchases ADD COLUMN delivery_status TEXT DEFAULT 'pending'"); // 'pending', 'received', 'cancelled'
+    db.exec("ALTER TABLE purchases ADD COLUMN delivery_status TEXT DEFAULT 'pending'");
   }
   if (!columnsPurchases.some(col => col.name === 'received_at')) {
     db.exec("ALTER TABLE purchases ADD COLUMN received_at DATETIME");
@@ -778,6 +785,14 @@ try {
   if (!columnsPurchases.some(col => col.name === 'is_closed')) {
     db.exec("ALTER TABLE purchases ADD COLUMN is_closed INTEGER DEFAULT 0");
   }
+  if (!columnsPurchases.some(col => col.name === 'tax_amount')) {
+    db.exec("ALTER TABLE purchases ADD COLUMN tax_amount REAL DEFAULT 0");
+  }
+
+  const columnsPurchaseReturns = db.prepare("PRAGMA table_info(purchase_returns)").all() as any[];
+  if (!columnsPurchaseReturns.some(col => col.name === 'tax_amount')) {
+    db.exec("ALTER TABLE purchase_returns ADD COLUMN tax_amount REAL DEFAULT 0");
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS purchase_returns (
@@ -787,13 +802,13 @@ try {
       purchase_id INTEGER,
       total_amount REAL,
       reason TEXT,
-      items TEXT, -- JSON string of items returned
-      type TEXT DEFAULT 'credit', -- 'credit', 'debit'
-      note_category TEXT DEFAULT 'return', -- 'return', 'correction'
+      items TEXT,
+      type TEXT DEFAULT 'credit',
+      note_category TEXT DEFAULT 'return',
       adjustment_amount REAL DEFAULT 0,
       observations TEXT,
       invoice_number TEXT,
-      status TEXT DEFAULT 'pending', -- 'pending', 'completed'
+      status TEXT DEFAULT 'pending',
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(store_id) REFERENCES stores(id),
       FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
@@ -801,8 +816,9 @@ try {
     );
   `);
 } catch (e) {
-  console.error("Migration error (purchases/returns):", e);
+  console.error("Migration error (purchases/returns/transactions):", e);
 }
+
 
 try {
   const columns = db.prepare("PRAGMA table_info(clients)").all() as any[];
@@ -1972,6 +1988,33 @@ async function startServer() {
 
       const placeholders = storeIds.map(() => '?').join(',');
 
+      // Fetch all active taxes for these stores
+      const taxes = db.prepare(`SELECT * FROM taxes WHERE store_id IN (${placeholders}) AND status = 'active'`).all(...storeIds) as any[];
+      
+      let taxTableXml = "";
+      if (taxes.length > 0) {
+        taxes.forEach(t => {
+          taxTableXml += `
+      <TaxTableEntry>
+        <TaxType>IVA</TaxType>
+        <TaxCountryRegion>AO</TaxCountryRegion>
+        <TaxCode>${t.tax_code || 'NOR'}</TaxCode>
+        <Description>${t.name}</Description>
+        <TaxPercentage>${(t.percentage || 0).toFixed(2)}</TaxPercentage>
+      </TaxTableEntry>`;
+        });
+      } else {
+        // Fallback if no taxes defined
+        taxTableXml = `
+      <TaxTableEntry>
+        <TaxType>IVA</TaxType>
+        <TaxCountryRegion>AO</TaxCountryRegion>
+        <TaxCode>NOR</TaxCode>
+        <Description>Taxa Normal</Description>
+        <TaxPercentage>14.00</TaxPercentage>
+      </TaxTableEntry>`;
+      }
+
       // Fetch invoices from credit_invoices (FR, FT)
       let ciQuery = `SELECT * FROM credit_invoices WHERE store_id IN (${placeholders})`;
       let ciParams: any[] = [...storeIds];
@@ -2018,6 +2061,9 @@ async function startServer() {
         
         if (items.length > 0) {
           items.forEach((item: any, index: number) => {
+            const taxCode = item.tax_code || 'NOR';
+            const taxPercentage = (item.tax_percentage !== undefined) ? item.tax_percentage : 14;
+            
             linesXml += `
           <Line>
             <LineNumber>${index + 1}</LineNumber>
@@ -2032,8 +2078,8 @@ async function startServer() {
             <Tax>
               <TaxType>IVA</TaxType>
               <TaxCountryRegion>AO</TaxCountryRegion>
-              <TaxCode>NOR</TaxCode>
-              <TaxPercentage>14.00</TaxPercentage>
+              <TaxCode>${taxCode}</TaxCode>
+              <TaxPercentage>${taxPercentage.toFixed(2)}</TaxPercentage>
             </Tax>
           </Line>`;
           });
@@ -2091,6 +2137,9 @@ async function startServer() {
         
         if (items.length > 0) {
           items.forEach((item: any, index: number) => {
+            const taxCode = item.tax_code || 'NOR';
+            const taxPercentage = (item.tax_percentage !== undefined) ? item.tax_percentage : 14;
+            
             linesXml += `
           <Line>
             <LineNumber>${index + 1}</LineNumber>
@@ -2105,8 +2154,8 @@ async function startServer() {
             <Tax>
               <TaxType>IVA</TaxType>
               <TaxCountryRegion>AO</TaxCountryRegion>
-              <TaxCode>NOR</TaxCode>
-              <TaxPercentage>14.00</TaxPercentage>
+              <TaxCode>${taxCode}</TaxCode>
+              <TaxPercentage>${taxPercentage.toFixed(2)}</TaxPercentage>
             </Tax>
           </Line>`;
           });
@@ -2221,20 +2270,7 @@ async function startServer() {
     </Customer>`).join('')}
     ${productsXml}
     <TaxTable>
-      <TaxTableEntry>
-        <TaxType>IVA</TaxType>
-        <TaxCountryRegion>AO</TaxCountryRegion>
-        <TaxCode>NOR</TaxCode>
-        <Description>Taxa Normal</Description>
-        <TaxPercentage>14.00</TaxPercentage>
-      </TaxTableEntry>
-      <TaxTableEntry>
-        <TaxType>IVA</TaxType>
-        <TaxCountryRegion>AO</TaxCountryRegion>
-        <TaxCode>ISE</TaxCode>
-        <Description>Isento</Description>
-        <TaxPercentage>0.00</TaxPercentage>
-      </TaxTableEntry>
+      ${taxTableXml}
     </TaxTable>
   </MasterFiles>
   <SourceDocuments>
@@ -2474,21 +2510,21 @@ async function startServer() {
   });
 
   app.post("/api/owner/services", (req, res) => {
-    const { owner_id, store_id, name, code, description, price, availability_condition, show_in_pos } = req.body;
+    const { owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, tax_id } = req.body;
     db.prepare(`
-      INSERT INTO services (owner_id, store_id, name, code, description, price, availability_condition, show_in_pos) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(owner_id, store_id, name, code, description, price, availability_condition, show_in_pos);
+      INSERT INTO services (owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, tax_id) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, tax_id || null);
     res.json({ success: true });
   });
 
   app.put("/api/owner/services/:id", (req, res) => {
-    const { store_id, name, code, description, price, availability_condition, show_in_pos } = req.body;
+    const { store_id, name, code, description, price, availability_condition, show_in_pos, tax_id } = req.body;
     db.prepare(`
       UPDATE services 
-      SET store_id = ?, name = ?, code = ?, description = ?, price = ?, availability_condition = ?, show_in_pos = ? 
+      SET store_id = ?, name = ?, code = ?, description = ?, price = ?, availability_condition = ?, show_in_pos = ?, tax_id = ? 
       WHERE id = ?
-    `).run(store_id, name, code, description, price, availability_condition, show_in_pos, req.params.id);
+    `).run(store_id, name, code, description, price, availability_condition, show_in_pos, tax_id || null, req.params.id);
     res.json({ success: true });
   });
 
@@ -2961,7 +2997,7 @@ async function startServer() {
   });
 
   app.post("/api/owner/products", (req, res) => {
-    const { store_id, name, price, stock, category, image_url, min_stock } = req.body;
+    const { store_id, name, price, stock, category, image_url, min_stock, tax_id } = req.body;
     
     // Check if product with same name exists in this store
     const existing = db.prepare("SELECT id FROM products WHERE store_id = ? AND LOWER(name) = LOWER(?)").get(store_id, name);
@@ -2970,7 +3006,7 @@ async function startServer() {
     }
 
     const barcode = Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
-    db.prepare("INSERT INTO products (store_id, name, price, stock, category, image_url, min_stock, barcode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(store_id, name, price, stock, category, image_url, min_stock || 5, barcode);
+    db.prepare("INSERT INTO products (store_id, name, price, stock, category, image_url, min_stock, barcode, tax_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(store_id, name, price, stock, category, image_url, min_stock || 5, barcode, tax_id || null);
     res.json({ success: true });
   });
 
@@ -2980,7 +3016,7 @@ async function startServer() {
   });
 
   app.put("/api/owner/products/:id", (req, res) => {
-    const { name, price, stock, category, image_url, min_stock } = req.body;
+    const { name, price, stock, category, image_url, min_stock, tax_id } = req.body;
     
     // Get store_id for this product
     const product = db.prepare("SELECT store_id FROM products WHERE id = ?").get(req.params.id) as { store_id: number } | undefined;
@@ -2994,9 +3030,9 @@ async function startServer() {
 
     db.prepare(`
       UPDATE products 
-      SET name = ?, price = ?, stock = ?, category = ?, image_url = ?, min_stock = ? 
+      SET name = ?, price = ?, stock = ?, category = ?, image_url = ?, min_stock = ?, tax_id = ? 
       WHERE id = ?
-    `).run(name, price, stock, category, image_url, min_stock, req.params.id);
+    `).run(name, price, stock, category, image_url, min_stock, tax_id || null, req.params.id);
     res.json({ success: true });
   });
 
@@ -3412,7 +3448,7 @@ async function startServer() {
   });
 
   app.post("/api/owner/purchases", (req, res) => {
-    const { store_id, supplier_id, total_amount, paid_amount, invoice_number, items, due_date, user_id, delivery_status, is_direct, is_stock_updated, is_closed, status } = req.body;
+    const { store_id, supplier_id, total_amount, tax_amount = 0, paid_amount, invoice_number, items, due_date, user_id, delivery_status, is_direct, is_stock_updated, is_closed, status } = req.body;
     
     const transaction = db.transaction(() => {
       let finalInvoiceNumber = invoice_number;
@@ -3433,9 +3469,9 @@ async function startServer() {
       }
 
       const purchaseResult = db.prepare(`
-        INSERT INTO purchases (store_id, supplier_id, total_amount, paid_amount, status, invoice_number, items, due_date, delivery_status, is_direct, is_stock_updated, is_closed)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(store_id, supplier_id, total_amount, (paid_amount || 0), status, finalInvoiceNumber, JSON.stringify(items), due_date, delivery_status, is_direct ? 1 : 0, is_stock_updated ? 1 : 0, is_closed ? 1 : 0);
+        INSERT INTO purchases (store_id, supplier_id, total_amount, tax_amount, paid_amount, status, invoice_number, items, due_date, delivery_status, is_direct, is_stock_updated, is_closed)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(store_id, supplier_id, total_amount, tax_amount, (paid_amount || 0), status, finalInvoiceNumber, JSON.stringify(items), due_date, delivery_status, is_direct ? 1 : 0, is_stock_updated ? 1 : 0, is_closed ? 1 : 0);
       
       const purchaseId = purchaseResult.lastInsertRowid;
 
@@ -3538,7 +3574,7 @@ async function startServer() {
 
   // Purchase Returns / Notes
   app.post("/api/owner/purchase-returns", (req, res) => {
-    const { store_id, supplier_id, purchase_id, total_amount, reason, items, type = 'credit', note_category = 'return', adjustment_amount = 0, observations = '' } = req.body;
+    const { store_id, supplier_id, purchase_id, total_amount, tax_amount = 0, reason, items, type = 'credit', note_category = 'return', adjustment_amount = 0, observations = '' } = req.body;
     
     try {
       const transaction = db.transaction(() => {
@@ -3555,10 +3591,10 @@ async function startServer() {
         const invoice_number = `${prefix}-${year}-${sequence.toString().padStart(3, '0')}`;
 
         const stmt = db.prepare(`
-          INSERT INTO purchase_returns (store_id, supplier_id, purchase_id, total_amount, reason, items, type, note_category, adjustment_amount, observations, invoice_number)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO purchase_returns (store_id, supplier_id, purchase_id, total_amount, tax_amount, reason, items, type, note_category, adjustment_amount, observations, invoice_number)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        const result = stmt.run(store_id, supplier_id, purchase_id, total_amount, reason, JSON.stringify(items), type, note_category, adjustment_amount, observations, invoice_number);
+        const result = stmt.run(store_id, supplier_id, purchase_id, total_amount, tax_amount, reason, JSON.stringify(items), type, note_category, adjustment_amount, observations, invoice_number);
         const noteId = result.lastInsertRowid;
 
         // Record in financial_transactions
@@ -4406,11 +4442,32 @@ async function startServer() {
   });
 
   app.post("/api/owner/taxes", (req, res) => {
-    const { store_id, name, percentage } = req.body;
+    const { store_id, name, percentage, tax_code } = req.body;
     db.prepare(`
-      INSERT INTO taxes (store_id, name, percentage)
-      VALUES (?, ?, ?)
-    `).run(store_id, name, percentage);
+      INSERT INTO taxes (store_id, name, percentage, tax_code)
+      VALUES (?, ?, ?, ?)
+    `).run(store_id, name, percentage, tax_code || 'NOR');
+    res.json({ success: true });
+  });
+
+  app.put("/api/owner/taxes/:id", (req, res) => {
+    const { store_id, name, percentage, tax_code } = req.body;
+    db.prepare(`
+      UPDATE taxes 
+      SET store_id = ?, name = ?, percentage = ?, tax_code = ?
+      WHERE id = ?
+    `).run(store_id, name, percentage, tax_code || 'NOR', req.params.id);
+    res.json({ success: true });
+  });
+
+  app.put("/api/owner/taxes/:id/default", (req, res) => {
+    const { store_id } = req.body;
+    db.transaction(() => {
+      // Unset current default for this store
+      db.prepare("UPDATE taxes SET is_default = 0 WHERE store_id = ?").run(store_id);
+      // Set new default
+      db.prepare("UPDATE taxes SET is_default = 1 WHERE id = ?").run(req.params.id);
+    })();
     res.json({ success: true });
   });
 
@@ -4421,7 +4478,27 @@ async function startServer() {
   });
 
   app.delete("/api/owner/taxes/:id", (req, res) => {
-    db.prepare("DELETE FROM taxes WHERE id = ?").run(req.params.id);
+    const taxId = req.params.id;
+    
+    // Check if tax is used in products
+    const productCount = db.prepare("SELECT COUNT(*) as count FROM products WHERE tax_id = ?").get(taxId) as { count: number };
+    if (productCount.count > 0) {
+      return res.status(400).json({ error: "Este imposto está a ser utilizado por produtos e não pode ser excluído." });
+    }
+
+    // Check if tax is used in services
+    const serviceCount = db.prepare("SELECT COUNT(*) as count FROM services WHERE tax_id = ?").get(taxId) as { count: number };
+    if (serviceCount.count > 0) {
+      return res.status(400).json({ error: "Este imposto está a ser utilizado por serviços e não pode ser excluído." });
+    }
+
+    // Check if it's a default tax
+    const tax = db.prepare("SELECT is_default FROM taxes WHERE id = ?").get(taxId) as { is_default: number };
+    if (tax && tax.is_default === 1) {
+      return res.status(400).json({ error: "Não é possível excluir o imposto padrão. Defina outro imposto como padrão primeiro." });
+    }
+
+    db.prepare("DELETE FROM taxes WHERE id = ?").run(taxId);
     res.json({ success: true });
   });
 

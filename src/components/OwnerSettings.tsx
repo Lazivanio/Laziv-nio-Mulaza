@@ -7,6 +7,7 @@ import {
   Database,
   Plus,
   Trash2,
+  Pencil,
   Download,
   CheckCircle2,
   XCircle,
@@ -72,10 +73,12 @@ export const OwnerSettings = ({ user }: { user: User }) => {
   // Taxes State
   const [taxes, setTaxes] = useState<any[]>([]);
   const [isTaxModalOpen, setIsTaxModalOpen] = useState(false);
+  const [editingTaxId, setEditingTaxId] = useState<number | null>(null);
   const [taxFormData, setTaxFormData] = useState({
     store_id: '',
     name: '',
-    percentage: ''
+    percentage: '',
+    tax_code: 'NOR'
   });
 
   // Backups State
@@ -195,35 +198,86 @@ export const OwnerSettings = ({ user }: { user: User }) => {
   const handleCreateTax = async (e: FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('/api/owner/taxes', {
-        method: 'POST',
+      const url = editingTaxId ? `/api/owner/taxes/${editingTaxId}` : '/api/owner/taxes';
+      const method = editingTaxId ? 'PUT' : 'POST';
+      
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(taxFormData)
       });
       if (res.ok) {
         setIsTaxModalOpen(false);
+        setEditingTaxId(null);
+        setTaxFormData({ store_id: '', name: '', percentage: '', tax_code: 'NOR' });
         fetchData();
       }
     } catch (e) { console.error(e); }
   };
 
+  const handleEditTax = (tax: any) => {
+    setEditingTaxId(tax.id);
+    setTaxFormData({
+      store_id: tax.store_id.toString(),
+      name: tax.name,
+      percentage: tax.percentage.toString(),
+      tax_code: tax.tax_code
+    });
+    setIsTaxModalOpen(true);
+  };
+
   const handleToggleTax = async (id: number, currentStatus: string) => {
     try {
-      await fetch(`/api/owner/taxes/${id}/status`, {
+      const res = await fetch(`/api/owner/taxes/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: currentStatus === 'active' ? 'inactive' : 'active' })
       });
-      fetchData();
-    } catch (e) { console.error(e); }
+      if (!res.ok) {
+        const errorData = await res.json();
+        alert(errorData.error || "Erro ao alterar status do imposto.");
+        return;
+      }
+      await fetchData();
+    } catch (e) { 
+      console.error(e);
+      alert("Erro de conexão ao alterar status do imposto.");
+    }
+  };
+
+  const handleSetDefaultTax = async (id: number, storeId: number) => {
+    try {
+      const res = await fetch(`/api/owner/taxes/${id}/default`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store_id: storeId })
+      });
+      if (!res.ok) {
+        const errorData = await res.json();
+        alert(errorData.error || "Erro ao definir imposto padrão.");
+        return;
+      }
+      await fetchData();
+    } catch (e) { 
+      console.error(e);
+      alert("Erro de conexão ao definir imposto padrão.");
+    }
   };
 
   const handleDeleteTax = async (id: number) => {
     if (!confirm("Tem certeza que deseja excluir este imposto?")) return;
     try {
-      await fetch(`/api/owner/taxes/${id}`, { method: 'DELETE' });
-      fetchData();
-    } catch (e) { console.error(e); }
+      const res = await fetch(`/api/owner/taxes/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const errorData = await res.json();
+        alert(errorData.error || "Erro ao excluir imposto.");
+        return;
+      }
+      await fetchData();
+    } catch (e) { 
+      console.error(e);
+      alert("Erro de conexão ao excluir imposto.");
+    }
   };
 
   const handleSaveBackupSettings = async () => {
@@ -528,7 +582,11 @@ export const OwnerSettings = ({ user }: { user: User }) => {
           <div className="flex justify-between items-center">
             <h3 className="text-xl font-black text-zinc-900">Impostos por Loja</h3>
             <button 
-              onClick={() => setIsTaxModalOpen(true)}
+              onClick={() => {
+                setEditingTaxId(null);
+                setTaxFormData({ store_id: '', name: '', percentage: '', tax_code: 'NOR' });
+                setIsTaxModalOpen(true);
+              }}
               className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-2xl font-bold hover:bg-zinc-800 transition-all active:scale-95"
             >
               <Plus size={20} />
@@ -544,6 +602,23 @@ export const OwnerSettings = ({ user }: { user: User }) => {
                     <Percent size={24} />
                   </div>
                   <div className="flex gap-2">
+                    <button 
+                      onClick={() => handleSetDefaultTax(t.id, t.store_id)}
+                      className={cn(
+                        "p-2 rounded-lg transition-all",
+                        t.is_default ? "text-emerald-500 bg-emerald-50" : "text-zinc-400 hover:bg-zinc-50"
+                      )}
+                      title={t.is_default ? "Imposto Padrão" : "Definir como Padrão"}
+                    >
+                      <ShieldCheck size={18} />
+                    </button>
+                    <button 
+                      onClick={() => handleEditTax(t)}
+                      className="p-2 text-zinc-400 hover:bg-zinc-50 rounded-lg transition-all"
+                      title="Editar Imposto"
+                    >
+                      <Pencil size={18} />
+                    </button>
                     <button 
                       onClick={() => handleToggleTax(t.id, t.status)}
                       className={cn(
@@ -568,6 +643,14 @@ export const OwnerSettings = ({ user }: { user: User }) => {
                       t.status === 'active' ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
                     )}>
                       {t.status === 'active' ? 'Ativo' : 'Inativo'}
+                    </span>
+                    {t.is_default === 1 && (
+                      <span className="text-[10px] font-black bg-emerald-500 text-white px-2 py-0.5 rounded uppercase tracking-wider">
+                        Padrão
+                      </span>
+                    )}
+                    <span className="text-[10px] font-black bg-zinc-100 text-zinc-500 px-2 py-0.5 rounded uppercase tracking-wider">
+                      {t.tax_code}
                     </span>
                   </div>
                   <h4 className="text-lg font-black text-zinc-900">{t.name}</h4>
@@ -778,8 +861,12 @@ export const OwnerSettings = ({ user }: { user: User }) => {
       {/* Tax Modal */}
       <Modal 
         isOpen={isTaxModalOpen} 
-        onClose={() => setIsTaxModalOpen(false)} 
-        title="Novo Imposto"
+        onClose={() => {
+          setIsTaxModalOpen(false);
+          setEditingTaxId(null);
+          setTaxFormData({ store_id: '', name: '', percentage: '', tax_code: 'NOR' });
+        }} 
+        title={editingTaxId ? "Editar Imposto" : "Novo Imposto"}
       >
         <form onSubmit={handleCreateTax} className="space-y-6">
           <div className="space-y-4">
@@ -817,12 +904,25 @@ export const OwnerSettings = ({ user }: { user: User }) => {
                 placeholder="Ex: 14"
               />
             </div>
+            <div>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Código de Imposto (SAFT)</label>
+              <select 
+                required
+                value={taxFormData.tax_code}
+                onChange={e => setTaxFormData({...taxFormData, tax_code: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+              >
+                <option value="NOR">Taxa Normal (NOR)</option>
+                <option value="ISE">Isento (ISE)</option>
+                <option value="OUT">Outros (OUT)</option>
+              </select>
+            </div>
           </div>
           <button 
             type="submit"
             className="w-full py-4 bg-black text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all shadow-lg active:scale-95"
           >
-            Criar Imposto
+            {editingTaxId ? "Guardar Alterações" : "Criar Imposto"}
           </button>
         </form>
       </Modal>

@@ -121,11 +121,11 @@ export const PurchaseDocument = ({
           <div className="w-full max-w-[320px] bg-zinc-50 p-6 rounded-2xl space-y-3 border border-zinc-100 shadow-sm">
             <div className="flex justify-between text-xs">
               <span className="text-zinc-500 font-medium">Subtotal</span>
-              <span className="font-bold text-zinc-900">Kz {document.total_amount.toLocaleString()}</span>
+              <span className="font-bold text-zinc-900">Kz {(document.total_amount - (document.tax_amount || 0)).toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-zinc-500 font-medium">Imposto (0%)</span>
-              <span className="font-bold text-zinc-900">Kz 0</span>
+              <span className="text-zinc-500 font-medium">Impostos</span>
+              <span className="font-bold text-zinc-900">Kz {(document.tax_amount || 0).toLocaleString()}</span>
             </div>
             {document.adjustment_amount > 0 && (
               <div className="flex justify-between text-xs">
@@ -246,6 +246,7 @@ export const PurchaseDocument = ({
                     <th className="pb-4 font-black uppercase tracking-widest text-[10px]">Descrição</th>
                     <th className="pb-4 text-center font-black uppercase tracking-widest text-[10px]">Qtd</th>
                     <th className="pb-4 text-right font-black uppercase tracking-widest text-[10px]">Preço Unit.</th>
+                    <th className="pb-4 text-center font-black uppercase tracking-widest text-[10px]">Taxa</th>
                     <th className="pb-4 text-right font-black uppercase tracking-widest text-[10px]">Total</th>
                   </tr>
                 </thead>
@@ -257,7 +258,10 @@ export const PurchaseDocument = ({
                       </td>
                       <td className="py-4 text-center">{item.quantity}</td>
                       <td className="py-4 text-right">Kz {item.price.toLocaleString()}</td>
-                      <td className="py-4 text-right font-bold">Kz {(item.price * item.quantity).toLocaleString()}</td>
+                      <td className="py-4 text-center">
+                        <span className="text-[10px] font-bold text-zinc-500">{item.tax_code} ({item.tax_percentage || 0}%)</span>
+                      </td>
+                      <td className="py-4 text-right font-bold">Kz {(item.price * item.quantity * (1 + ((item.tax_percentage || 0) / 100))).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>

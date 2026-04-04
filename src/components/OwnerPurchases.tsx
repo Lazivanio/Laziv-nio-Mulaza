@@ -76,6 +76,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [stores, setStores] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
+  const [taxes, setTaxes] = useState<any[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
@@ -130,8 +131,19 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
       fetchPurchases();
       fetchReturns();
       fetchProducts();
+      fetchTaxes();
     }
   }, [selectedStoreId, activeTab]);
+
+  const fetchTaxes = async () => {
+    try {
+      const res = await fetch(`/api/owner/taxes-by-owner/${user.id}`);
+      const data = await res.json();
+      setTaxes(data);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const fetchInitialData = async () => {
     try {
@@ -188,13 +200,21 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     if (!product) return;
     if (purchaseForm.items.find(item => item.product_id === product.id)) return;
 
+    // Get tax info
+    const storeTax = taxes.find(t => t.store_id.toString() === selectedStoreId && t.is_default === 1);
+    const productTax = product.tax_id ? taxes.find(t => t.id === product.tax_id) : null;
+    const finalTax = productTax || storeTax || { percentage: 14, tax_code: 'NOR' };
+
     setPurchaseForm({
       ...purchaseForm,
       items: [...purchaseForm.items, {
         product_id: product.id,
         name: product.name,
         quantity: 1,
-        price: product.cost_price || 0
+        price: product.cost_price || 0,
+        tax_id: finalTax.id,
+        tax_percentage: finalTax.percentage,
+        tax_code: finalTax.tax_code
       }]
     });
   };
@@ -221,7 +241,10 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
 
     setLoading(true);
     try {
-      const total_amount = purchaseForm.items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+      const items_total = purchaseForm.items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+      const tax_amount = purchaseForm.items.reduce((sum, item) => sum + (item.quantity * item.price * (item.tax_percentage / 100)), 0);
+      const total_amount = items_total + tax_amount;
+
       const res = await fetch('/api/owner/purchases', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -229,6 +252,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
           ...purchaseForm,
           store_id: selectedStoreId,
           total_amount,
+          tax_amount,
           user_id: user.id,
           delivery_status: isDirectPurchase ? 'received' : 'pending',
           is_direct: isDirectPurchase,
@@ -315,7 +339,8 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     setLoading(true);
     try {
       const items_total = selectedItems.reduce((sum, item) => sum + (item.quantity * item.price), 0);
-      const total_amount = returnForm.note_category === 'return' ? items_total : returnForm.adjustment_amount;
+      const tax_amount = selectedItems.reduce((sum, item) => sum + (item.quantity * item.price * ((item.tax_percentage || 14) / 100)), 0);
+      const total_amount = returnForm.note_category === 'return' ? (items_total + tax_amount) : returnForm.adjustment_amount;
       
       const res = await fetch('/api/owner/purchase-returns', {
         method: 'POST',
@@ -325,6 +350,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
           supplier_id: returnForm.supplier_id,
           purchase_id: returnForm.purchase_id,
           total_amount,
+          tax_amount,
           reason: returnForm.reason,
           items: selectedItems,
           type: returnForm.type,
@@ -865,6 +891,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                   <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Produto</th>
                   <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Qtd</th>
                   <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Preço Custo</th>
+                  <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Imposto</th>
                   <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase text-right">Subtotal</th>
                 </tr>
               </thead>
@@ -889,8 +916,14 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                         className="w-24 px-2 py-1 bg-zinc-100 rounded border-none text-right font-bold"
                       />
                     </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-black text-zinc-400 uppercase">{item.tax_code}</span>
+                        <span className="text-xs font-bold text-zinc-600">{item.tax_percentage}%</span>
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-right font-bold">
-                      Kz {(item.quantity * item.price).toLocaleString()}
+                      Kz {(item.quantity * item.price * (1 + (item.tax_percentage / 100))).toLocaleString()}
                     </td>
                   </tr>
                 ))}
@@ -898,9 +931,19 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
             </table>
           </div>
 
-      <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-xl">
-        <span className="font-bold text-zinc-500">Total da Compra</span>
-        <span className="text-2xl font-black">Kz {purchaseForm.items.reduce((sum, item) => sum + (item.quantity * item.price), 0).toLocaleString()}</span>
+      <div className="space-y-2 p-4 bg-zinc-50 rounded-xl">
+        <div className="flex items-center justify-between text-sm">
+          <span className="font-bold text-zinc-500">Subtotal</span>
+          <span className="font-bold">Kz {purchaseForm.items.reduce((sum, item) => sum + (item.quantity * item.price), 0).toLocaleString()}</span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="font-bold text-zinc-500">Impostos</span>
+          <span className="font-bold text-orange-500">Kz {purchaseForm.items.reduce((sum, item) => sum + (item.quantity * item.price * (item.tax_percentage / 100)), 0).toLocaleString()}</span>
+        </div>
+        <div className="flex items-center justify-between pt-2 border-t border-zinc-200">
+          <span className="font-bold text-zinc-900">Total da Compra</span>
+          <span className="text-2xl font-black">Kz {(purchaseForm.items.reduce((sum, item) => sum + (item.quantity * item.price * (1 + (item.tax_percentage / 100))), 0)).toLocaleString()}</span>
+        </div>
       </div>
 
           {isDirectPurchase && (
@@ -1204,6 +1247,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                     <tr>
                       <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Produto</th>
                       <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Qtd</th>
+                      <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase text-right">Total c/ IVA</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-50">
@@ -1245,6 +1289,9 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                             )}
                           />
                         </td>
+                        <td className="px-4 py-3 text-right font-bold text-sm">
+                          Kz {(item.quantity * item.price * (1 + ((item.tax_percentage || 14) / 100))).toLocaleString()}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1252,6 +1299,19 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
               </div>
             </div>
           )}
+
+          <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-xl">
+            <span className="font-bold text-zinc-500">Total da Nota</span>
+            <span className={cn(
+              "text-2xl font-black",
+              returnForm.type === 'credit' ? "text-rose-600" : "text-blue-600"
+            )}>
+              Kz {(returnForm.note_category === 'return' 
+                ? returnForm.items.filter(i => i.selected !== false).reduce((sum, item) => sum + (item.quantity * item.price * (1 + ((item.tax_percentage || 14) / 100))), 0)
+                : returnForm.adjustment_amount
+              ).toLocaleString()}
+            </span>
+          </div>
 
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-zinc-700">Observações Internas</label>

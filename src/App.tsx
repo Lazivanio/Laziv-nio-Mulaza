@@ -3117,6 +3117,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [stockReport, setStockReport] = useState<any>(null);
   const [reportsData, setReportsData] = useState<any>(null);
   const [stores, setStores] = useState<any[]>([]);
+  const [taxes, setTaxes] = useState<any[]>([]);
   const [supportTickets, setSupportTickets] = useState<any[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<any>(null);
   const [ticketMessages, setTicketMessages] = useState<any[]>([]);
@@ -3222,7 +3223,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
     message: '',
     onConfirm: () => {},
   });
-  const [productForm, setProductForm] = useState({ name: '', price: '', stock: '', category: '', image_url: '', min_stock: '5' });
+  const [productForm, setProductForm] = useState({ 
+    name: '', 
+    price: '', 
+    stock: '', 
+    category: '', 
+    image_url: '', 
+    min_stock: '5',
+    tax_id: ''
+  });
   const [staffForm, setStaffForm] = useState({ 
     name: '', 
     email: '', 
@@ -3306,6 +3315,9 @@ const StoreAdmin = ({ user }: { user: User }) => {
     fetch(`/api/owner/reports/${storeId}`)
       .then(res => res.json())
       .then(setReportsData);
+    fetch(`/api/owner/taxes/${storeId}`)
+      .then(res => res.json())
+      .then(setTaxes);
     fetch(`/api/owner/proforma/${storeId}`)
       .then(res => res.json())
       .then(setProformas);
@@ -3472,7 +3484,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
     if (res.ok) {
       setIsProductModalOpen(false);
       setEditingProduct(null);
-      setProductForm({ name: '', price: '', stock: '', category: '', image_url: '', min_stock: '5' });
+      setProductForm({ 
+        name: '', 
+        price: '', 
+        stock: '', 
+        category: '', 
+        image_url: '', 
+        min_stock: '5',
+        tax_id: ''
+      });
       fetchData();
     } else {
       const data = await res.json();
@@ -3488,7 +3508,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
       stock: product.stock.toString(),
       category: product.category,
       image_url: product.image_url,
-      min_stock: (product.min_stock || 5).toString()
+      min_stock: (product.min_stock || 5).toString(),
+      tax_id: product.tax_id?.toString() || ''
     });
     setIsProductModalOpen(true);
   };
@@ -3796,7 +3817,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
           name: product.name, 
           price: product.price, 
           quantity: 1,
-          tax: 14,
+          tax: product.tax_percentage || (taxes.find(t => t.is_default === 1)?.percentage || 14),
           type: 'product'
         }]
       });
@@ -3888,7 +3909,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
     } else {
       setProformaForm({
         ...proformaForm,
-        items: [...proformaForm.items, { product_id: product.id, name: product.name, price: product.price, quantity: 1 }]
+        items: [...proformaForm.items, { 
+          product_id: product.id, 
+          name: product.name, 
+          price: product.price, 
+          quantity: 1,
+          tax_percentage: product.tax_percentage || (taxes.find(t => t.is_default === 1)?.percentage || 14)
+        }]
       });
     }
   };
@@ -5111,8 +5138,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
                             </div>
                           )}
                           <div className="flex justify-between text-[10px] font-bold text-zinc-500 uppercase">
-                            <span>IVA (14%)</span>
-                            <span>Kz {creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * 0.14), 0).toLocaleString()}</span>
+                            <span>IVA ({creditInvoiceForm.items?.[0]?.tax || 14}%)</span>
+                            <span>Kz {creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * ((item.tax || 14) / 100)), 0).toLocaleString()}</span>
                           </div>
                           <div className="flex justify-between text-lg font-black pt-2">
                             <span>{creditInvoiceForm.doc_type === 'NC' ? 'VALOR NOTA' : 'TOTAL'}</span>
@@ -5120,7 +5147,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                               creditInvoiceForm.doc_type === 'NC' ? "text-orange-500" : "text-blue-500"
                             )}>
                               Kz {(
-                                (creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0) * 1.14) + 
+                                (creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * (1 + (item.tax || 14) / 100)), 0)) + 
                                 creditInvoiceForm.adjustment_amount
                               ).toLocaleString()}
                             </span>
@@ -5138,7 +5165,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                                 <span className="text-emerald-500">
                                   Kz {(() => {
                                     const original = creditInvoices.find(i => i.id.toString() === creditInvoiceForm.parent_invoice_id)?.total_amount || 0;
-                                    const noteValue = (creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0) * 1.14) + 
+                                    const noteValue = (creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0) * (1 + (creditInvoiceForm.items[0]?.tax || 14) / 100)) + 
                                                      creditInvoiceForm.adjustment_amount;
                                     return (creditInvoiceForm.doc_type === 'NC' ? original - noteValue : original + noteValue).toLocaleString();
                                   })()}
@@ -6536,6 +6563,19 @@ const StoreAdmin = ({ user }: { user: User }) => {
               )}
             </div>
           </div>
+          <div className="mb-4">
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Imposto Aplicado</label>
+            <select 
+              value={productForm.tax_id}
+              onChange={e => setProductForm({...productForm, tax_id: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none"
+            >
+              <option value="">Usar Padrão da Loja</option>
+              {taxes.filter(t => t.status === 'active').map(tax => (
+                <option key={tax.id} value={tax.id}>{tax.name} ({tax.percentage}%)</option>
+              ))}
+            </select>
+          </div>
           <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold">
             {editingProduct ? "Guardar Alterações" : "Adicionar Produto"}
           </button>
@@ -7147,7 +7187,7 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
                 <span>Kz {subtotal.toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase tracking-widest">
-                <span>IVA Total</span>
+                <span>IVA ({invoice.items?.[0]?.tax || 14}%)</span>
                 <span>Kz {taxTotal.toLocaleString()}</span>
               </div>
               {invoice.adjustment_amount !== 0 && (
@@ -7275,8 +7315,8 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
               <span className="font-bold text-zinc-900">Kz {proforma.total_amount.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-zinc-500 font-medium">Imposto (0%)</span>
-              <span className="font-bold text-zinc-900">Kz 0</span>
+              <span className="text-zinc-500 font-medium">Imposto ({proforma.items?.[0]?.tax_percentage || 0}%)</span>
+              <span className="font-bold text-zinc-900">Kz {((proforma.total_amount * (proforma.items?.[0]?.tax_percentage || 0)) / 100).toLocaleString()}</span>
             </div>
             <div className="pt-4 border-t border-zinc-200">
               <div className="flex justify-between items-baseline">
@@ -7607,7 +7647,7 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
             </div>
           )}
           <div className="flex justify-between">
-            <span>IVA (14%)</span>
+            <span>IVA ({sale.items?.[0]?.tax_percentage || 14}%)</span>
             <span>Kz {sale.tax_amount.toLocaleString()}</span>
           </div>
           <div className="flex justify-between text-sm font-black pt-2 border-t-2 border-dashed border-zinc-900 mt-2">
@@ -7696,6 +7736,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const [isFormalInvoiceModalOpen, setIsFormalInvoiceModalOpen] = useState(false);
   const [isFormalInvoiceGeneratedModalOpen, setIsFormalInvoiceGeneratedModalOpen] = useState(false);
   const [lastFormalInvoice, setLastFormalInvoice] = useState<any>(null);
+  const [defaultTax, setDefaultTax] = useState<any>(null);
   const [formalInvoiceForm, setFormalInvoiceForm] = useState({
     client_nif: '',
     client_name: '',
@@ -7764,6 +7805,12 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       if (Array.isArray(stores)) {
         const currentStore = stores.find((s: any) => s.id === storeId);
         setStoreInfo(currentStore);
+      }
+    });
+    fetch(`/api/owner/taxes/${storeId}`).then(res => res.json()).then(taxes => {
+      if (Array.isArray(taxes)) {
+        const defTax = taxes.find((t: any) => t.is_default === 1 && t.status === 'active');
+        setDefaultTax(defTax || taxes.find((t: any) => t.status === 'active'));
       }
     });
 
@@ -7963,7 +8010,28 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   
   const discountAmount = discount;
   const taxableAmount = Math.max(0, subtotal - discountAmount);
-  const tax = Math.round((taxableAmount * 0.14) * 100) / 100;
+  
+  // Calculate tax per item
+  const tax = cart.reduce((acc, i) => {
+    const itemPrice = i.type === 'product' 
+      ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
+      : i.item.price;
+    
+    // Use item's tax percentage if available, otherwise use default tax percentage
+    const taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
+      ? i.item.tax_percentage 
+      : (defaultTax ? defaultTax.percentage : 14);
+      
+    // Apply discount proportionally to each item for tax calculation if needed, 
+    // but here we apply discount to subtotal. 
+    // For simplicity and matching common practice, we'll calculate tax on the discounted subtotal proportionally.
+    const itemSubtotal = itemPrice * i.quantity;
+    const itemProportion = subtotal > 0 ? itemSubtotal / subtotal : 0;
+    const itemDiscountedSubtotal = itemSubtotal - (discountAmount * itemProportion);
+    
+    return acc + (itemDiscountedSubtotal * (taxPercentage / 100));
+  }, 0);
+
   const total = Math.round((taxableAmount + tax) * 100) / 100;
 
   const handleCheckout = async () => {
@@ -8016,16 +8084,25 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           store_id: storeId,
           owner_id: user.id,
           total_amount: total,
-          items: cart.map(i => ({
-            product_id: i.type === 'product' ? i.item.id : null,
-            service_id: i.type === 'service' ? i.item.id : null,
-            type: i.type,
-            name: i.item.name,
-            price: i.type === 'product' 
-              ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
-              : i.item.price,
-            quantity: i.quantity
-          }))
+          items: cart.map(i => {
+            const taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
+              ? i.item.tax_percentage 
+              : (defaultTax ? defaultTax.percentage : 14);
+            const taxCode = i.item.tax_code || (defaultTax ? defaultTax.tax_code : 'NOR');
+            
+            return {
+              product_id: i.type === 'product' ? i.item.id : null,
+              service_id: i.type === 'service' ? i.item.id : null,
+              type: i.type,
+              name: i.item.name,
+              price: i.type === 'product' 
+                ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
+                : i.item.price,
+              quantity: i.quantity,
+              tax_percentage: taxPercentage,
+              tax_code: taxCode
+            };
+          })
         })
       });
 
@@ -8092,12 +8169,20 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             const price = i.type === 'product' 
               ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
               : i.item.price;
+            
+            const taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
+              ? i.item.tax_percentage 
+              : (defaultTax ? defaultTax.percentage : 14);
+            const taxCode = i.item.tax_code || (defaultTax ? defaultTax.tax_code : 'NOR');
+
             return { 
               id: i.item.id, 
               type: i.type,
               name: i.item.name,
               quantity: i.quantity,
-              price: price
+              price: price,
+              tax_percentage: taxPercentage,
+              tax_code: taxCode
             };
           })
         })
@@ -8153,7 +8238,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           price: price,
           type: i.type,
           code: i.type === 'product' ? (i.item as Product).barcode : (i.item as Service).code,
-          tax: 14 // Default tax
+          tax: i.item.tax_percentage || (defaultTax ? defaultTax.percentage : 14)
         };
       });
 
@@ -8495,7 +8580,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 </div>
               )}
               <div className="flex justify-between text-xs text-zinc-500">
-                <span>Imposto (14%)</span>
+                <span>Imposto ({defaultTax ? `${defaultTax.percentage}%` : '14%'})</span>
                 <span className="font-bold text-zinc-700">Kz {(tax || 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-xl font-black pt-3 border-t border-zinc-200 text-zinc-900">
@@ -10142,7 +10227,7 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
   let finalY = (doc as any).lastAutoTable.finalY + 10;
   const pageHeight = doc.internal.pageSize.height;
   const subtotal = items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
-  const iva = 0; 
+  const iva = items.reduce((sum: number, item: any) => sum + (item.price * item.quantity * ((item.tax_percentage || 0) / 100)), 0);
   const total = subtotal + iva;
 
   // Check if totals and bank details fit on the current page
@@ -10169,7 +10254,7 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
   doc.text(`Kz ${subtotal.toLocaleString()}`, 190, finalY, { align: 'right' });
   
   doc.setTextColor(zinc500[0], zinc500[1], zinc500[2]);
-  doc.text(`IVA (0%):`, 140, finalY + 7);
+  doc.text(`IVA (${items?.[0]?.tax_percentage || 0}%):`, 140, finalY + 7);
   doc.setTextColor(black[0], black[1], black[2]);
   doc.text(`Kz ${iva.toLocaleString()}`, 190, finalY + 7, { align: 'right' });
   

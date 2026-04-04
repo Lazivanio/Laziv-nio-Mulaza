@@ -30,6 +30,9 @@ interface Service {
   price: number;
   availability_condition: 'always' | 'product_purchased';
   show_in_pos: number;
+  tax_id?: number;
+  tax_percentage?: number;
+  tax_code?: string;
   created_at: string;
 }
 
@@ -62,6 +65,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
   const [activeTab, setActiveTab] = useState<'management' | 'report'>('management');
   const [services, setServices] = useState<Service[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
+  const [taxes, setTaxes] = useState<any[]>([]);
   const [reportData, setReportData] = useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
@@ -76,7 +80,8 @@ export const OwnerServices = ({ user }: { user: User }) => {
     description: '',
     price: '',
     availability_condition: 'always' as 'always' | 'product_purchased',
-    show_in_pos: 1
+    show_in_pos: 1,
+    tax_id: ''
   });
 
   useEffect(() => {
@@ -102,16 +107,19 @@ export const OwnerServices = ({ user }: { user: User }) => {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [servicesRes, storesRes] = await Promise.all([
+      const [servicesRes, storesRes, taxesRes] = await Promise.all([
         fetch(`/api/owner/services/${user.id}`),
-        fetch(`/api/admin/stores`)
+        fetch(`/api/admin/stores`),
+        fetch(`/api/owner/taxes-by-owner/${user.id}`)
       ]);
       
       const servicesData = await servicesRes.json();
       const storesData = await storesRes.json();
+      const taxesData = await taxesRes.json();
       
       setServices(servicesData);
       setStores(storesData.filter((s: Store) => s.owner_id === user.id));
+      setTaxes(taxesData);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -145,7 +153,8 @@ export const OwnerServices = ({ user }: { user: User }) => {
           description: '',
           price: '',
           availability_condition: 'always',
-          show_in_pos: 1
+          show_in_pos: 1,
+          tax_id: ''
         });
         fetchData();
       }
@@ -163,7 +172,8 @@ export const OwnerServices = ({ user }: { user: User }) => {
       description: service.description,
       price: service.price.toString(),
       availability_condition: service.availability_condition,
-      show_in_pos: service.show_in_pos
+      show_in_pos: service.show_in_pos,
+      tax_id: service.tax_id?.toString() || ''
     });
     setIsModalOpen(true);
   };
@@ -234,7 +244,8 @@ export const OwnerServices = ({ user }: { user: User }) => {
                   description: '',
                   price: '',
                   availability_condition: 'always',
-                  show_in_pos: 1
+                  show_in_pos: 1,
+                  tax_id: ''
                 });
                 setIsModalOpen(true);
               }}
@@ -292,6 +303,11 @@ export const OwnerServices = ({ user }: { user: User }) => {
                         }`}>
                           {service.show_in_pos ? 'No PDV' : 'Oculto'}
                         </span>
+                        {service.tax_code && (
+                          <span className="text-[10px] font-black bg-zinc-100 text-zinc-500 px-2 py-0.5 rounded uppercase tracking-wider">
+                            {service.tax_code} ({service.tax_percentage}%)
+                          </span>
+                        )}
                       </div>
                       <h4 className="text-lg font-black text-zinc-900 leading-tight">{service.name}</h4>
                       <p className="text-sm text-zinc-500 line-clamp-2 mt-2">{service.description}</p>
@@ -520,6 +536,20 @@ export const OwnerServices = ({ user }: { user: User }) => {
               >
                 <option value="always">Sempre Disponível</option>
                 <option value="product_purchased">Só se houver produto comprado</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Imposto Aplicado</label>
+              <select 
+                value={formData.tax_id}
+                onChange={e => setFormData({...formData, tax_id: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+              >
+                <option value="">Usar Padrão da Loja</option>
+                {taxes.filter(t => t.store_id === Number(formData.store_id) && t.status === 'active').map(tax => (
+                  <option key={tax.id} value={tax.id}>{tax.name} ({tax.percentage}%)</option>
+                ))}
               </select>
             </div>
           </div>
