@@ -44,7 +44,7 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
   );
 };
 
-export const OwnerSettings = ({ user }: { user: User }) => {
+export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser?: (u: User) => void }) => {
   const [activeTab, setActiveTab] = useState<'profile' | 'series' | 'taxes' | 'backups'>('profile');
   const [formData, setFormData] = useState({
     name: user.name || '',
@@ -53,6 +53,7 @@ export const OwnerSettings = ({ user }: { user: User }) => {
     nif: '',
     address: '',
     company_name: '',
+    fiscal_regime: user.fiscal_regime || 'geral',
     password: '',
     confirmPassword: ''
   });
@@ -99,15 +100,18 @@ export const OwnerSettings = ({ user }: { user: User }) => {
       if (activeTab === 'profile') {
         const res = await fetch(`/api/admin/clients/${user.id}/details`);
         const data = await res.json();
-        setFormData({
-          ...formData,
+        setFormData(prev => ({
+          ...prev,
           name: data.client.name,
           email: data.client.email,
           phone: data.client.phone || '',
           nif: data.client.nif || '',
           address: data.client.address || '',
-          company_name: data.client.company_name || ''
-        });
+          company_name: data.client.company_name || '',
+          // Prefer the regime from the user prop (which is the source of truth in App.tsx)
+          // unless it's the first load and we need the server value
+          fiscal_regime: user.fiscal_regime || data.client.fiscal_regime || 'geral'
+        }));
       } else if (activeTab === 'series') {
         const [seriesRes, storesRes] = await Promise.all([
           fetch(`/api/owner/invoice-series/${user.id}`),
@@ -146,13 +150,26 @@ export const OwnerSettings = ({ user }: { user: User }) => {
     }
     setIsSaving(true);
     try {
+      const payload = { ...formData };
+      if (payload.fiscal_regime === 'exclusao') {
+        // If switching to exclusion, we might want to inform the user or handle it server-side
+        // For now, the frontend already forces 0% in POS and SAFT.
+      }
+
       const res = await fetch(`/api/profile/${user.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         alert("Perfil actualizado com sucesso!");
+        if (onUpdateUser) {
+          const { password, confirmPassword, ...userData } = payload;
+          onUpdateUser({ ...user, ...userData });
+        }
+      } else {
+        const errorData = await res.json();
+        alert(errorData.error || "Erro ao atualizar perfil");
       }
     } catch (e) {
       console.error(e);
@@ -201,10 +218,16 @@ export const OwnerSettings = ({ user }: { user: User }) => {
       const url = editingTaxId ? `/api/owner/taxes/${editingTaxId}` : '/api/owner/taxes';
       const method = editingTaxId ? 'PUT' : 'POST';
       
+      const payload = { ...taxFormData };
+      if (formData.fiscal_regime === 'exclusao') {
+        payload.percentage = '0';
+        payload.tax_code = 'ISE';
+      }
+
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(taxFormData)
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         setIsTaxModalOpen(false);
@@ -422,6 +445,23 @@ export const OwnerSettings = ({ user }: { user: User }) => {
                       className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all h-24 resize-none"
                     />
                   </div>
+                  <div className="col-span-full">
+                    <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Regime Fiscal</label>
+                    <select 
+                      value={formData.fiscal_regime}
+                      onChange={e => setFormData({...formData, fiscal_regime: e.target.value as any})}
+                      className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all font-bold"
+                    >
+                      <option value="geral">Regime Geral</option>
+                      <option value="simplificado">Regime Simplificado</option>
+                      <option value="exclusao">Regime de Exclusão</option>
+                    </select>
+                    <p className="text-[10px] text-zinc-400 mt-2 px-1">
+                      {formData.fiscal_regime === 'geral' && "Empresas maiores: IVA normal, retenção na fonte, contabilidade completa."}
+                      {formData.fiscal_regime === 'simplificado' && "Pequenas empresas: Menos obrigações, IVA simplificado."}
+                      {formData.fiscal_regime === 'exclusao' && "Isento de IVA: Não cobra nem deduz IVA (0% Isento)."}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="pt-6 border-t border-zinc-100">
@@ -603,12 +643,17 @@ export const OwnerSettings = ({ user }: { user: User }) => {
                   </div>
                   <div className="flex gap-2">
                     <button 
-                      onClick={() => handleSetDefaultTax(t.id, t.store_id)}
+                      onClick={() => {
+                        if (formData.fiscal_regime === 'exclusao' && t.percentage > 0) return;
+                        handleSetDefaultTax(t.id, t.store_id);
+                      }}
+                      disabled={formData.fiscal_regime === 'exclusao' && t.percentage > 0}
                       className={cn(
                         "p-2 rounded-lg transition-all",
-                        t.is_default ? "text-emerald-500 bg-emerald-50" : "text-zinc-400 hover:bg-zinc-50"
+                        t.is_default ? "text-emerald-500 bg-emerald-50" : "text-zinc-400 hover:bg-zinc-50",
+                        formData.fiscal_regime === 'exclusao' && t.percentage > 0 && "opacity-20 cursor-not-allowed"
                       )}
-                      title={t.is_default ? "Imposto Padrão" : "Definir como Padrão"}
+                      title={t.is_default ? "Imposto Padrão" : (formData.fiscal_regime === 'exclusao' && t.percentage > 0 ? "Bloqueado no Regime de Exclusão" : "Definir como Padrão")}
                     >
                       <ShieldCheck size={18} />
                     </button>
@@ -620,11 +665,17 @@ export const OwnerSettings = ({ user }: { user: User }) => {
                       <Pencil size={18} />
                     </button>
                     <button 
-                      onClick={() => handleToggleTax(t.id, t.status)}
+                      onClick={() => {
+                        if (formData.fiscal_regime === 'exclusao' && t.percentage > 0) return;
+                        handleToggleTax(t.id, t.status);
+                      }}
+                      disabled={formData.fiscal_regime === 'exclusao' && t.percentage > 0}
                       className={cn(
                         "p-2 rounded-lg transition-all",
-                        t.status === 'active' ? "text-amber-500 hover:bg-amber-50" : "text-emerald-500 hover:bg-emerald-50"
+                        t.status === 'active' ? "text-amber-500 hover:bg-amber-50" : "text-emerald-500 hover:bg-emerald-50",
+                        formData.fiscal_regime === 'exclusao' && t.percentage > 0 && "opacity-20 cursor-not-allowed"
                       )}
+                      title={formData.fiscal_regime === 'exclusao' && t.percentage > 0 ? "Bloqueado no Regime de Exclusão" : ""}
                     >
                       {t.status === 'active' ? <XCircle size={18} /> : <CheckCircle2 size={18} />}
                     </button>
@@ -898,19 +949,30 @@ export const OwnerSettings = ({ user }: { user: User }) => {
               <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Percentagem (%)</label>
               <input 
                 type="number" required min="0" step="0.01"
-                value={taxFormData.percentage}
+                value={formData.fiscal_regime === 'exclusao' ? '0' : taxFormData.percentage}
                 onChange={e => setTaxFormData({...taxFormData, percentage: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                disabled={formData.fiscal_regime === 'exclusao'}
+                className={cn(
+                  "w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all",
+                  formData.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
+                )}
                 placeholder="Ex: 14"
               />
+              {formData.fiscal_regime === 'exclusao' && (
+                <p className="text-[10px] text-amber-600 mt-1 font-bold">Bloqueado: Regime de Exclusão exige 0% de IVA.</p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Código de Imposto (SAFT)</label>
               <select 
                 required
-                value={taxFormData.tax_code}
+                value={formData.fiscal_regime === 'exclusao' ? 'ISE' : taxFormData.tax_code}
                 onChange={e => setTaxFormData({...taxFormData, tax_code: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                disabled={formData.fiscal_regime === 'exclusao'}
+                className={cn(
+                  "w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all",
+                  formData.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
+                )}
               >
                 <option value="NOR">Taxa Normal (NOR)</option>
                 <option value="ISE">Isento (ISE)</option>

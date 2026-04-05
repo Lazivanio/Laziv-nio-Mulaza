@@ -55,6 +55,10 @@ try {
   if (!columns.some(col => col.name === 'custom_permissions')) db.exec("ALTER TABLE users ADD COLUMN custom_permissions TEXT");
   if (!columns.some(col => col.name === 'store_id')) db.exec("ALTER TABLE users ADD COLUMN store_id INTEGER");
   if (!columns.some(col => col.name === 'cash_register_id')) db.exec("ALTER TABLE users ADD COLUMN cash_register_id INTEGER");
+  if (!columns.some(col => col.name === 'fiscal_regime')) {
+    db.exec("ALTER TABLE users ADD COLUMN fiscal_regime TEXT DEFAULT 'geral'");
+    db.exec("UPDATE users SET fiscal_regime = 'geral' WHERE fiscal_regime IS NULL OR fiscal_regime = ''");
+  }
   if (!columns.some(col => col.name === 'bonus')) db.exec("ALTER TABLE hr_salary_payments ADD COLUMN bonus REAL DEFAULT 0");
 } catch (e) {
   console.error("Migration error (users):", e);
@@ -1126,6 +1130,15 @@ async function startServer() {
         }
       }
 
+      let fiscalRegime = user.fiscal_regime;
+      if (user.role === 'seller' && storeId) {
+        const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(storeId) as any;
+        if (store) {
+          const owner = db.prepare("SELECT fiscal_regime FROM users WHERE id = ?").get(store.owner_id) as any;
+          if (owner) fiscalRegime = owner.fiscal_regime;
+        }
+      }
+
       res.json({ 
         id: user.id, 
         email: user.email, 
@@ -1136,7 +1149,8 @@ async function startServer() {
         role_id: user.role_id,
         custom_permissions: user.custom_permissions,
         permissions: effectivePermissions,
-        status: user.status
+        status: user.status,
+        fiscal_regime: fiscalRegime || 'geral'
       });
     } else {
       res.status(401).json({ error: "Credenciais inválidas" });
@@ -1239,7 +1253,7 @@ async function startServer() {
       }
     }
 
-    const owner = db.prepare("SELECT status FROM users WHERE id = ?").get(ownerId) as any;
+    const owner = db.prepare("SELECT status, fiscal_regime FROM users WHERE id = ?").get(ownerId) as any;
     if (owner && owner.status === 'suspended') {
       return res.status(403).json({ error: "Acesso suspenso" });
     }
@@ -1258,7 +1272,13 @@ async function startServer() {
       }
     }
 
-    res.json({ status: user.status });
+    res.json({ 
+      id: user.id, 
+      role: user.role, 
+      status: user.status, 
+      fiscal_regime: owner?.fiscal_regime || 'geral',
+      hasActiveLicense: !!activeLicense 
+    });
   });
 
   app.use("/api/owner", checkSuspended);
@@ -1705,16 +1725,41 @@ async function startServer() {
   });
 
   app.put("/api/profile/:id", (req, res) => {
-    const { name, email, username, phone, nif, address, company_name, password } = req.body;
+    const { name, email, username, phone, nif, address, company_name, fiscal_regime, password } = req.body;
     const trimmedUsername = username?.trim();
     const trimmedEmail = email?.trim();
     
     try {
       if (password) {
-        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, phone = ?, nif = ?, address = ?, company_name = ?, password = ? WHERE id = ?").run(name, trimmedEmail || null, trimmedUsername || null, phone, nif, address, company_name, password, req.params.id);
+        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, phone = ?, nif = ?, address = ?, company_name = ?, fiscal_regime = ?, password = ? WHERE id = ?").run(name, trimmedEmail || null, trimmedUsername || null, phone, nif, address, company_name, fiscal_regime, password, req.params.id);
       } else {
-        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, phone = ?, nif = ?, address = ?, company_name = ? WHERE id = ?").run(name, trimmedEmail || null, trimmedUsername || null, phone, nif, address, company_name, req.params.id);
+        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, phone = ?, nif = ?, address = ?, company_name = ?, fiscal_regime = ? WHERE id = ?").run(name, trimmedEmail || null, trimmedUsername || null, phone, nif, address, company_name, fiscal_regime, req.params.id);
       }
+
+      // Se o regime for exclusão, aplicar automaticamente as regras
+      if (fiscal_regime === 'exclusao') {
+        const ownerId = req.params.id;
+        const stores = db.prepare("SELECT id FROM stores WHERE owner_id = ?").all(ownerId) as any[];
+        for (const store of stores) {
+          // 1. Garantir que existe um imposto ISENTO
+          let isentoTax = db.prepare("SELECT id FROM taxes WHERE store_id = ? AND percentage = 0 AND tax_code = 'ISE'").get(store.id) as any;
+          if (!isentoTax) {
+            const result = db.prepare("INSERT INTO taxes (store_id, name, percentage, tax_code, is_default, status) VALUES (?, 'ISENTO', 0, 'ISE', 1, 'active')").run(store.id);
+            isentoTax = { id: result.lastInsertRowid };
+          } else {
+            // 2. Definir como padrão e activo
+            db.prepare("UPDATE taxes SET is_default = 0 WHERE store_id = ?").run(store.id);
+            db.prepare("UPDATE taxes SET is_default = 1, status = 'active' WHERE id = ?").run(isentoTax.id);
+          }
+          // 3. Desactivar outros impostos para esta loja
+          db.prepare("UPDATE taxes SET status = 'inactive' WHERE store_id = ? AND id != ?").run(store.id, isentoTax.id);
+          // 4. Actualizar todos os produtos desta loja para usar este imposto ISENTO
+          db.prepare("UPDATE products SET tax_id = ? WHERE store_id = ?").run(isentoTax.id, store.id);
+          // 5. Actualizar todos os serviços desta loja para usar este imposto ISENTO
+          db.prepare("UPDATE services SET tax_id = ? WHERE store_id = ?").run(isentoTax.id, store.id);
+        }
+      }
+
       res.json({ success: true });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -2124,18 +2169,36 @@ async function startServer() {
       const taxes = db.prepare(`SELECT * FROM taxes WHERE store_id IN (${placeholders}) AND status = 'active'`).all(...storeIds) as any[];
       
       let taxTableXml = "";
-      if (taxes.length > 0) {
-        taxes.forEach(t => {
-          taxTableXml += `
+      const addedTaxCodes = new Set<string>();
+
+      if (owner.fiscal_regime === 'exclusao') {
+        taxTableXml += `
       <TaxTableEntry>
         <TaxType>IVA</TaxType>
         <TaxCountryRegion>AO</TaxCountryRegion>
-        <TaxCode>${t.tax_code || 'NOR'}</TaxCode>
+        <TaxCode>ISE</TaxCode>
+        <Description>Isento de IVA</Description>
+        <TaxPercentage>0.00</TaxPercentage>
+      </TaxTableEntry>`;
+        addedTaxCodes.add('ISE');
+      }
+
+      if (taxes.length > 0) {
+        taxes.forEach(t => {
+          const code = t.tax_code || 'NOR';
+          if (!addedTaxCodes.has(code)) {
+            taxTableXml += `
+      <TaxTableEntry>
+        <TaxType>IVA</TaxType>
+        <TaxCountryRegion>AO</TaxCountryRegion>
+        <TaxCode>${code}</TaxCode>
         <Description>${t.name}</Description>
         <TaxPercentage>${(t.percentage || 0).toFixed(2)}</TaxPercentage>
       </TaxTableEntry>`;
+            addedTaxCodes.add(code);
+          }
         });
-      } else {
+      } else if (addedTaxCodes.size === 0) {
         // Fallback if no taxes defined
         taxTableXml = `
       <TaxTableEntry>
@@ -2643,20 +2706,39 @@ async function startServer() {
 
   app.post("/api/owner/services", (req, res) => {
     const { owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, tax_id } = req.body;
+    
+    // Se o regime for exclusão, forçar imposto ISENTO
+    let finalTaxId = tax_id;
+    const owner = db.prepare("SELECT fiscal_regime FROM users WHERE id = ?").get(owner_id) as any;
+    if (owner && owner.fiscal_regime === 'exclusao') {
+      const isento = db.prepare("SELECT id FROM taxes WHERE store_id = ? AND percentage = 0 AND tax_code = 'ISE'").get(store_id) as any;
+      if (isento) finalTaxId = isento.id;
+    }
+
     db.prepare(`
       INSERT INTO services (owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, tax_id) 
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, tax_id || null);
+    `).run(owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, finalTaxId || null);
     res.json({ success: true });
   });
 
   app.put("/api/owner/services/:id", (req, res) => {
     const { store_id, name, code, description, price, availability_condition, show_in_pos, tax_id } = req.body;
+    
+    // Se o regime for exclusão, forçar imposto ISENTO
+    let finalTaxId = tax_id;
+    const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(store_id) as any;
+    const owner = store ? db.prepare("SELECT fiscal_regime FROM users WHERE id = ?").get(store.owner_id) as any : null;
+    if (owner && owner.fiscal_regime === 'exclusao') {
+      const isento = db.prepare("SELECT id FROM taxes WHERE store_id = ? AND percentage = 0 AND tax_code = 'ISE'").get(store_id) as any;
+      if (isento) finalTaxId = isento.id;
+    }
+
     db.prepare(`
       UPDATE services 
       SET store_id = ?, name = ?, code = ?, description = ?, price = ?, availability_condition = ?, show_in_pos = ?, tax_id = ? 
       WHERE id = ?
-    `).run(store_id, name, code, description, price, availability_condition, show_in_pos, tax_id || null, req.params.id);
+    `).run(store_id, name, code, description, price, availability_condition, show_in_pos, finalTaxId || null, req.params.id);
     res.json({ success: true });
   });
 
@@ -3137,8 +3219,17 @@ async function startServer() {
       return res.status(400).json({ error: "Já existe um produto com este nome nesta loja." });
     }
 
+    // Se o regime for exclusão, forçar imposto ISENTO
+    let finalTaxId = tax_id;
+    const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(store_id) as any;
+    const owner = store ? db.prepare("SELECT fiscal_regime FROM users WHERE id = ?").get(store.owner_id) as any : null;
+    if (owner && owner.fiscal_regime === 'exclusao') {
+      const isento = db.prepare("SELECT id FROM taxes WHERE store_id = ? AND percentage = 0 AND tax_code = 'ISE'").get(store_id) as any;
+      if (isento) finalTaxId = isento.id;
+    }
+
     const barcode = Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
-    db.prepare("INSERT INTO products (store_id, name, price, stock, category, image_url, min_stock, barcode, tax_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(store_id, name, price, stock, category, image_url, min_stock || 5, barcode, tax_id || null);
+    db.prepare("INSERT INTO products (store_id, name, price, stock, category, image_url, min_stock, barcode, tax_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(store_id, name, price, stock, category, image_url, min_stock || 5, barcode, finalTaxId || null);
     res.json({ success: true });
   });
 
@@ -3160,11 +3251,20 @@ async function startServer() {
       return res.status(400).json({ error: "Já existe um outro produto com este nome nesta loja." });
     }
 
+    // Se o regime for exclusão, forçar imposto ISENTO
+    let finalTaxId = tax_id;
+    const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(product.store_id) as any;
+    const owner = store ? db.prepare("SELECT fiscal_regime FROM users WHERE id = ?").get(store.owner_id) as any : null;
+    if (owner && owner.fiscal_regime === 'exclusao') {
+      const isento = db.prepare("SELECT id FROM taxes WHERE store_id = ? AND percentage = 0 AND tax_code = 'ISE'").get(product.store_id) as any;
+      if (isento) finalTaxId = isento.id;
+    }
+
     db.prepare(`
       UPDATE products 
       SET name = ?, price = ?, stock = ?, category = ?, image_url = ?, min_stock = ?, tax_id = ? 
       WHERE id = ?
-    `).run(name, price, stock, category, image_url, min_stock, tax_id || null, req.params.id);
+    `).run(name, price, stock, category, image_url, min_stock, finalTaxId || null, req.params.id);
     res.json({ success: true });
   });
 
@@ -4585,7 +4685,18 @@ async function startServer() {
   });
 
   app.post("/api/owner/taxes", (req, res) => {
-    const { store_id, name, percentage, tax_code } = req.body;
+    let { store_id, name, percentage, tax_code } = req.body;
+    
+    // Enforce Exclusion Regime if applicable
+    const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(store_id) as any;
+    if (store) {
+      const owner = db.prepare("SELECT fiscal_regime FROM users WHERE id = ?").get(store.owner_id) as any;
+      if (owner && owner.fiscal_regime === 'exclusao') {
+        percentage = 0;
+        tax_code = 'ISE';
+      }
+    }
+
     db.prepare(`
       INSERT INTO taxes (store_id, name, percentage, tax_code)
       VALUES (?, ?, ?, ?)
@@ -4594,7 +4705,18 @@ async function startServer() {
   });
 
   app.put("/api/owner/taxes/:id", (req, res) => {
-    const { store_id, name, percentage, tax_code } = req.body;
+    let { store_id, name, percentage, tax_code } = req.body;
+
+    // Enforce Exclusion Regime if applicable
+    const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(store_id) as any;
+    if (store) {
+      const owner = db.prepare("SELECT fiscal_regime FROM users WHERE id = ?").get(store.owner_id) as any;
+      if (owner && owner.fiscal_regime === 'exclusao') {
+        percentage = 0;
+        tax_code = 'ISE';
+      }
+    }
+
     db.prepare(`
       UPDATE taxes 
       SET store_id = ?, name = ?, percentage = ?, tax_code = ?

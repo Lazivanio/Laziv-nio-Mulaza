@@ -6568,13 +6568,20 @@ const StoreAdmin = ({ user }: { user: User }) => {
             <select 
               value={productForm.tax_id}
               onChange={e => setProductForm({...productForm, tax_id: e.target.value})}
-              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none"
+              disabled={user?.fiscal_regime === 'exclusao'}
+              className={cn(
+                "w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none",
+                user?.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
+              )}
             >
               <option value="">Usar Padrão da Loja</option>
               {taxes.filter(t => t.status === 'active').map(tax => (
                 <option key={tax.id} value={tax.id}>{tax.name} ({tax.percentage}%)</option>
               ))}
             </select>
+            {user?.fiscal_regime === 'exclusao' && (
+              <p className="text-[10px] text-amber-600 mt-1 font-bold">Bloqueado: Regime de Exclusão exige 0% de IVA (ISENTO).</p>
+            )}
           </div>
           <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold">
             {editingProduct ? "Guardar Alterações" : "Adicionar Produto"}
@@ -8018,9 +8025,13 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       : i.item.price;
     
     // Use item's tax percentage if available, otherwise use default tax percentage
-    const taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
+    let taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
       ? i.item.tax_percentage 
       : (defaultTax ? defaultTax.percentage : 14);
+      
+    if (user.fiscal_regime === 'exclusao') {
+      taxPercentage = 0;
+    }
       
     // Apply discount proportionally to each item for tax calculation if needed, 
     // but here we apply discount to subtotal. 
@@ -8085,10 +8096,15 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           owner_id: user.id,
           total_amount: total,
           items: cart.map(i => {
-            const taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
+            let taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
               ? i.item.tax_percentage 
               : (defaultTax ? defaultTax.percentage : 14);
-            const taxCode = i.item.tax_code || (defaultTax ? defaultTax.tax_code : 'NOR');
+            let taxCode = i.item.tax_code || (defaultTax ? defaultTax.tax_code : 'NOR');
+            
+            if (user.fiscal_regime === 'exclusao') {
+              taxPercentage = 0;
+              taxCode = 'ISE';
+            }
             
             return {
               product_id: i.type === 'product' ? i.item.id : null,
@@ -8170,10 +8186,15 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
               : i.item.price;
             
-            const taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
+            let taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
               ? i.item.tax_percentage 
               : (defaultTax ? defaultTax.percentage : 14);
-            const taxCode = i.item.tax_code || (defaultTax ? defaultTax.tax_code : 'NOR');
+            let taxCode = i.item.tax_code || (defaultTax ? defaultTax.tax_code : 'NOR');
+
+            if (user.fiscal_regime === 'exclusao') {
+              taxPercentage = 0;
+              taxCode = 'ISE';
+            }
 
             return { 
               id: i.item.id, 
@@ -8231,6 +8252,12 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         const price = i.type === 'product' 
           ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
           : i.item.price;
+        
+        let taxPercentage = i.item.tax_percentage || (defaultTax ? defaultTax.percentage : 14);
+        if (user.fiscal_regime === 'exclusao') {
+          taxPercentage = 0;
+        }
+
         return { 
           product_id: i.item.id, 
           name: i.item.name,
@@ -8238,7 +8265,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           price: price,
           type: i.type,
           code: i.type === 'product' ? (i.item as Product).barcode : (i.item as Service).code,
-          tax: i.item.tax_percentage || (defaultTax ? defaultTax.percentage : 14)
+          tax: taxPercentage
         };
       });
 
@@ -10336,6 +10363,11 @@ export default function App() {
     localStorage.setItem('user', JSON.stringify(userData));
   };
 
+  const handleUpdateUser = (userData: User) => {
+    setUser(userData);
+    localStorage.setItem('user', JSON.stringify(userData));
+  };
+
   const handleLogout = () => {
     setUser(null);
     localStorage.removeItem('user');
@@ -10348,9 +10380,23 @@ export default function App() {
           const res = await fetch(`/api/user-status/${user.id}`);
           if (res.status === 403) {
             handleLogout();
-            // Using a custom alert would be better but for now let's use a simple way
-            // since we are in an iframe, alert might not work well, but it's a start.
-            // Actually, the user will just see the login screen again.
+          } else if (res.ok) {
+            const data = await res.json();
+            // Only update if there's a real change to avoid unnecessary re-renders or race conditions
+            setUser(prev => {
+              if (!prev || prev.id !== data.id) return prev;
+              
+              // Only update if there's a real change to avoid unnecessary re-renders or race conditions
+              // We check if data.fiscal_regime is present to avoid overwriting with undefined
+              const newFiscalRegime = data.fiscal_regime || prev.fiscal_regime || 'geral';
+              
+              if (newFiscalRegime !== prev.fiscal_regime || data.status !== prev.status) {
+                const updated = { ...prev, fiscal_regime: newFiscalRegime, status: data.status };
+                localStorage.setItem('user', JSON.stringify(updated));
+                return updated;
+              }
+              return prev;
+            });
           }
         } catch (e) {
           console.error("Error checking status", e);
@@ -10361,7 +10407,7 @@ export default function App() {
       const interval = setInterval(checkStatus, 60000); // Check every minute
       return () => clearInterval(interval);
     }
-  }, [user]);
+  }, [user?.id]); // Only re-run if the user ID changes (login/logout)
 
   if (!user) {
     return <Login onLogin={handleLogin} />;
@@ -10390,7 +10436,7 @@ export default function App() {
                 <Route path="/owner/finance" element={<OwnerFinance user={user} />} />
                 <Route path="/owner/rh" element={<OwnerRH user={user} />} />
                 <Route path="/owner/reports" element={<OwnerReports user={user} />} />
-                <Route path="/owner/settings" element={<OwnerSettings user={user} />} />
+                <Route path="/owner/settings" element={<OwnerSettings user={user} onUpdateUser={handleUpdateUser} />} />
                 <Route path="*" element={<Navigate to="/owner" replace />} />
               </>
             )}

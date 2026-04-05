@@ -45,6 +45,7 @@ export interface User {
   custom_permissions?: string | null; // JSON string
   permissions?: string[];
   status?: 'active' | 'suspended';
+  fiscal_regime?: 'geral' | 'simplificado' | 'exclusao';
 }
 
 export interface HRRole {

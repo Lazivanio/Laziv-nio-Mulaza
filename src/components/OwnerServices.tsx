@@ -1,5 +1,8 @@
 import React, { useState, useEffect, FormEvent } from 'react';
 import { User, Store } from '../types';
+
+const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
+
 import { 
   Plus, 
   Search, 
@@ -544,13 +547,20 @@ export const OwnerServices = ({ user }: { user: User }) => {
               <select 
                 value={formData.tax_id}
                 onChange={e => setFormData({...formData, tax_id: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                disabled={user?.fiscal_regime === 'exclusao'}
+                className={cn(
+                  "w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all",
+                  user?.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
+                )}
               >
                 <option value="">Usar Padrão da Loja</option>
                 {taxes.filter(t => t.store_id === Number(formData.store_id) && t.status === 'active').map(tax => (
                   <option key={tax.id} value={tax.id}>{tax.name} ({tax.percentage}%)</option>
                 ))}
               </select>
+              {user?.fiscal_regime === 'exclusao' && (
+                <p className="text-[10px] text-amber-600 mt-1 font-bold">Bloqueado: Regime de Exclusão exige 0% de IVA (ISENTO).</p>
+              )}
             </div>
           </div>
 
