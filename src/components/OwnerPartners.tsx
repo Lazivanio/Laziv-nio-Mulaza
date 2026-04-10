@@ -306,8 +306,8 @@ export const OwnerPartners = ({ user }: { user: User }) => {
                             onClick={() => {
                               setEditingClient(client);
                               setClientForm({
-                                name: client.name,
-                                nif: client.nif,
+                                name: client.name || '',
+                                nif: client.nif || '',
                                 email: client.email || '',
                                 phone: client.phone || '',
                                 address: client.address || '',
@@ -367,8 +367,8 @@ export const OwnerPartners = ({ user }: { user: User }) => {
                           onClick={() => {
                             setEditingSupplier(supplier);
                             setSupplierForm({
-                              name: supplier.name,
-                              nif: supplier.nif,
+                              name: supplier.name || '',
+                              nif: supplier.nif || '',
                               email: supplier.email || '',
                               phone: supplier.phone || '',
                               address: supplier.address || '',

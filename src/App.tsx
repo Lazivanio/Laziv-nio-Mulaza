@@ -7194,7 +7194,7 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
                 <span>Kz {subtotal.toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase tracking-widest">
-                <span>IVA ({invoice.items?.[0]?.tax || 14}%)</span>
+                <span>IVA ({invoice.items?.[0]?.tax ?? 14}%)</span>
                 <span>Kz {taxTotal.toLocaleString()}</span>
               </div>
               {invoice.adjustment_amount !== 0 && (
@@ -7579,21 +7579,20 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
   return (
     <div className="space-y-4">
       <div ref={invoiceRef} className="bg-white p-4 max-w-[280px] mx-auto shadow-sm border border-zinc-100 rounded-lg invoice-print font-mono text-zinc-900">
-        <div className="text-center mb-4 border-b-2 border-dashed border-zinc-200 pb-4">
+        <div className="text-center mb-2 border-b-2 border-dashed border-zinc-200 pb-2">
           {store.logo_url && (
-            <img src={store.logo_url || undefined} alt="" className="w-10 h-10 mx-auto mb-2 object-contain grayscale" referrerPolicy="no-referrer" />
+            <img src={store.logo_url || undefined} alt="" className="w-10 h-10 mx-auto mb-1 object-contain grayscale" referrerPolicy="no-referrer" />
           )}
           <h2 className="text-base font-black uppercase tracking-tight">{store.name}</h2>
-          <h1 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] mt-1">Fatura Simplificada</h1>
-          <p className="text-[8px] leading-tight text-zinc-500 mb-1 mt-1">{store.address}</p>
+          <h1 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] mt-0.5">Fatura Recibo</h1>
+          <p className="text-[8px] leading-tight text-zinc-500 mb-0.5 mt-0.5">{store.address}</p>
           <div className="text-[7px] font-bold flex flex-wrap justify-center gap-x-2">
             <span>NIF: {store.nif}</span>
             <span>TEL: {store.phone}</span>
-            {store.email && <span>EMAIL: {store.email}</span>}
           </div>
         </div>
 
-        <div className="space-y-0.5 mb-4 text-[8px] text-zinc-600">
+        <div className="space-y-0.5 mb-2 text-[8px] text-zinc-600">
           <div className="flex justify-between">
             <span>Nº DOCUMENTO:</span>
             <span className="font-bold">{sale.invoice_number}</span>
@@ -7606,10 +7605,10 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
             <span>OPERADOR:</span>
             <span>{user.name.toUpperCase()}</span>
           </div>
-          <div className="mt-2 pt-2 border-t border-dashed border-zinc-100">
+          <div className="mt-1 pt-1 border-t border-dashed border-zinc-100">
             <div className="flex justify-between">
               <span>CLIENTE:</span>
-              <span className="font-bold">{sale.client_name.toUpperCase()}</span>
+              <span className="font-bold truncate max-w-[140px]">{sale.client_name.toUpperCase()}</span>
             </div>
             <div className="flex justify-between">
               <span>NIF CLIENTE:</span>
@@ -7618,31 +7617,31 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
           </div>
         </div>
 
-        <div className="border-y-2 border-dashed border-zinc-200 py-2 mb-4">
+        <div className="border-y-2 border-dashed border-zinc-200 py-1 mb-2">
           <table className="w-full text-[9px]">
             <thead>
               <tr className="text-left border-b border-zinc-100">
-                <th className="pb-1">ARTIGO</th>
-                <th className="pb-1 text-center">QTD</th>
-                <th className="pb-1 text-right">TOTAL</th>
+                <th className="pb-0.5">ARTIGO</th>
+                <th className="pb-0.5 text-center">QTD</th>
+                <th className="pb-0.5 text-right">TOTAL</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-50">
               {sale.items.map((item: any) => (
                 <tr key={item.id || item.product_id}>
-                  <td className="py-1.5 leading-tight">
-                    <p className="font-bold">{item.name.toUpperCase()}</p>
+                  <td className="py-1 leading-tight">
+                    <p className="font-bold truncate max-w-[160px]">{item.name.toUpperCase()}</p>
                     <p className="text-[7px] text-zinc-500">{item.price.toLocaleString()} x {item.quantity}</p>
                   </td>
-                  <td className="py-1.5 text-center align-top">{item.quantity}</td>
-                  <td className="py-1.5 text-right align-top font-bold">{(item.price * item.quantity).toLocaleString()}</td>
+                  <td className="py-1 text-center align-top">{item.quantity}</td>
+                  <td className="py-1 text-right align-top font-bold">{(item.price * item.quantity).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
 
-        <div className="space-y-1 text-[9px] pt-1">
+        <div className="space-y-0.5 text-[9px] pt-0.5">
           <div className="flex justify-between">
             <span>SUBTOTAL</span>
             <span>Kz {(sale.total_amount - sale.tax_amount + sale.discount_amount).toLocaleString()}</span>
@@ -7654,23 +7653,26 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
             </div>
           )}
           <div className="flex justify-between">
-            <span>IVA ({sale.items?.[0]?.tax_percentage || 14}%)</span>
+            <span>IVA ({sale.items?.[0]?.tax_percentage ?? 14}%)</span>
             <span>Kz {sale.tax_amount.toLocaleString()}</span>
           </div>
-          <div className="flex justify-between text-sm font-black pt-2 border-t-2 border-dashed border-zinc-900 mt-2">
+          {user.fiscal_regime === 'exclusao' && (
+            <p className="text-[7px] text-zinc-500 italic mt-0.5">Isento nos termos do regime de exclusão</p>
+          )}
+          <div className="flex justify-between text-sm font-black pt-1 border-t-2 border-dashed border-zinc-900 mt-1">
             <span>TOTAL A PAGAR</span>
             <span>Kz {sale.total_amount.toLocaleString()}</span>
           </div>
         </div>
 
-        <div className="mt-6 text-center space-y-3">
-          <div className="py-2 border-y border-zinc-100">
+        <div className="mt-4 text-center space-y-2">
+          <div className="py-1 border-y border-zinc-100">
             <p className="text-[8px] font-bold uppercase tracking-widest">Obrigado pela preferência!</p>
           </div>
-          <div className="space-y-1">
+          <div className="space-y-0.5">
             <p className="text-[6px] text-zinc-400 uppercase">Processado por Fatu-R (Experimental AGT)</p>
             <p className={cn(
-              "text-[7px] font-bold uppercase px-2 py-0.5 rounded-full inline-block",
+              "text-[7px] font-bold uppercase px-1.5 py-0.5 rounded-full inline-block",
               sale.agt_status === 'sent' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
             )}>
               AGT: {sale.agt_status === 'sent' ? 'Submetido' : 'Pendente'}
@@ -8853,13 +8855,29 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             </motion.div>
           )}
 
-          <button
-            onClick={finalizeSale}
-            disabled={isProcessing || (paymentMethod === 'cash' && (isNaN(parseFloat(cashReceived)) || parseFloat(cashReceived) < total)) || (paymentMethod === 'split' && Math.abs((parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')) - total) > 0.05)}
-            className="w-full bg-orange-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed"
-          >
-            {isProcessing ? 'Processando...' : 'Confirmar Pagamento'}
-          </button>
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={finalizeSale}
+              disabled={isProcessing || (paymentMethod === 'cash' && (isNaN(parseFloat(cashReceived)) || parseFloat(cashReceived) < total)) || (paymentMethod === 'split' && Math.abs((parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')) - total) > 0.05)}
+              className="w-full bg-orange-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed"
+            >
+              {isProcessing ? 'Processando...' : 'Confirmar Pagamento'}
+            </button>
+            <button
+              onClick={() => {
+                if (confirm('Tem certeza que deseja cancelar esta venda e limpar o carrinho?')) {
+                  setCart([]);
+                  setDiscount(0);
+                  setClient({ name: 'Consumidor Final', nif: '999999999' });
+                  setIsPaymentModalOpen(false);
+                }
+              }}
+              className="w-full bg-rose-50 text-rose-600 py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 hover:bg-rose-100 transition-all active:scale-95"
+            >
+              <Trash2 size={18} />
+              Cancelar Venda
+            </button>
+          </div>
         </div>
       </Modal>
 
@@ -9077,10 +9095,19 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           <div className="flex gap-4 pt-6">
             <button 
               type="button"
-              onClick={() => setIsFormalInvoiceModalOpen(false)}
-              className="flex-1 px-8 py-4 bg-zinc-100 text-zinc-600 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-200 transition-all"
+              onClick={() => {
+                if (confirm('Tem certeza que deseja cancelar esta venda e limpar o carrinho?')) {
+                  setCart([]);
+                  setDiscount(0);
+                  setClient({ name: 'Consumidor Final', nif: '999999999' });
+                  setIsFormalInvoiceModalOpen(false);
+                } else {
+                  setIsFormalInvoiceModalOpen(false);
+                }
+              }}
+              className="flex-1 px-8 py-4 bg-rose-50 text-rose-600 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-rose-100 transition-all"
             >
-              Cancelar
+              Cancelar Venda
             </button>
             <button 
               type="submit"
@@ -9224,7 +9251,7 @@ const SellerHistory = ({ user }: { user: User }) => {
                       sale.doc_type === 'FT' ? 'bg-purple-100 text-purple-600' :
                       'bg-zinc-100 text-zinc-600'
                     }`}>
-                      {sale.doc_type || 'FS'}
+                      {sale.doc_type || 'FR'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-sm text-zinc-600">{new Date(sale.timestamp).toLocaleString()}</td>

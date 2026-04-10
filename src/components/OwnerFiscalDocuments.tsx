@@ -218,7 +218,6 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
                   <option value="">Todos os Documentos</option>
                   <option value="FT">Fatura</option>
                   <option value="FR">Fatura Recibo</option>
-                  <option value="FS">Fatura Simplificada</option>
                 </select>
               </div>
             </div>

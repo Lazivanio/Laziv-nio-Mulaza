@@ -165,7 +165,7 @@ export const OwnerClients = ({ user }: { user: User }) => {
                         onClick={() => {
                           setEditingClient(client);
                           setFormData({
-                            name: client.name,
+                            name: client.name || '',
                             nif: client.nif || '',
                             email: client.email || '',
                             phone: client.phone || '',

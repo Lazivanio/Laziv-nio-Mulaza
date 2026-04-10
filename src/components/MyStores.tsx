@@ -205,8 +205,8 @@ export const MyStores = ({ user }: { user: User }) => {
   const handleEdit = (store: StoreType) => {
     setEditingStore(store);
     setFormData({
-      name: store.name,
-      address: store.address,
+      name: store.name || '',
+      address: store.address || '',
       phone: store.phone || '',
       email: store.email || '',
       nif: store.nif || '',

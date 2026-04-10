@@ -101,9 +101,9 @@ export const OwnerWarehouses = ({ user }: { user: User }) => {
     setEditingWarehouse(warehouse);
     setFormData({
       store_id: warehouse.store_id.toString(),
-      name: warehouse.name,
-      type: warehouse.type,
-      status: warehouse.status
+      name: warehouse.name || '',
+      type: warehouse.type || 'principal',
+      status: warehouse.status || 'active'
     });
     setIsModalOpen(true);
   };

@@ -5,11 +5,128 @@ import * as XLSX from "xlsx";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import crypto from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const db = new Database("database.db");
+
+// Digital Signature Service
+const MASTER_KEY = (process.env.SIGNATURE_MASTER_KEY || "a-very-secret-master-key-32-chars").slice(0, 32).padEnd(32, '0');
+const IV_LENGTH = 16;
+
+const DigitalSignatureService = {
+  encryptPrivateKey(privateKey: string): string {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(MASTER_KEY), iv);
+    let encrypted = cipher.update(privateKey);
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    return iv.toString('hex') + ':' + encrypted.toString('hex');
+  },
+
+  decryptPrivateKey(encryptedData: string): string {
+    const textParts = encryptedData.split(':');
+    const iv = Buffer.from(textParts.shift()!, 'hex');
+    const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(MASTER_KEY), iv);
+    let decrypted = decipher.update(encryptedText);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return decrypted.toString();
+  },
+
+  generateCompanyKeys(ownerId: number, userId: number) {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+    });
+
+    const encryptedPrivate = this.encryptPrivateKey(privateKey);
+    
+    // Deactivate old keys
+    db.prepare("UPDATE company_keys SET is_active = 0 WHERE owner_id = ?").run(ownerId);
+
+    // Get current version
+    const lastKey = db.prepare("SELECT MAX(version) as max_v FROM company_keys WHERE owner_id = ?").get(ownerId) as { max_v: number };
+    const nextVersion = (lastKey?.max_v || 0) + 1;
+
+    const result = db.prepare(`
+      INSERT INTO company_keys (owner_id, public_key, private_key_encrypted, version, is_active, created_by)
+      VALUES (?, ?, ?, ?, 1, ?)
+    `).run(ownerId, publicKey, encryptedPrivate, nextVersion, userId);
+
+    return { id: result.lastInsertRowid, publicKey, version: nextVersion };
+  },
+
+  getActiveKey(ownerId: number) {
+    return db.prepare("SELECT * FROM company_keys WHERE owner_id = ? AND is_active = 1").get(ownerId) as any;
+  },
+
+  getPrevSignature(ownerId: number, storeId: number) {
+    // Check transactions
+    const lastTrans = db.prepare(`
+      SELECT signature FROM transactions 
+      WHERE store_id = ? AND signature IS NOT NULL 
+      ORDER BY timestamp DESC, id DESC LIMIT 1
+    `).get(storeId) as { signature: string };
+
+    // Check credit invoices
+    const lastCI = db.prepare(`
+      SELECT signature FROM credit_invoices 
+      WHERE store_id = ? AND signature IS NOT NULL 
+      ORDER BY created_at DESC, id DESC LIMIT 1
+    `).get(storeId) as { signature: string };
+
+    // Return the most recent one (this is a bit simplified, ideally we'd have a global sequence)
+    // For now, let's just return the last one found in either.
+    return lastTrans?.signature || lastCI?.signature || "0";
+  },
+
+  signDocument(ownerId: number, storeId: number, data: any) {
+    let activeKey = this.getActiveKey(ownerId);
+    if (!activeKey) {
+      // Fallback: try to generate keys if missing
+      try {
+        console.log(`No active key found for owner ${ownerId} during signing. Attempting to generate...`);
+        this.generateCompanyKeys(ownerId, ownerId);
+        activeKey = this.getActiveKey(ownerId);
+      } catch (e) {
+        console.error(`Failed to generate fallback keys for owner ${ownerId}:`, e);
+      }
+    }
+
+    if (!activeKey) {
+      throw new Error("Nenhuma chave ativa encontrada para esta empresa.");
+    }
+
+    const privateKey = this.decryptPrivateKey(activeKey.private_key_encrypted);
+    const prevSignature = this.getPrevSignature(ownerId, storeId);
+    
+    // Data to hash: invoice_number, total, date, items, prev_signature
+    const dataToHash = JSON.stringify({
+      invoice_number: data.invoice_number,
+      total: data.total_amount,
+      date: data.date,
+      items: data.items,
+      prev_signature: prevSignature
+    });
+
+    const hash = crypto.createHash('sha256').update(dataToHash).digest('hex');
+    
+    const sign = crypto.createSign('SHA256');
+    sign.update(hash);
+    sign.end();
+    const signature = sign.sign(privateKey, 'hex');
+
+    return {
+      hash,
+      signature,
+      prev_signature: prevSignature,
+      key_version_id: activeKey.id
+    };
+  }
+};
 
 // Initialize Database
 db.exec(`
@@ -28,49 +145,6 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
-
-// Migration: Add missing columns to users
-try {
-  const columns = db.prepare("PRAGMA table_info(users)").all() as any[];
-  console.log("Current users columns:", columns.map(c => c.name));
-  if (!columns.some(col => col.name === 'phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT");
-  if (!columns.some(col => col.name === 'nif')) db.exec("ALTER TABLE users ADD COLUMN nif TEXT");
-  if (!columns.some(col => col.name === 'address')) db.exec("ALTER TABLE users ADD COLUMN address TEXT");
-  if (!columns.some(col => col.name === 'company_name')) db.exec("ALTER TABLE users ADD COLUMN company_name TEXT");
-  if (!columns.some(col => col.name === 'status')) {
-    db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
-  }
-  db.exec("UPDATE users SET status = 'active' WHERE status IS NULL");
-  if (!columns.some(col => col.name === 'username')) {
-    console.log("Adding username column...");
-    db.exec("ALTER TABLE users ADD COLUMN username TEXT");
-    db.exec("UPDATE users SET username = email WHERE username IS NULL");
-    console.log("Username column added and populated.");
-  }
-  if (!columns.some(col => col.name === 'created_at')) {
-    db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME");
-    db.exec("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
-  }
-  if (!columns.some(col => col.name === 'role_id')) db.exec("ALTER TABLE users ADD COLUMN role_id INTEGER");
-  if (!columns.some(col => col.name === 'custom_permissions')) db.exec("ALTER TABLE users ADD COLUMN custom_permissions TEXT");
-  if (!columns.some(col => col.name === 'store_id')) db.exec("ALTER TABLE users ADD COLUMN store_id INTEGER");
-  if (!columns.some(col => col.name === 'cash_register_id')) db.exec("ALTER TABLE users ADD COLUMN cash_register_id INTEGER");
-  if (!columns.some(col => col.name === 'fiscal_regime')) {
-    db.exec("ALTER TABLE users ADD COLUMN fiscal_regime TEXT DEFAULT 'geral'");
-    db.exec("UPDATE users SET fiscal_regime = 'geral' WHERE fiscal_regime IS NULL OR fiscal_regime = ''");
-  }
-  if (!columns.some(col => col.name === 'bonus')) db.exec("ALTER TABLE hr_salary_payments ADD COLUMN bonus REAL DEFAULT 0");
-} catch (e) {
-  console.error("Migration error (users):", e);
-}
-
-// Migration: Add missing columns to stores
-try {
-  const columns = db.prepare("PRAGMA table_info(stores)").all() as any[];
-  if (!columns.some(col => col.name === 'email')) db.exec("ALTER TABLE stores ADD COLUMN email TEXT");
-} catch (e) {
-  console.error("Migration error (stores):", e);
-}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS licenses (
@@ -288,6 +362,7 @@ db.exec(`
     tax_amount REAL DEFAULT 0,
     invoice_number TEXT,
     agt_status TEXT DEFAULT 'pending',
+    billing_mode TEXT DEFAULT 'tradicional',
     split_details TEXT,
     client_name TEXT,
     client_nif TEXT,
@@ -574,23 +649,134 @@ db.exec(`
     FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
     FOREIGN KEY(purchase_id) REFERENCES purchases(id)
   );
+
+  CREATE TABLE IF NOT EXISTS billing_mode_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER,
+    changed_by INTEGER,
+    old_mode TEXT,
+    new_mode TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(owner_id) REFERENCES users(id),
+    FOREIGN KEY(changed_by) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS company_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER,
+    public_key TEXT,
+    private_key_encrypted TEXT,
+    version INTEGER,
+    is_active INTEGER DEFAULT 1,
+    type TEXT DEFAULT 'internal', -- 'internal', 'external'
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_by INTEGER,
+    FOREIGN KEY(owner_id) REFERENCES users(id),
+    FOREIGN KEY(created_by) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS key_management_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER,
+    user_id INTEGER,
+    action TEXT,
+    old_key_id INTEGER,
+    new_key_id INTEGER,
+    details TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(owner_id) REFERENCES users(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
 `);
 
+// Migration: Add missing columns
 try {
-  const columns = db.prepare("PRAGMA table_info(support_tickets)").all() as any[];
-  if (!columns.some(col => col.name === 'created_at')) {
+  // Users migrations
+  const userColumns = db.prepare("PRAGMA table_info(users)").all() as any[];
+  if (!userColumns.some(col => col.name === 'phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT");
+  if (!userColumns.some(col => col.name === 'nif')) db.exec("ALTER TABLE users ADD COLUMN nif TEXT");
+  if (!userColumns.some(col => col.name === 'address')) db.exec("ALTER TABLE users ADD COLUMN address TEXT");
+  if (!userColumns.some(col => col.name === 'company_name')) db.exec("ALTER TABLE users ADD COLUMN company_name TEXT");
+  if (!userColumns.some(col => col.name === 'status')) {
+    db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
+  }
+  db.exec("UPDATE users SET status = 'active' WHERE status IS NULL");
+  if (!userColumns.some(col => col.name === 'username')) {
+    db.exec("ALTER TABLE users ADD COLUMN username TEXT");
+    db.exec("UPDATE users SET username = email WHERE username IS NULL");
+  }
+  if (!userColumns.some(col => col.name === 'created_at')) {
+    db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME");
+    db.exec("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
+  }
+  if (!userColumns.some(col => col.name === 'role_id')) db.exec("ALTER TABLE users ADD COLUMN role_id INTEGER");
+  if (!userColumns.some(col => col.name === 'custom_permissions')) db.exec("ALTER TABLE users ADD COLUMN custom_permissions TEXT");
+  if (!userColumns.some(col => col.name === 'store_id')) db.exec("ALTER TABLE users ADD COLUMN store_id INTEGER");
+  if (!userColumns.some(col => col.name === 'cash_register_id')) db.exec("ALTER TABLE users ADD COLUMN cash_register_id INTEGER");
+  if (!userColumns.some(col => col.name === 'fiscal_regime')) {
+    db.exec("ALTER TABLE users ADD COLUMN fiscal_regime TEXT DEFAULT 'geral'");
+    db.exec("UPDATE users SET fiscal_regime = 'geral' WHERE fiscal_regime IS NULL OR fiscal_regime = ''");
+  }
+  if (!userColumns.some(col => col.name === 'billing_mode')) {
+    db.exec("ALTER TABLE users ADD COLUMN billing_mode TEXT DEFAULT 'tradicional'");
+    db.exec("UPDATE users SET billing_mode = 'tradicional' WHERE billing_mode IS NULL OR billing_mode = ''");
+  }
+
+  // Transactions migrations
+  const transColumns = db.prepare("PRAGMA table_info(transactions)").all() as any[];
+  if (!transColumns.some(col => col.name === 'billing_mode')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN billing_mode TEXT DEFAULT 'tradicional'");
+    db.exec("UPDATE transactions SET billing_mode = 'tradicional' WHERE billing_mode IS NULL OR billing_mode = ''");
+  }
+  if (!transColumns.some(col => col.name === 'hash')) db.exec("ALTER TABLE transactions ADD COLUMN hash TEXT");
+  if (!transColumns.some(col => col.name === 'signature')) db.exec("ALTER TABLE transactions ADD COLUMN signature TEXT");
+  if (!transColumns.some(col => col.name === 'prev_signature')) db.exec("ALTER TABLE transactions ADD COLUMN prev_signature TEXT");
+  if (!transColumns.some(col => col.name === 'key_version_id')) db.exec("ALTER TABLE transactions ADD COLUMN key_version_id INTEGER");
+
+  const ciColumns = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
+  if (!ciColumns.some(col => col.name === 'hash')) db.exec("ALTER TABLE credit_invoices ADD COLUMN hash TEXT");
+  if (!ciColumns.some(col => col.name === 'signature')) db.exec("ALTER TABLE credit_invoices ADD COLUMN signature TEXT");
+  if (!ciColumns.some(col => col.name === 'prev_signature')) db.exec("ALTER TABLE credit_invoices ADD COLUMN prev_signature TEXT");
+  if (!ciColumns.some(col => col.name === 'key_version_id')) db.exec("ALTER TABLE credit_invoices ADD COLUMN key_version_id INTEGER");
+
+  const piColumns = db.prepare("PRAGMA table_info(proforma_invoices)").all() as any[];
+  if (!piColumns.some(col => col.name === 'hash')) db.exec("ALTER TABLE proforma_invoices ADD COLUMN hash TEXT");
+  if (!piColumns.some(col => col.name === 'signature')) db.exec("ALTER TABLE proforma_invoices ADD COLUMN signature TEXT");
+  if (!piColumns.some(col => col.name === 'prev_signature')) db.exec("ALTER TABLE proforma_invoices ADD COLUMN prev_signature TEXT");
+  if (!piColumns.some(col => col.name === 'key_version_id')) db.exec("ALTER TABLE proforma_invoices ADD COLUMN key_version_id INTEGER");
+
+  // Services migrations
+  const serviceColumns = db.prepare("PRAGMA table_info(services)").all() as any[];
+  if (!serviceColumns.some(col => col.name === 'retention_enabled')) {
+    db.exec("ALTER TABLE services ADD COLUMN retention_enabled INTEGER DEFAULT 0");
+  }
+  if (!serviceColumns.some(col => col.name === 'retention_percentage')) {
+    db.exec("ALTER TABLE services ADD COLUMN retention_percentage REAL DEFAULT 0");
+  }
+
+  // Stores migrations
+  const storeColumns = db.prepare("PRAGMA table_info(stores)").all() as any[];
+  if (!storeColumns.some(col => col.name === 'email')) db.exec("ALTER TABLE stores ADD COLUMN email TEXT");
+
+  // HR migrations
+  const hrPaymentColumns = db.prepare("PRAGMA table_info(hr_salary_payments)").all() as any[];
+  if (!hrPaymentColumns.some(col => col.name === 'bonus')) db.exec("ALTER TABLE hr_salary_payments ADD COLUMN bonus REAL DEFAULT 0");
+
+  // Support tickets migrations
+  const ticketColumns = db.prepare("PRAGMA table_info(support_tickets)").all() as any[];
+  if (!ticketColumns.some(col => col.name === 'created_at')) {
     db.exec("ALTER TABLE support_tickets ADD COLUMN created_at DATETIME");
     db.exec("UPDATE support_tickets SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
   }
-  if (!columns.some(col => col.name === 'updated_at')) {
+  if (!ticketColumns.some(col => col.name === 'updated_at')) {
     db.exec("ALTER TABLE support_tickets ADD COLUMN updated_at DATETIME");
     db.exec("UPDATE support_tickets SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL");
   }
-  if (!columns.some(col => col.name === 'priority')) {
+  if (!ticketColumns.some(col => col.name === 'priority')) {
     db.exec("ALTER TABLE support_tickets ADD COLUMN priority TEXT DEFAULT 'medium'");
   }
 } catch (e) {
-  console.error("Migration error (support_tickets):", e);
+  console.error("Migration error:", e);
 }
 
 try {
@@ -927,6 +1113,24 @@ try {
     db.exec("ALTER TABLE transactions ADD COLUMN agt_status TEXT DEFAULT 'pending'");
   }
 
+  // Digital Signature Columns
+  const tablesToUpdate = ['transactions', 'credit_invoices', 'proforma_invoices'];
+  for (const table of tablesToUpdate) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as any[];
+    if (!cols.some(c => c.name === 'hash')) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN hash TEXT`);
+    }
+    if (!cols.some(c => c.name === 'signature')) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN signature TEXT`);
+    }
+    if (!cols.some(c => c.name === 'prev_signature')) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN prev_signature TEXT`);
+    }
+    if (!cols.some(c => c.name === 'key_version_id')) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN key_version_id INTEGER`);
+    }
+  }
+
   const columnsPurchases = db.prepare("PRAGMA table_info(purchases)").all() as any[];
   if (!columnsPurchases.some(col => col.name === 'delivery_status')) {
     db.exec("ALTER TABLE purchases ADD COLUMN delivery_status TEXT DEFAULT 'pending'");
@@ -993,6 +1197,28 @@ if (userCount.count === 0) {
 
   // Seed Staff
   db.prepare("INSERT INTO staff (store_id, user_id, salary, shift_info) VALUES (?, ?, ?, ?)").run(1, 3, 50000, "Manhã");
+}
+
+// Migration: Generate keys for existing owners
+try {
+  const owners = db.prepare("SELECT id, email FROM users WHERE role = 'owner'").all() as { id: number, email: string }[];
+  console.log(`Checking digital signature keys for ${owners.length} owners...`);
+  for (const owner of owners) {
+    const activeKey = DigitalSignatureService.getActiveKey(owner.id);
+    if (!activeKey) {
+      console.log(`Generating initial keys for owner ${owner.id} (${owner.email})`);
+      try {
+        DigitalSignatureService.generateCompanyKeys(owner.id, owner.id);
+        console.log(`Successfully generated keys for owner ${owner.id}`);
+      } catch (genError) {
+        console.error(`Failed to generate keys for owner ${owner.id}:`, genError);
+      }
+    } else {
+      console.log(`Owner ${owner.id} already has an active key.`);
+    }
+  }
+} catch (e) {
+  console.error("Error in digital signature migration:", e);
 }
 
 // Cleanup test products once
@@ -1253,10 +1479,18 @@ async function startServer() {
       }
     }
 
-    const owner = db.prepare("SELECT status, fiscal_regime FROM users WHERE id = ?").get(ownerId) as any;
+    const owner = db.prepare("SELECT status, fiscal_regime, billing_mode FROM users WHERE id = ?").get(ownerId) as any;
     if (owner && owner.status === 'suspended') {
       return res.status(403).json({ error: "Acesso suspenso" });
     }
+
+    const responseData = {
+      id: user.id,
+      role: user.role,
+      status: user.status,
+      fiscal_regime: owner?.fiscal_regime || 'geral',
+      billing_mode: owner?.billing_mode || 'tradicional'
+    };
 
     // License check
     const activeLicense = db.prepare(`
@@ -1277,6 +1511,7 @@ async function startServer() {
       role: user.role, 
       status: user.status, 
       fiscal_regime: owner?.fiscal_regime || 'geral',
+      billing_mode: owner?.billing_mode || 'tradicional',
       hasActiveLicense: !!activeLicense 
     });
   });
@@ -1365,7 +1600,12 @@ async function startServer() {
   app.post("/api/admin/clients", (req, res) => {
     const { name, company_name, email, password, phone, nif, address } = req.body;
     try {
-      db.prepare("INSERT INTO users (name, company_name, email, password, role, phone, nif, address) VALUES (?, ?, ?, ?, 'owner', ?, ?, ?)").run(name, company_name, email, password, phone, nif, address);
+      const result = db.prepare("INSERT INTO users (name, company_name, email, password, role, phone, nif, address) VALUES (?, ?, ?, ?, 'owner', ?, ?, ?)").run(name, company_name, email, password, phone, nif, address);
+      const ownerId = result.lastInsertRowid as number;
+      
+      // Generate digital signature keys
+      DigitalSignatureService.generateCompanyKeys(ownerId, ownerId);
+      
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -1724,6 +1964,155 @@ async function startServer() {
     res.json(transactions);
   });
 
+  app.get("/api/owner/billing-mode-status/:ownerId", (req, res) => {
+    const ownerId = req.params.ownerId;
+    
+    // Check for pending/draft invoices
+    const pendingInvoices = db.prepare(`
+      SELECT COUNT(*) as count 
+      FROM transactions 
+      WHERE (store_id IN (SELECT id FROM stores WHERE owner_id = ?))
+      AND agt_status IN ('pending', 'draft')
+    `).get(ownerId) as any;
+
+    // Check for uncommunicated invoices based on current mode
+    const user = db.prepare("SELECT billing_mode FROM users WHERE id = ?").get(ownerId) as any;
+    const currentMode = user?.billing_mode || 'tradicional';
+    
+    let uncommunicatedCount = 0;
+    if (currentMode === 'tradicional') {
+      // In traditional, "uncommunicated" means not yet exported (we'll assume agt_status != 'sent' for simplicity, 
+      // or if we have a specific 'exported' flag. Based on previous grep, 'sent' is used).
+      const uncommunicated = db.prepare(`
+        SELECT COUNT(*) as count 
+        FROM transactions 
+        WHERE (store_id IN (SELECT id FROM stores WHERE owner_id = ?))
+        AND agt_status NOT IN ('sent', 'accepted')
+      `).get(ownerId) as any;
+      uncommunicatedCount = uncommunicated.count;
+    } else {
+      // In electronic, must be 'accepted' or 'rejected_treated'
+      const uncommunicated = db.prepare(`
+        SELECT COUNT(*) as count 
+        FROM transactions 
+        WHERE (store_id IN (SELECT id FROM stores WHERE owner_id = ?))
+        AND agt_status NOT IN ('accepted', 'rejected_treated')
+      `).get(ownerId) as any;
+      uncommunicatedCount = uncommunicated.count;
+    }
+
+    // Check if there are ANY active series
+    const activeSeries = db.prepare(`
+      SELECT COUNT(*) as count 
+      FROM invoice_series 
+      WHERE store_id IN (SELECT id FROM stores WHERE owner_id = ?)
+      AND status = 'active'
+    `).get(ownerId) as any;
+
+    res.json({ 
+      hasPendingInvoices: pendingInvoices.count > 0,
+      pendingCount: pendingInvoices.count,
+      hasUncommunicated: uncommunicatedCount > 0,
+      uncommunicatedCount: uncommunicatedCount,
+      hasActiveSeries: activeSeries.count > 0,
+      currentMode
+    });
+  });
+
+  app.put("/api/owner/billing-mode/:ownerId", (req, res) => {
+    const ownerId = req.params.ownerId;
+    const { billing_mode, changed_by } = req.body;
+
+    if (!['tradicional', 'eletronica'].includes(billing_mode)) {
+      return res.status(400).json({ error: "Modo de faturação inválido." });
+    }
+
+    const user = db.prepare("SELECT billing_mode FROM users WHERE id = ?").get(ownerId) as any;
+    const oldMode = user?.billing_mode || 'tradicional';
+
+    // 1. Check for pending/draft invoices
+    const pendingInvoices = db.prepare(`
+      SELECT COUNT(*) as count 
+      FROM transactions 
+      WHERE (store_id IN (SELECT id FROM stores WHERE owner_id = ?))
+      AND agt_status IN ('pending', 'draft')
+    `).get(ownerId) as any;
+
+    if (pendingInvoices.count > 0) {
+      return res.status(400).json({ error: "Não é possível mudar o modo com faturas pendentes ou em rascunho." });
+    }
+
+    // 2. Check for uncommunicated invoices based on current mode
+    let uncommunicatedCount = 0;
+    if (oldMode === 'tradicional') {
+      const uncommunicated = db.prepare(`
+        SELECT COUNT(*) as count 
+        FROM transactions 
+        WHERE (store_id IN (SELECT id FROM stores WHERE owner_id = ?))
+        AND agt_status NOT IN ('sent', 'accepted')
+      `).get(ownerId) as any;
+      uncommunicatedCount = uncommunicated.count;
+    } else {
+      const uncommunicated = db.prepare(`
+        SELECT COUNT(*) as count 
+        FROM transactions 
+        WHERE (store_id IN (SELECT id FROM stores WHERE owner_id = ?))
+        AND agt_status NOT IN ('accepted', 'rejected_treated')
+      `).get(ownerId) as any;
+      uncommunicatedCount = uncommunicated.count;
+    }
+
+    if (uncommunicatedCount > 0) {
+      return res.status(400).json({ error: "Existem documentos não comunicados à AGT. Por favor, finalize todas as comunicações antes de mudar o modo." });
+    }
+
+    try {
+      const transaction = db.transaction(() => {
+        // 3. Update user billing mode
+        db.prepare("UPDATE users SET billing_mode = ? WHERE id = ?").run(billing_mode, ownerId);
+        
+        // 4. Close current active series
+        db.prepare(`
+          UPDATE invoice_series 
+          SET status = 'inactive' 
+          WHERE store_id IN (SELECT id FROM stores WHERE owner_id = ?) 
+          AND status = 'active'
+        `).run(ownerId);
+
+        // 5. Create new series for each store
+        const stores = db.prepare("SELECT id FROM stores WHERE owner_id = ?").all(ownerId) as any[];
+        const year = new Date().getFullYear();
+        const prefix = billing_mode === 'tradicional' ? 'A' : 'E';
+        
+        for (const store of stores) {
+          db.prepare(`
+            INSERT INTO invoice_series (store_id, name, prefix, start_number, current_number, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(
+            store.id, 
+            `Série ${prefix} ${year}`, 
+            prefix, 
+            1, 
+            0, 
+            'active'
+          );
+        }
+
+        // 6. Log history
+        db.prepare(`
+          INSERT INTO billing_mode_history (owner_id, changed_by, old_mode, new_mode)
+          VALUES (?, ?, ?, ?)
+        `).run(ownerId, changed_by || ownerId, oldMode, billing_mode);
+      });
+
+      transaction();
+      res.json({ success: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: "Erro ao processar mudança de modo de faturação." });
+    }
+  });
+
   app.put("/api/profile/:id", (req, res) => {
     const { name, email, username, phone, nif, address, company_name, fiscal_regime, password } = req.body;
     const trimmedUsername = username?.trim();
@@ -1767,6 +2156,66 @@ async function startServer() {
   });
 
   // Owner Routes
+  app.get("/api/owner/keys/:ownerId", (req, res) => {
+    const keys = db.prepare("SELECT id, public_key, version, is_active, type, created_at, created_by FROM company_keys WHERE owner_id = ? ORDER BY version DESC").all(req.params.ownerId);
+    res.json(keys);
+  });
+
+  app.post("/api/owner/keys/generate", (req, res) => {
+    const { ownerId, userId } = req.body;
+    try {
+      const oldKey = DigitalSignatureService.getActiveKey(ownerId);
+      const newKey = DigitalSignatureService.generateCompanyKeys(ownerId, userId);
+      
+      db.prepare(`
+        INSERT INTO key_management_logs (owner_id, user_id, action, old_key_id, new_key_id, details)
+        VALUES (?, ?, 'generate_internal', ?, ?, ?)
+      `).run(ownerId, userId, oldKey?.id || null, newKey.id, `Nova chave gerada internamente (Versão ${newKey.version})`);
+      
+      res.json({ success: true, key: newKey });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/owner/keys/external", (req, res) => {
+    const { ownerId, userId, publicKey, privateKey, type } = req.body;
+    try {
+      const encryptedPrivate = DigitalSignatureService.encryptPrivateKey(privateKey);
+      
+      const oldKey = DigitalSignatureService.getActiveKey(ownerId);
+      db.prepare("UPDATE company_keys SET is_active = 0 WHERE owner_id = ?").run(ownerId);
+
+      const lastKey = db.prepare("SELECT MAX(version) as max_v FROM company_keys WHERE owner_id = ?").get(ownerId) as { max_v: number };
+      const nextVersion = (lastKey?.max_v || 0) + 1;
+
+      const result = db.prepare(`
+        INSERT INTO company_keys (owner_id, public_key, private_key_encrypted, version, is_active, type, created_by)
+        VALUES (?, ?, ?, ?, 1, ?, ?)
+      `).run(ownerId, publicKey, encryptedPrivate, nextVersion, type || 'external', userId);
+
+      db.prepare(`
+        INSERT INTO key_management_logs (owner_id, user_id, action, old_key_id, new_key_id, details)
+        VALUES (?, ?, 'upload_external', ?, ?, ?)
+      `).run(ownerId, userId, oldKey?.id || null, result.lastInsertRowid, `Certificado externo carregado (Versão ${nextVersion})`);
+
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/owner/keys/logs/:ownerId", (req, res) => {
+    const logs = db.prepare(`
+      SELECT l.*, u.name as user_name 
+      FROM key_management_logs l
+      JOIN users u ON l.user_id = u.id
+      WHERE l.owner_id = ? 
+      ORDER BY l.timestamp DESC
+    `).all(req.params.ownerId);
+    res.json(logs);
+  });
+
   app.get("/api/owner/stores/:storeId/cash-registers", (req, res) => {
     const { storeId } = req.params;
     const registers = db.prepare(`
@@ -2215,17 +2664,15 @@ async function startServer() {
       let ciParams: any[] = [...storeIds];
       ciQuery += " AND date(created_at) BETWEEN ? AND ?";
       ciParams.push(start_date, end_date);
-      if (doc_type && doc_type !== 'FS') {
+      if (doc_type) {
         ciQuery += " AND doc_type = ?";
         ciParams.push(doc_type);
-      } else if (doc_type === 'FS') {
-        ciQuery += " AND 1=0";
       }
       const creditInvoices = db.prepare(ciQuery).all(...ciParams) as any[];
 
-      // Fetch invoices from transactions (FS)
+      // Fetch invoices from transactions (POS sales - now treated as FR)
       let tInvoices: any[] = [];
-      if (!doc_type || doc_type === 'FS') {
+      if (!doc_type || doc_type === 'FR') {
         let tQuery = `SELECT * FROM transactions WHERE store_id IN (${placeholders})`;
         let tParams: any[] = [...storeIds];
         tQuery += " AND date(timestamp) BETWEEN ? AND ?";
@@ -2256,8 +2703,8 @@ async function startServer() {
         
         if (items.length > 0) {
           items.forEach((item: any, index: number) => {
-            const taxCode = item.tax_code || 'NOR';
-            const taxPercentage = (item.tax_percentage !== undefined) ? item.tax_percentage : 14;
+            const taxCode = item.tax_code || (owner.fiscal_regime === 'exclusao' ? 'ISE' : 'NOR');
+            const taxPercentage = (item.tax_percentage !== undefined) ? item.tax_percentage : (owner.fiscal_regime === 'exclusao' ? 0 : 14);
             
             linesXml += `
           <Line>
@@ -2279,6 +2726,8 @@ async function startServer() {
           </Line>`;
           });
         } else {
+          const taxCode = owner.fiscal_regime === 'exclusao' ? 'ISE' : 'NOR';
+          const taxPercentage = owner.fiscal_regime === 'exclusao' ? 0 : 14;
           linesXml = `
           <Line>
             <LineNumber>1</LineNumber>
@@ -2293,8 +2742,8 @@ async function startServer() {
             <Tax>
               <TaxType>IVA</TaxType>
               <TaxCountryRegion>AO</TaxCountryRegion>
-              <TaxCode>NOR</TaxCode>
-              <TaxPercentage>14.00</TaxPercentage>
+              <TaxCode>${taxCode}</TaxCode>
+              <TaxPercentage>${taxPercentage.toFixed(2)}</TaxPercentage>
             </Tax>
           </Line>`;
         }
@@ -2332,8 +2781,8 @@ async function startServer() {
         
         if (items.length > 0) {
           items.forEach((item: any, index: number) => {
-            const taxCode = item.tax_code || 'NOR';
-            const taxPercentage = (item.tax_percentage !== undefined) ? item.tax_percentage : 14;
+            const taxCode = item.tax_code || (owner.fiscal_regime === 'exclusao' ? 'ISE' : 'NOR');
+            const taxPercentage = (item.tax_percentage !== undefined) ? item.tax_percentage : (owner.fiscal_regime === 'exclusao' ? 0 : 14);
             
             linesXml += `
           <Line>
@@ -2344,7 +2793,7 @@ async function startServer() {
             <UnitOfMeasure>UN</UnitOfMeasure>
             <UnitPrice>${(item.price || 0).toFixed(2)}</UnitPrice>
             <TaxPointDate>${inv.timestamp ? inv.timestamp.split(' ')[0] : start_date}</TaxPointDate>
-            <Description>${item.name || 'Venda Simplificada (PDV)'}</Description>
+            <Description>${item.name || 'Venda PDV'}</Description>
             <CreditAmount>${((item.price || 0) * (item.quantity || 1)).toFixed(2)}</CreditAmount>
             <Tax>
               <TaxType>IVA</TaxType>
@@ -2355,29 +2804,33 @@ async function startServer() {
           </Line>`;
           });
         } else {
+          const taxCode = owner.fiscal_regime === 'exclusao' ? 'ISE' : 'NOR';
+          const taxPercentage = owner.fiscal_regime === 'exclusao' ? 0 : 14;
           linesXml = `
           <Line>
             <LineNumber>1</LineNumber>
             <ProductCode>000</ProductCode>
-            <ProductDescription>Venda Simplificada (PDV)</ProductDescription>
+            <ProductDescription>Venda PDV</ProductDescription>
             <Quantity>1</Quantity>
             <UnitOfMeasure>UN</UnitOfMeasure>
             <UnitPrice>${inv.total_amount.toFixed(2)}</UnitPrice>
             <TaxPointDate>${inv.timestamp ? inv.timestamp.split(' ')[0] : start_date}</TaxPointDate>
-            <Description>Venda Simplificada (PDV)</Description>
+            <Description>Venda PDV</Description>
             <CreditAmount>${inv.total_amount.toFixed(2)}</CreditAmount>
             <Tax>
               <TaxType>IVA</TaxType>
               <TaxCountryRegion>AO</TaxCountryRegion>
-              <TaxCode>NOR</TaxCode>
-              <TaxPercentage>14.00</TaxPercentage>
+              <TaxCode>${taxCode}</TaxCode>
+              <TaxPercentage>${taxPercentage.toFixed(2)}</TaxPercentage>
             </Tax>
           </Line>`;
         }
 
+        const invType = inv.invoice_number?.split(' ')[0] || 'FR';
+
         invoicesXml += `
       <Invoice>
-        <InvoiceNo>${inv.invoice_number || 'FS ' + inv.id}</InvoiceNo>
+        <InvoiceNo>${inv.invoice_number || invType + ' ' + inv.id}</InvoiceNo>
         <DocumentStatus>
           <InvoiceStatus>N</InvoiceStatus>
           <InvoiceStatusDate>${inv.timestamp}</InvoiceStatusDate>
@@ -2388,7 +2841,7 @@ async function startServer() {
         <HashControl>1</HashControl>
         <Period>${new Date(inv.timestamp).getMonth() + 1}</Period>
         <InvoiceDate>${inv.timestamp ? inv.timestamp.split(' ')[0] : start_date}</InvoiceDate>
-        <InvoiceType>FS</InvoiceType>
+        <InvoiceType>${invType}</InvoiceType>
         <SourceBilling>P</SourceBilling>
         <CustomerID>999999999</CustomerID>
         ${linesXml}
@@ -2696,16 +3149,17 @@ async function startServer() {
   // Services Routes
   app.get("/api/owner/services/:ownerId", (req, res) => {
     const services = db.prepare(`
-      SELECT s.*, st.name as store_name 
-      FROM services s 
-      LEFT JOIN stores st ON s.store_id = st.id 
+      SELECT s.*, st.name as store_name, t.percentage as tax_percentage, t.tax_code
+      FROM services s
+      LEFT JOIN stores st ON s.store_id = st.id
+      LEFT JOIN taxes t ON s.tax_id = t.id
       WHERE s.owner_id = ?
     `).all(req.params.ownerId);
     res.json(services);
   });
 
   app.post("/api/owner/services", (req, res) => {
-    const { owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, tax_id } = req.body;
+    const { owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, tax_id, retention_enabled, retention_percentage } = req.body;
     
     // Se o regime for exclusão, forçar imposto ISENTO
     let finalTaxId = tax_id;
@@ -2716,14 +3170,14 @@ async function startServer() {
     }
 
     db.prepare(`
-      INSERT INTO services (owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, tax_id) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, finalTaxId || null);
+      INSERT INTO services (owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, tax_id, retention_enabled, retention_percentage) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(owner_id, store_id, name, code, description, price, availability_condition, show_in_pos, finalTaxId || null, retention_enabled || 0, retention_percentage || 0);
     res.json({ success: true });
   });
 
   app.put("/api/owner/services/:id", (req, res) => {
-    const { store_id, name, code, description, price, availability_condition, show_in_pos, tax_id } = req.body;
+    const { store_id, name, code, description, price, availability_condition, show_in_pos, tax_id, retention_enabled, retention_percentage } = req.body;
     
     // Se o regime for exclusão, forçar imposto ISENTO
     let finalTaxId = tax_id;
@@ -2736,9 +3190,9 @@ async function startServer() {
 
     db.prepare(`
       UPDATE services 
-      SET store_id = ?, name = ?, code = ?, description = ?, price = ?, availability_condition = ?, show_in_pos = ?, tax_id = ? 
+      SET store_id = ?, name = ?, code = ?, description = ?, price = ?, availability_condition = ?, show_in_pos = ?, tax_id = ?, retention_enabled = ?, retention_percentage = ?
       WHERE id = ?
-    `).run(store_id, name, code, description, price, availability_condition, show_in_pos, finalTaxId || null, req.params.id);
+    `).run(store_id, name, code, description, price, availability_condition, show_in_pos, finalTaxId || null, retention_enabled || 0, retention_percentage || 0, req.params.id);
     res.json({ success: true });
   });
 
@@ -2806,7 +3260,12 @@ async function startServer() {
   });
 
   app.get("/api/seller/services/:storeId", (req, res) => {
-    const services = db.prepare("SELECT * FROM services WHERE store_id = ? AND show_in_pos = 1").all(req.params.storeId);
+    const services = db.prepare(`
+      SELECT s.*, t.percentage as tax_percentage, t.tax_code
+      FROM services s
+      LEFT JOIN taxes t ON s.tax_id = t.id
+      WHERE s.store_id = ? AND s.show_in_pos = 1
+    `).all(req.params.storeId);
     res.json(services);
   });
 
@@ -3988,11 +4447,14 @@ async function startServer() {
     const products = db.prepare(`
       SELECT p.*, 
         MAX(pr.discount_percent) as discount_percent,
-        pr.name as promo_name
+        pr.name as promo_name,
+        t.percentage as tax_percentage,
+        t.tax_code
       FROM products p 
       LEFT JOIN promotion_products pp ON p.id = pp.product_id
       LEFT JOIN promotions pr ON pp.promotion_id = pr.id 
         AND date('now') BETWEEN date(pr.start_date) AND date(pr.end_date)
+      LEFT JOIN taxes t ON p.tax_id = t.id
       WHERE p.store_id = ? AND p.stock > 0
       GROUP BY p.id
     `).all(req.params.storeId);
@@ -4000,146 +4462,202 @@ async function startServer() {
   });
 
   app.post("/api/seller/sale", (req, res) => {
-    const { 
-      store_id, seller_id, cash_register_id, total_amount, items, payment_method, 
-      cash_received, split_details, client_name, client_nif,
-      discount_percent, discount_amount, tax_amount
-    } = req.body;
-
-    // Check for active cashier session
-    let sessionQuery = "SELECT id FROM cashier_sessions WHERE store_id = ? AND status = 'open'";
-    let sessionParams: any[] = [store_id];
-    if (cash_register_id) {
-      sessionQuery += " AND cash_register_id = ?";
-      sessionParams.push(cash_register_id);
-    }
-    const activeSession = db.prepare(sessionQuery).get(...sessionParams);
-    if (!activeSession) {
-      return res.status(403).json({ error: "O caixa deve estar aberto para realizar vendas." });
-    }
-    
-    // Generate Sequential Invoice Number
-    const year = new Date().getFullYear();
-    const lastInvoice = db.prepare("SELECT invoice_number FROM transactions WHERE store_id = ? AND invoice_number LIKE ? ORDER BY id DESC LIMIT 1").get(store_id, `FS ${year}/%`) as { invoice_number: string } | undefined;
-    let sequence = 1;
-    if (lastInvoice) {
-      const parts = lastInvoice.invoice_number.split('/');
-      if (parts.length === 2) {
-        sequence = parseInt(parts[1]) + 1;
-      }
-    }
-    const invoice_number = `FS ${year}/${sequence.toString().padStart(3, '0')}`;
-
-    const info = db.prepare(`
-      INSERT INTO transactions (
+    try {
+      const { 
         store_id, seller_id, cash_register_id, total_amount, items, payment_method, 
         cash_received, split_details, client_name, client_nif,
-        discount_percent, discount_amount, tax_amount, invoice_number, agt_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      store_id, 
-      seller_id, 
-      cash_register_id || null,
-      total_amount, 
-      JSON.stringify(items),
-      payment_method || 'cash',
-      cash_received !== undefined && cash_received !== null ? cash_received : total_amount,
-      split_details ? JSON.stringify(split_details) : null,
-      client_name || 'Consumidor Final',
-      client_nif || '999999999',
-      discount_percent || 0,
-      discount_amount || 0,
-      tax_amount || 0,
-      invoice_number,
-      'sent'
-    );
-    
-    // Update stock
-    for (const item of items) {
-      if (item.type === 'product') {
-        db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.id);
+        discount_percent, discount_amount, tax_amount
+      } = req.body;
+
+      if (!store_id || !seller_id || !items || !Array.isArray(items)) {
+        return res.status(400).json({ error: "Dados da venda incompletos ou inválidos." });
       }
-    }
-    
-    const sale = db.prepare("SELECT * FROM transactions WHERE id = ?").get(info.lastInsertRowid) as any;
-    if (sale) {
-      sale.items = typeof sale.items === 'string' ? JSON.parse(sale.items) : (sale.items || []);
-      if (sale.split_details) sale.split_details = typeof sale.split_details === 'string' ? JSON.parse(sale.split_details) : sale.split_details;
+
+      // Check for active cashier session
+      let sessionQuery = "SELECT id FROM cashier_sessions WHERE store_id = ? AND status = 'open'";
+      let sessionParams: any[] = [store_id];
+      if (cash_register_id) {
+        sessionQuery += " AND cash_register_id = ?";
+        sessionParams.push(cash_register_id);
+      }
+      const activeSession = db.prepare(sessionQuery).get(...sessionParams);
+      if (!activeSession) {
+        return res.status(403).json({ error: "O caixa deve estar aberto para realizar vendas." });
+      }
       
-      // Record in financial_transactions
-      try {
-        const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(store_id) as any;
-        if (store) {
-          db.prepare(`
-            INSERT INTO financial_transactions (
-              store_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
-            ) VALUES (?, ?, 'income', 'Venda POS', ?, ?, ?, ?, 'paid', ?)
-          `).run(
-            store_id, store.owner_id, total_amount, payment_method || 'cash',
-            `Venda POS - Fatura ${invoice_number}`, new Date().toISOString(), sale.id
-          );
-        }
-      } catch (finError) {
-        console.error("Error recording financial transaction for sale:", finError);
+      // Get Billing Mode and Series
+      const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(store_id) as any;
+      if (!store) {
+        return res.status(404).json({ error: "Loja não encontrada." });
       }
-      // --- SAF-T JSON Generation & AGT Submission ---
-      try {
-        const store = db.prepare("SELECT * FROM stores WHERE id = ?").get(store_id) as any;
-        const saftData = {
-          Header: {
-            InvoiceNo: invoice_number,
-            InvoiceDate: new Date(sale.timestamp).toISOString().split('T')[0],
-            SystemEntryDate: new Date(sale.timestamp).toISOString(),
-            StoreName: store.name,
-            StoreNIF: store.nif,
-            ClientName: client_name || 'Consumidor Final',
-            ClientNIF: client_nif || '999999999'
-          },
-          Items: sale.items.map((item: any) => ({
-            ProductCode: item.barcode || item.id,
-            ProductDescription: item.name,
-            Quantity: item.quantity,
-            UnitPrice: item.price,
-            TaxAmount: (item.price * item.quantity * 0.14), // Assuming 14% VAT
-            TotalAmount: item.price * item.quantity
-          })),
-          Totals: {
-            GrossTotal: total_amount,
-            TaxPayable: tax_amount || (total_amount * 0.14),
-            NetTotal: total_amount - (tax_amount || (total_amount * 0.14))
-          }
-        };
+      const owner = db.prepare("SELECT billing_mode FROM users WHERE id = ?").get(store.owner_id) as any;
+      const billing_mode = owner?.billing_mode || 'tradicional';
+      const seriesPrefix = billing_mode === 'eletronica' ? 'E' : 'A';
+      
+      // Find active series for this store and prefix
+      let series = db.prepare("SELECT * FROM invoice_series WHERE store_id = ? AND prefix = ? AND status = 'active' LIMIT 1").get(store_id, seriesPrefix) as any;
+      
+      if (!series) {
+        // Create a default series if none exists
+        const seriesName = billing_mode === 'eletronica' ? 'Série Eletrónica' : 'Série Tradicional';
+        const info = db.prepare(`
+          INSERT INTO invoice_series (store_id, name, prefix, start_number, current_number, status)
+          VALUES (?, ?, ?, 1, 0, 'active')
+        `).run(store_id, seriesName, seriesPrefix);
+        series = { id: info.lastInsertRowid, prefix: seriesPrefix, current_number: 0, start_number: 1 };
+      }
 
-        // 1. Save to local folder
-        const saftDir = path.join(process.cwd(), "saft_files");
-        if (!fs.existsSync(saftDir)) {
-          fs.mkdirSync(saftDir, { recursive: true });
+      const year = new Date().getFullYear();
+      const nextNumber = Math.max(series.current_number + 1, series.start_number);
+      const invoice_number = `FR ${series.prefix}/${year}/${nextNumber.toString().padStart(4, '0')}`;
+
+      // Update series current number
+      db.prepare("UPDATE invoice_series SET current_number = ? WHERE id = ?").run(nextNumber, series.id);
+
+      // AGT Status Simulation
+      let agt_status = 'pending';
+      if (billing_mode === 'eletronica') {
+        // Simulate AGT validation
+        const isAccepted = Math.random() > 0.05; // 95% success rate
+        agt_status = isAccepted ? 'accepted' : 'rejected';
+      } else {
+        agt_status = 'sent'; // In traditional mode, it's considered "sent" to the system
+      }
+
+      // Digital Signature
+      const signatureData = DigitalSignatureService.signDocument(store.owner_id, store_id, {
+        invoice_number,
+        total_amount,
+        date: new Date().toISOString(),
+        items: JSON.stringify(items)
+      });
+
+      const info = db.prepare(`
+        INSERT INTO transactions (
+          store_id, seller_id, cash_register_id, total_amount, items, payment_method, 
+          cash_received, split_details, client_name, client_nif,
+          discount_percent, discount_amount, tax_amount, invoice_number, agt_status, billing_mode,
+          hash, signature, prev_signature, key_version_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        store_id, 
+        seller_id, 
+        cash_register_id || null,
+        total_amount, 
+        JSON.stringify(items),
+        payment_method || 'cash',
+        cash_received !== undefined && cash_received !== null ? cash_received : total_amount,
+        split_details ? JSON.stringify(split_details) : null,
+        client_name || 'Consumidor Final',
+        client_nif || '999999999',
+        discount_percent || 0,
+        discount_amount || 0,
+        tax_amount || 0,
+        invoice_number,
+        agt_status,
+        billing_mode,
+        signatureData.hash,
+        signatureData.signature,
+        signatureData.prev_signature,
+        signatureData.key_version_id
+      );
+      
+      // Update stock
+      for (const item of items) {
+        if (item.type === 'product') {
+          db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.id);
         }
-        const fileName = `SAFT_${invoice_number.replace(/[\/\s]/g, '_')}.json`;
-        fs.writeFileSync(path.join(saftDir, fileName), JSON.stringify(saftData, null, 2));
-        console.log(`SAF-T file saved: ${fileName}`);
-
-        // 2. Submit to AGT (Mock)
-        console.log(`Submitting invoice ${invoice_number} to AGT...`);
-        // In a real scenario, we would use fetch() to send the JSON to AGT API
-        db.prepare("UPDATE transactions SET agt_status = 'sent' WHERE id = ?").run(sale.id);
+      }
+      
+      const sale = db.prepare("SELECT * FROM transactions WHERE id = ?").get(info.lastInsertRowid) as any;
+      if (sale) {
+        sale.items = typeof sale.items === 'string' ? JSON.parse(sale.items) : (sale.items || []);
+        if (sale.split_details) sale.split_details = typeof sale.split_details === 'string' ? JSON.parse(sale.split_details) : sale.split_details;
         
-      } catch (saftError) {
-        console.error("Error generating SAF-T or submitting to AGT:", saftError);
-        db.prepare("UPDATE transactions SET agt_status = 'error' WHERE id = ?").run(sale.id);
+        // Record in financial_transactions
+        try {
+          const storeData = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(store_id) as any;
+          if (storeData) {
+            db.prepare(`
+              INSERT INTO financial_transactions (
+                store_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
+              ) VALUES (?, ?, 'income', 'Venda POS', ?, ?, ?, ?, 'paid', ?)
+            `).run(
+              store_id, storeData.owner_id, total_amount, payment_method || 'cash',
+              `Venda POS - Fatura ${invoice_number}`, new Date().toISOString(), sale.id
+            );
+          }
+        } catch (finError) {
+          console.error("Error recording financial transaction for sale:", finError);
+        }
+        // --- SAF-T JSON Generation & AGT Submission ---
+        try {
+          const storeData = db.prepare("SELECT * FROM stores WHERE id = ?").get(store_id) as any;
+          const saftData = {
+            Header: {
+              InvoiceNo: invoice_number,
+              InvoiceDate: new Date(sale.timestamp).toISOString().split('T')[0],
+              SystemEntryDate: new Date(sale.timestamp).toISOString(),
+              StoreName: storeData.name,
+              StoreNIF: storeData.nif,
+              ClientName: client_name || 'Consumidor Final',
+              ClientNIF: client_nif || '999999999'
+            },
+            Items: sale.items.map((item: any) => {
+              const itemTaxPercentage = item.tax_percentage !== undefined ? item.tax_percentage : 14;
+              return {
+                ProductCode: item.barcode || item.id,
+                ProductDescription: item.name,
+                Quantity: item.quantity,
+                UnitPrice: item.price,
+                TaxAmount: (item.price * item.quantity * (itemTaxPercentage / 100)),
+                TotalAmount: item.price * item.quantity
+              };
+            }),
+            Totals: {
+              GrossTotal: total_amount,
+              TaxPayable: tax_amount,
+              NetTotal: total_amount - tax_amount
+            }
+          };
+
+          // 1. Save to local folder
+          const saftDir = path.join(process.cwd(), "saft_files");
+          if (!fs.existsSync(saftDir)) {
+            fs.mkdirSync(saftDir, { recursive: true });
+          }
+          const fileName = `SAFT_${invoice_number.replace(/[\/\s]/g, '_')}.json`;
+          fs.writeFileSync(path.join(saftDir, fileName), JSON.stringify(saftData, null, 2));
+          console.log(`SAF-T file saved: ${fileName}`);
+
+          // 2. Submit to AGT (Mock)
+          console.log(`Submitting invoice ${invoice_number} to AGT...`);
+          // In a real scenario, we would use fetch() to send the JSON to AGT API
+          // Only update to 'sent' if it's not already 'accepted' or 'rejected'
+          if (billing_mode !== 'eletronica') {
+            db.prepare("UPDATE transactions SET agt_status = 'sent' WHERE id = ?").run(sale.id);
+          }
+          
+        } catch (saftError) {
+          console.error("Error generating SAF-T or submitting to AGT:", saftError);
+          db.prepare("UPDATE transactions SET agt_status = 'error' WHERE id = ?").run(sale.id);
+        }
+        // ----------------------------------------------
       }
-      // ----------------------------------------------
+      
+      res.json({ success: true, sale });
+    } catch (error: any) {
+      console.error("Error finalizing sale:", error);
+      res.status(500).json({ error: error.message || "Erro interno ao finalizar venda." });
     }
-    
-    res.json({ success: true, sale });
   });
 
   app.get("/api/seller/sales/:sellerId", (req, res) => {
     const sellerId = req.params.sellerId;
     
-    // Standard transactions (FS)
+    // Standard transactions (FR)
     const transactions = db.prepare(`
-      SELECT t.*, s.name as store_name, 'FS' as doc_type
+      SELECT t.*, s.name as store_name, 'FR' as doc_type
       FROM transactions t
       JOIN stores s ON t.store_id = s.id
       WHERE t.seller_id = ?
@@ -4536,20 +5054,31 @@ async function startServer() {
           finalNumber = `${doc_type} ${finalSeries}/${nextNum.toString().padStart(3, '0')}`;
         }
 
+        // Digital Signature
+        const store = db.prepare("SELECT owner_id FROM stores WHERE id = ?").get(store_id) as any;
+        const signatureData = DigitalSignatureService.signDocument(store.owner_id, store_id, {
+          invoice_number: finalNumber,
+          total_amount,
+          date: invoice_date || new Date().toISOString(),
+          items: JSON.stringify(items)
+        });
+
         const result = db.prepare(`
           INSERT INTO credit_invoices (
             store_id, client_nif, client_name, address, country, 
             doc_type, series, invoice_number, invoice_date, 
             currency, total_amount, tax_amount, items, seller_id,
             payment_method, parent_invoice_id, reason, note_category,
-            adjustment_amount, observations
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            adjustment_amount, observations,
+            hash, signature, prev_signature, key_version_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           store_id, client_nif, client_name, address, country, 
           doc_type, finalSeries, finalNumber, invoice_date, 
           currency, total_amount, tax_amount, JSON.stringify(items), seller_id || null,
           payment_method || 'cash', parent_invoice_id || null, reason || null, 
-          note_category || null, adjustment_amount || 0, observations || null
+          note_category || null, adjustment_amount || 0, observations || null,
+          signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.key_version_id
         );
 
         const invoiceId = result.lastInsertRowid;

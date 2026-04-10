@@ -481,8 +481,8 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                   const rolePerms = role ? (typeof role.permissions === 'string' ? JSON.parse(role.permissions) : role.permissions) : [];
                                   
                                   setEmployeeForm({
-                                    name: emp.name,
-                                    email: emp.email,
+                                    name: emp.name || '',
+                                    email: emp.email || '',
                                     username: emp.username || '',
                                     password: '',
                                     role: emp.role,
@@ -547,7 +547,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                           onClick={() => {
                             setEditingRole(role);
                             setRoleForm({ 
-                              name: role.name, 
+                              name: role.name || '', 
                               base_role: role.base_role || 'seller',
                               permissions: typeof role.permissions === 'string' ? JSON.parse(role.permissions) : role.permissions 
                             });

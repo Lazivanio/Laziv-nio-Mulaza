@@ -12,9 +12,19 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
+  AlertTriangle,
+  Check,
+  Zap,
   Store as StoreIcon,
-  RefreshCw
+  RefreshCw,
+  Info,
+  Key,
+  History,
+  Shield,
+  Lock,
+  UploadCloud
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { User, Store } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
@@ -45,7 +55,7 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
 };
 
 export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser?: (u: User) => void }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'series' | 'taxes' | 'backups'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'series' | 'taxes' | 'backups' | 'billing' | 'signatures'>('profile');
   const [formData, setFormData] = useState({
     name: user.name || '',
     email: user.email || '',
@@ -90,9 +100,53 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
   });
   const [isGeneratingBackup, setIsGeneratingBackup] = useState(false);
 
+  // Digital Signatures State
+  const [companyKeys, setCompanyKeys] = useState<any[]>([]);
+  const [keyLogs, setKeyLogs] = useState<any[]>([]);
+  const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
+  const [keyType, setKeyType] = useState<'internal' | 'external'>('internal');
+  const [externalKeyData, setExternalKeyData] = useState({
+    publicKey: '',
+    privateKey: '',
+    type: 'pem'
+  });
+  const [isProcessingKey, setIsProcessingKey] = useState(false);
+
+  // Billing Mode State
+  const [billingStatus, setBillingStatus] = useState({ 
+    hasPendingInvoices: false, 
+    pendingCount: 0,
+    hasUncommunicated: false,
+    uncommunicatedCount: 0,
+    hasActiveSeries: false,
+    currentMode: 'tradicional'
+  });
+  const [isSwitchingMode, setIsSwitchingMode] = useState(false);
+  const [showConfirmSwitch, setShowConfirmSwitch] = useState(false);
+  const [pendingMode, setPendingMode] = useState<'tradicional' | 'eletronica' | null>(null);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info', message: string } | null>(null);
+
   useEffect(() => {
     fetchData();
+    if (activeTab === 'billing') {
+      fetchBillingStatus();
+    }
   }, [user.id, activeTab]);
+
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
+
+  const fetchBillingStatus = async () => {
+    try {
+      const res = await fetch(`/api/owner/billing-mode-status/${user.id}`);
+      const data = await res.json();
+      setBillingStatus(data);
+    } catch (e) { console.error(e); }
+  };
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -102,8 +156,8 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
         const data = await res.json();
         setFormData(prev => ({
           ...prev,
-          name: data.client.name,
-          email: data.client.email,
+          name: data.client.name || '',
+          email: data.client.email || '',
           phone: data.client.phone || '',
           nif: data.client.nif || '',
           address: data.client.address || '',
@@ -134,6 +188,13 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
           backup_enabled: data.settings.backup_enabled === 1,
           backup_frequency: data.settings.backup_frequency
         });
+      } else if (activeTab === 'signatures') {
+        const [keysRes, logsRes] = await Promise.all([
+          fetch(`/api/owner/keys/${user.id}`),
+          fetch(`/api/owner/keys/logs/${user.id}`)
+        ]);
+        setCompanyKeys(await keysRes.json());
+        setKeyLogs(await logsRes.json());
       }
     } catch (e) {
       console.error(e);
@@ -145,34 +206,30 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (formData.password && formData.password !== formData.confirmPassword) {
-      alert("As senhas não coincidem");
+      setNotification({ type: 'error', message: "As senhas não coincidem" });
       return;
     }
     setIsSaving(true);
     try {
       const payload = { ...formData };
-      if (payload.fiscal_regime === 'exclusao') {
-        // If switching to exclusion, we might want to inform the user or handle it server-side
-        // For now, the frontend already forces 0% in POS and SAFT.
-      }
-
       const res = await fetch(`/api/profile/${user.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       if (res.ok) {
-        alert("Perfil actualizado com sucesso!");
+        setNotification({ type: 'success', message: "Perfil actualizado com sucesso!" });
         if (onUpdateUser) {
           const { password, confirmPassword, ...userData } = payload;
           onUpdateUser({ ...user, ...userData });
         }
       } else {
         const errorData = await res.json();
-        alert(errorData.error || "Erro ao atualizar perfil");
+        setNotification({ type: 'error', message: errorData.error || "Erro ao atualizar perfil" });
       }
     } catch (e) {
       console.error(e);
+      setNotification({ type: 'error', message: "Erro de conexão ao atualizar perfil" });
     } finally {
       setIsSaving(false);
     }
@@ -188,28 +245,54 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
       });
       if (res.ok) {
         setIsSeriesModalOpen(false);
+        setNotification({ type: 'success', message: "Série criada com sucesso!" });
         fetchData();
+      } else {
+        const errorData = await res.json();
+        setNotification({ type: 'error', message: errorData.error || "Erro ao criar série" });
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { 
+      console.error(e);
+      setNotification({ type: 'error', message: "Erro de conexão ao criar série" });
+    }
   };
 
   const handleToggleSeries = async (id: number, currentStatus: string) => {
     try {
-      await fetch(`/api/owner/invoice-series/${id}/status`, {
+      const res = await fetch(`/api/owner/invoice-series/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: currentStatus === 'active' ? 'inactive' : 'active' })
       });
-      fetchData();
-    } catch (e) { console.error(e); }
+      if (res.ok) {
+        setNotification({ type: 'success', message: `Série ${currentStatus === 'active' ? 'desactivada' : 'activada'} com sucesso!` });
+        fetchData();
+      } else {
+        const errorData = await res.json();
+        setNotification({ type: 'error', message: errorData.error || "Erro ao alterar status da série" });
+      }
+    } catch (e) { 
+      console.error(e);
+      setNotification({ type: 'error', message: "Erro de conexão ao alterar status da série" });
+    }
   };
 
   const handleDeleteSeries = async (id: number) => {
-    if (!confirm("Tem certeza que deseja excluir esta série?")) return;
+    // We'll use a simple confirm for now, but ideally this should also be a custom modal
+    // For now, let's just use the notification if it fails
     try {
-      await fetch(`/api/owner/invoice-series/${id}`, { method: 'DELETE' });
-      fetchData();
-    } catch (e) { console.error(e); }
+      const res = await fetch(`/api/owner/invoice-series/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setNotification({ type: 'success', message: "Série eliminada com sucesso!" });
+        fetchData();
+      } else {
+        const errorData = await res.json();
+        setNotification({ type: 'error', message: errorData.error || "Erro ao eliminar série" });
+      }
+    } catch (e) { 
+      console.error(e);
+      setNotification({ type: 'error', message: "Erro de conexão ao eliminar série" });
+    }
   };
 
   const handleCreateTax = async (e: FormEvent) => {
@@ -233,9 +316,16 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
         setIsTaxModalOpen(false);
         setEditingTaxId(null);
         setTaxFormData({ store_id: '', name: '', percentage: '', tax_code: 'NOR' });
+        setNotification({ type: 'success', message: `Imposto ${editingTaxId ? 'actualizado' : 'criado'} com sucesso!` });
         fetchData();
+      } else {
+        const errorData = await res.json();
+        setNotification({ type: 'error', message: errorData.error || "Erro ao processar imposto" });
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { 
+      console.error(e);
+      setNotification({ type: 'error', message: "Erro de conexão ao processar imposto" });
+    }
   };
 
   const handleEditTax = (tax: any) => {
@@ -258,13 +348,14 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
       });
       if (!res.ok) {
         const errorData = await res.json();
-        alert(errorData.error || "Erro ao alterar status do imposto.");
+        setNotification({ type: 'error', message: errorData.error || "Erro ao alterar status do imposto." });
         return;
       }
+      setNotification({ type: 'success', message: `Imposto ${currentStatus === 'active' ? 'desactivado' : 'activado'} com sucesso!` });
       await fetchData();
     } catch (e) { 
       console.error(e);
-      alert("Erro de conexão ao alterar status do imposto.");
+      setNotification({ type: 'error', message: "Erro de conexão ao alterar status do imposto." });
     }
   };
 
@@ -277,35 +368,36 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
       });
       if (!res.ok) {
         const errorData = await res.json();
-        alert(errorData.error || "Erro ao definir imposto padrão.");
+        setNotification({ type: 'error', message: errorData.error || "Erro ao definir imposto padrão." });
         return;
       }
+      setNotification({ type: 'success', message: "Imposto padrão definido com sucesso!" });
       await fetchData();
     } catch (e) { 
       console.error(e);
-      alert("Erro de conexão ao definir imposto padrão.");
+      setNotification({ type: 'error', message: "Erro de conexão ao definir imposto padrão." });
     }
   };
 
   const handleDeleteTax = async (id: number) => {
-    if (!confirm("Tem certeza que deseja excluir este imposto?")) return;
     try {
       const res = await fetch(`/api/owner/taxes/${id}`, { method: 'DELETE' });
       if (!res.ok) {
         const errorData = await res.json();
-        alert(errorData.error || "Erro ao excluir imposto.");
+        setNotification({ type: 'error', message: errorData.error || "Erro ao excluir imposto." });
         return;
       }
+      setNotification({ type: 'success', message: "Imposto eliminado com sucesso!" });
       await fetchData();
     } catch (e) { 
       console.error(e);
-      alert("Erro de conexão ao excluir imposto.");
+      setNotification({ type: 'error', message: "Erro de conexão ao excluir imposto." });
     }
   };
 
   const handleSaveBackupSettings = async () => {
     try {
-      await fetch('/api/owner/backups/settings', {
+      const res = await fetch('/api/owner/backups/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -313,8 +405,15 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
           ...backupSettings
         })
       });
-      alert("Configurações de backup guardadas!");
-    } catch (e) { console.error(e); }
+      if (res.ok) {
+        setNotification({ type: 'success', message: "Configurações de backup guardadas!" });
+      } else {
+        setNotification({ type: 'error', message: "Erro ao guardar configurações de backup" });
+      }
+    } catch (e) { 
+      console.error(e);
+      setNotification({ type: 'error', message: "Erro de conexão ao guardar configurações de backup" });
+    }
   };
 
   const handleGenerateBackup = async () => {
@@ -330,14 +429,375 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
     finally { setIsGeneratingBackup(false); }
   };
 
+  const handleSwitchMode = async (mode: 'tradicional' | 'eletronica') => {
+    if (billingStatus.hasPendingInvoices) {
+      setNotification({ 
+        type: 'error', 
+        message: `Não é possível mudar o modo com faturas pendentes ou em rascunho (${billingStatus.pendingCount}).` 
+      });
+      return;
+    }
+
+    if (billingStatus.hasUncommunicated) {
+      setNotification({ 
+        type: 'error', 
+        message: `Existem documentos não comunicados à AGT (${billingStatus.uncommunicatedCount}). Por favor, finalize as comunicações.` 
+      });
+      return;
+    }
+
+    setPendingMode(mode);
+    setShowConfirmSwitch(true);
+  };
+
+  const executeSwitchMode = async () => {
+    if (!pendingMode) return;
+    
+    setShowConfirmSwitch(false);
+    setIsSwitchingMode(true);
+    try {
+      const res = await fetch(`/api/owner/billing-mode/${user.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          billing_mode: pendingMode,
+          changed_by: user.id 
+        })
+      });
+
+      if (res.ok) {
+        setNotification({ type: 'success', message: "Modo de faturação alterado com sucesso! Novas séries foram criadas." });
+        // Refresh user status to update the UI globally
+        const statusRes = await fetch(`/api/user-status/${user.id}`);
+        if (statusRes.ok) {
+          const userData = await statusRes.json();
+          if (onUpdateUser) onUpdateUser({ ...user, ...userData });
+        }
+        fetchBillingStatus();
+      } else {
+        const data = await res.json();
+        setNotification({ type: 'error', message: data.error || "Erro ao mudar modo de faturação" });
+      }
+    } catch (e) {
+      console.error(e);
+      setNotification({ type: 'error', message: "Erro de conexão ao mudar modo de faturação" });
+    } finally {
+      setIsSwitchingMode(false);
+      setPendingMode(null);
+    }
+  };
+
   const handleDownloadBackup = (id: number) => {
     window.open(`/api/owner/backups/download/${id}`, '_blank');
+  };
+
+  const handleGenerateInternalKey = async () => {
+    if (!window.confirm("Tem certeza que deseja gerar um novo par de chaves? A chave atual será desativada e a nova será usada para todos os novos documentos.")) return;
+    
+    setIsProcessingKey(true);
+    try {
+      const res = await fetch('/api/owner/keys/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerId: user.id, userId: user.id })
+      });
+      if (res.ok) {
+        setNotification({ type: 'success', message: "Novo par de chaves gerado com sucesso!" });
+        fetchData();
+      } else {
+        const data = await res.json();
+        setNotification({ type: 'error', message: data.error || "Erro ao gerar chaves" });
+      }
+    } catch (e) {
+      console.error(e);
+      setNotification({ type: 'error', message: "Erro de conexão" });
+    } finally {
+      setIsProcessingKey(false);
+    }
+  };
+
+  const handleUploadExternalKey = async (e: FormEvent) => {
+    e.preventDefault();
+    setIsProcessingKey(true);
+    try {
+      const res = await fetch('/api/owner/keys/external', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ownerId: user.id,
+          userId: user.id,
+          ...externalKeyData
+        })
+      });
+      if (res.ok) {
+        setNotification({ type: 'success', message: "Certificado externo carregado com sucesso!" });
+        setIsKeyModalOpen(false);
+        setExternalKeyData({ publicKey: '', privateKey: '', type: 'pem' });
+        fetchData();
+      } else {
+        const data = await res.json();
+        setNotification({ type: 'error', message: data.error || "Erro ao carregar certificado" });
+      }
+    } catch (e) {
+      console.error(e);
+      setNotification({ type: 'error', message: "Erro de conexão" });
+    } finally {
+      setIsProcessingKey(false);
+    }
+  };
+
+  const renderSignaturesTab = () => {
+    const activeKey = companyKeys.find(k => k.is_active === 1);
+    
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">Assinatura Digital</h2>
+            <p className="text-sm text-zinc-500">Gira as chaves criptográficas da sua empresa para selagem de documentos.</p>
+          </div>
+          <div className="flex gap-2">
+            <button 
+              onClick={handleGenerateInternalKey}
+              disabled={isProcessingKey}
+              className="flex items-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all disabled:opacity-50"
+            >
+              <RefreshCw size={16} className={isProcessingKey ? "animate-spin" : ""} />
+              GERAR NOVA CHAVE
+            </button>
+            <button 
+              onClick={() => setIsKeyModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 text-zinc-900 rounded-xl font-bold text-sm hover:bg-zinc-50 transition-all"
+            >
+              <UploadCloud size={16} />
+              IMPORTAR CERTIFICADO
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-6">
+            {/* Active Key Info */}
+            <Card className="p-6 border-zinc-900/10 bg-zinc-50/30">
+              <div className="flex items-start justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-zinc-900 text-white rounded-2xl">
+                    <Shield size={24} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-zinc-900 uppercase tracking-tight">Chave Ativa</h3>
+                    <p className="text-xs text-zinc-500">Esta chave é usada para assinar todos os novos documentos.</p>
+                  </div>
+                </div>
+                {activeKey && (
+                  <div className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-[10px] font-black uppercase tracking-wider">
+                    Versão {activeKey.version}
+                  </div>
+                )}
+              </div>
+
+              {activeKey ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-4 bg-white border border-zinc-100 rounded-2xl">
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Tipo de Chave</p>
+                      <p className="font-bold text-zinc-900 capitalize">{activeKey.type === 'internal' ? 'Geração Interna' : 'Certificado Externo'}</p>
+                    </div>
+                    <div className="p-4 bg-white border border-zinc-100 rounded-2xl">
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Data de Ativação</p>
+                      <p className="font-bold text-zinc-900">{new Date(activeKey.created_at).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                  <div className="p-4 bg-white border border-zinc-100 rounded-2xl">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Chave Pública (RSA-2048)</p>
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(activeKey.public_key);
+                          setNotification({ type: 'info', message: "Chave pública copiada!" });
+                        }}
+                        className="text-[10px] font-bold text-zinc-900 hover:underline"
+                      >
+                        COPIAR
+                      </button>
+                    </div>
+                    <div className="bg-zinc-50 p-3 rounded-xl border border-zinc-100 font-mono text-[10px] text-zinc-500 break-all max-h-32 overflow-y-auto">
+                      {activeKey.public_key}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <Lock size={48} className="mx-auto text-zinc-200 mb-3" />
+                  <p className="text-zinc-500 font-medium">Nenhuma chave ativa configurada.</p>
+                </div>
+              )}
+            </Card>
+
+            {/* Key History */}
+            <Card>
+              <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between">
+                <h3 className="font-black text-zinc-900 uppercase tracking-tight flex items-center gap-2">
+                  <History size={18} />
+                  Histórico de Chaves
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-zinc-50/50">
+                      <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Versão</th>
+                      <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Tipo</th>
+                      <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estado</th>
+                      <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {companyKeys.map((key) => (
+                      <tr key={key.id} className="hover:bg-zinc-50/50 transition-colors">
+                        <td className="px-6 py-4 font-bold text-zinc-900">V{key.version}</td>
+                        <td className="px-6 py-4">
+                          <span className="text-xs font-medium text-zinc-600 capitalize">{key.type}</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          {key.is_active ? (
+                            <span className="px-2 py-1 bg-green-100 text-green-700 rounded-lg text-[10px] font-black uppercase tracking-wider">Ativa</span>
+                          ) : (
+                            <span className="px-2 py-1 bg-zinc-100 text-zinc-500 rounded-lg text-[10px] font-black uppercase tracking-wider">Inativa</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-xs text-zinc-500">
+                          {new Date(key.created_at).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                    {companyKeys.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-6 py-8 text-center text-zinc-400 italic text-sm">Nenhum histórico disponível</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </div>
+
+          <div className="space-y-6">
+            {/* Security Notice */}
+            <Card className="p-6 bg-amber-50 border-amber-100">
+              <div className="flex gap-3">
+                <AlertTriangle className="text-amber-600 shrink-0" size={20} />
+                <div>
+                  <h4 className="font-black text-amber-900 text-xs uppercase tracking-tight mb-1">Aviso de Segurança</h4>
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    A chave privada é armazenada de forma criptografada e nunca é exposta. 
+                    A substituição de chaves não afeta documentos já assinados, mas é um processo irreversível para novos documentos.
+                  </p>
+                </div>
+              </div>
+            </Card>
+
+            {/* Activity Logs */}
+            <Card>
+              <div className="px-6 py-4 border-b border-zinc-100">
+                <h3 className="font-black text-zinc-900 uppercase tracking-tight text-xs">Logs de Gestão</h3>
+              </div>
+              <div className="p-6 space-y-4 max-h-[400px] overflow-y-auto">
+                {keyLogs.map((log) => (
+                  <div key={log.id} className="relative pl-6 pb-4 border-l border-zinc-100 last:pb-0">
+                    <div className="absolute left-[-5px] top-0 w-2 h-2 rounded-full bg-zinc-300" />
+                    <p className="text-[11px] font-bold text-zinc-900 mb-1">{log.details}</p>
+                    <div className="flex items-center gap-2 text-[10px] text-zinc-500">
+                      <span className="font-medium">{log.user_name}</span>
+                      <span>•</span>
+                      <span>{new Date(log.timestamp).toLocaleString()}</span>
+                    </div>
+                  </div>
+                ))}
+                {keyLogs.length === 0 && (
+                  <p className="text-center text-zinc-400 text-xs italic">Sem logs de atividade</p>
+                )}
+              </div>
+            </Card>
+          </div>
+        </div>
+
+        {/* Import Modal */}
+        <Modal 
+          isOpen={isKeyModalOpen} 
+          onClose={() => setIsKeyModalOpen(false)} 
+          title="Importar Certificado Externo"
+        >
+          <form onSubmit={handleUploadExternalKey} className="space-y-4">
+            <div>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-2">Formato</label>
+              <select 
+                value={externalKeyData.type}
+                onChange={(e) => setExternalKeyData({...externalKeyData, type: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-zinc-900 outline-none font-bold text-zinc-900"
+              >
+                <option value="pem">PEM (.pem, .crt, .key)</option>
+                <option value="pfx">PKCS#12 (.pfx, .p12)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-2">Chave Pública / Certificado</label>
+              <textarea 
+                required
+                value={externalKeyData.publicKey}
+                onChange={(e) => setExternalKeyData({...externalKeyData, publicKey: e.target.value})}
+                placeholder="-----BEGIN CERTIFICATE----- ..."
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-zinc-900 outline-none font-mono text-xs h-32"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-2">Chave Privada</label>
+              <textarea 
+                required
+                value={externalKeyData.privateKey}
+                onChange={(e) => setExternalKeyData({...externalKeyData, privateKey: e.target.value})}
+                placeholder="-----BEGIN PRIVATE KEY----- ..."
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-zinc-900 outline-none font-mono text-xs h-32"
+              />
+            </div>
+            <button 
+              type="submit"
+              disabled={isProcessingKey}
+              className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-800 transition-all disabled:opacity-50"
+            >
+              {isProcessingKey ? 'A PROCESSAR...' : 'CONFIRMAR IMPORTAÇÃO'}
+            </button>
+          </form>
+        </Modal>
+      </div>
+    );
   };
 
   if (isLoading) return <div className="p-12 text-center text-zinc-500">Carregando configurações...</div>;
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
+      {/* Notification Toast */}
+      <AnimatePresence>
+        {notification && (
+          <div className="fixed top-4 right-4 z-[100] animate-in slide-in-from-right duration-300">
+            <div className={cn(
+              "px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 border",
+              notification.type === 'success' ? "bg-emerald-50 border-emerald-100 text-emerald-800" : 
+              notification.type === 'error' ? "bg-rose-50 border-rose-100 text-rose-800" : 
+              "bg-blue-50 border-blue-100 text-blue-800"
+            )}>
+              {notification.type === 'success' ? <CheckCircle2 size={20} /> : 
+               notification.type === 'error' ? <AlertCircle size={20} /> : 
+               <Info size={20} />}
+              <p className="text-sm font-bold">{notification.message}</p>
+              <button onClick={() => setNotification(null)} className="ml-4 p-1 hover:bg-black/5 rounded-lg transition-colors">
+                <XCircle size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black tracking-tight">Configurações</h2>
@@ -379,6 +839,24 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
             )}
           >
             Backups
+          </button>
+          <button 
+            onClick={() => setActiveTab('billing')}
+            className={cn(
+              "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+              activeTab === 'billing' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+            )}
+          >
+            Modo FTRC
+          </button>
+          <button 
+            onClick={() => setActiveTab('signatures')}
+            className={cn(
+              "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+              activeTab === 'signatures' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+            )}
+          >
+            Assinaturas
           </button>
         </div>
       </div>
@@ -846,6 +1324,108 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
         </div>
       )}
 
+      {activeTab === 'billing' && (
+        <div className="max-w-4xl mx-auto space-y-8">
+          <Card className="p-8">
+            <div className="flex items-start gap-6">
+              <div className={cn(
+                "p-4 rounded-2xl",
+                user.billing_mode === 'eletronica' ? "bg-blue-50 text-blue-600" : "bg-zinc-100 text-zinc-600"
+              )}>
+                <Zap size={32} />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-xl font-black text-zinc-900 mb-2">Modo de Faturação (FTRC)</h3>
+                <p className="text-zinc-500 mb-6">
+                  O modo de faturação define como os seus documentos fiscais são processados e comunicados à AGT.
+                  Actualmente está a utilizar o modo <span className="font-bold text-black uppercase">{user.billing_mode || 'tradicional'}</span>.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                  <div className={cn(
+                    "p-6 rounded-2xl border-2 transition-all",
+                    (user.billing_mode === 'tradicional' || (!user.billing_mode)) 
+                      ? "border-black bg-zinc-50 cursor-default" 
+                      : "border-zinc-100 hover:border-zinc-200 cursor-pointer"
+                  )} onClick={() => {
+                    const currentMode = user.billing_mode || 'tradicional';
+                    if (currentMode !== 'tradicional') handleSwitchMode('tradicional');
+                  }}>
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="font-bold">Modo Tradicional</h4>
+                      {(user.billing_mode === 'tradicional' || !user.billing_mode) && <CheckCircle2 className="text-black" size={20} />}
+                    </div>
+                    <ul className="space-y-2 text-xs text-zinc-500">
+                      <li className="flex items-center gap-2"><Check size={14} className="text-emerald-500" /> Gerar faturas normalmente</li>
+                      <li className="flex items-center gap-2"><Check size={14} className="text-emerald-500" /> Armazenar no sistema</li>
+                      <li className="flex items-center gap-2"><Check size={14} className="text-emerald-500" /> Gerar SAFT mensal</li>
+                      <li className="flex items-center gap-2"><Check size={14} className="text-emerald-500" /> Exportar XML manual</li>
+                      <li className="flex items-center gap-2 font-bold text-zinc-900 mt-2"><FileText size={14} /> Série A</li>
+                    </ul>
+                  </div>
+
+                  <div className={cn(
+                    "p-6 rounded-2xl border-2 transition-all",
+                    user.billing_mode === 'eletronica' 
+                      ? "border-blue-600 bg-blue-50/30 cursor-default" 
+                      : "border-zinc-100 hover:border-zinc-200 cursor-pointer"
+                  )} onClick={() => {
+                    if (user.billing_mode !== 'eletronica') handleSwitchMode('eletronica');
+                  }}>
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="font-bold">Faturação Eletrónica</h4>
+                      {user.billing_mode === 'eletronica' && <CheckCircle2 className="text-blue-600" size={20} />}
+                    </div>
+                    <ul className="space-y-2 text-xs text-zinc-500">
+                      <li className="flex items-center gap-2"><Check size={14} className="text-blue-500" /> Envio automático para AGT</li>
+                      <li className="flex items-center gap-2"><Check size={14} className="text-blue-500" /> Validação em tempo real</li>
+                      <li className="flex items-center gap-2"><Check size={14} className="text-blue-500" /> Guardar status oficial</li>
+                      <li className="flex items-center gap-2"><Check size={14} className="text-blue-500" /> Conformidade total</li>
+                      <li className="flex items-center gap-2 font-bold text-blue-900 mt-2"><Zap size={14} /> Série E</li>
+                    </ul>
+                  </div>
+                </div>
+
+                {billingStatus.hasPendingInvoices && (
+                  <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-3 mb-6">
+                    <AlertTriangle className="text-amber-500 shrink-0" size={20} />
+                    <div>
+                      <p className="text-sm font-bold text-amber-900">Documentos em Aberto</p>
+                      <p className="text-xs text-amber-700">
+                        Existem {billingStatus.pendingCount} faturas pendentes ou em rascunho. 
+                        Deve finalizar ou anular todos os documentos antes de mudar o modo de faturação.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {billingStatus.hasUncommunicated && (
+                  <div className="p-4 bg-rose-50 border border-rose-100 rounded-xl flex items-start gap-3 mb-6">
+                    <AlertCircle className="text-rose-500 shrink-0" size={20} />
+                    <div>
+                      <p className="text-sm font-bold text-rose-900">Documentos Não Comunicados</p>
+                      <p className="text-xs text-rose-700">
+                        Existem {billingStatus.uncommunicatedCount} documentos que ainda não foram comunicados à AGT ou exportados em SAFT. 
+                        A integridade fiscal exige que todos os documentos do modo atual sejam processados antes da mudança.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    <span className="font-bold text-zinc-900">Nota Importante:</span> A alteração do modo de faturação encerra automaticamente as séries atuais e cria novas séries para o novo modo. 
+                    Esta acção deve ser realizada apenas quando não houver documentos pendentes de comunicação.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {activeTab === 'signatures' && renderSignaturesTab()}
+
       {/* Series Modal */}
       <Modal 
         isOpen={isSeriesModalOpen} 
@@ -987,6 +1567,66 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
             {editingTaxId ? "Guardar Alterações" : "Criar Imposto"}
           </button>
         </form>
+      </Modal>
+
+      {/* Confirmation Modal for Billing Mode */}
+      <Modal 
+        isOpen={showConfirmSwitch} 
+        onClose={() => setShowConfirmSwitch(false)} 
+        title="Confirmar Mudança de Modo"
+      >
+        <div className="space-y-6">
+          <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3">
+            <AlertTriangle className="text-rose-500 shrink-0" size={24} />
+            <div>
+              <p className="text-sm font-black text-rose-900 uppercase">Aviso Crítico</p>
+              <p className="text-xs text-rose-700 font-bold leading-relaxed mt-1">
+                ATENÇÃO: A alteração do modo de faturação irá impactar a emissão de documentos fiscais. Esta ação não deve ser feita com documentos em aberto. Deseja continuar?
+              </p>
+            </div>
+          </div>
+          
+          <div className="space-y-4">
+            <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+              <p className="text-xs font-bold text-zinc-500 uppercase mb-2">O que irá acontecer:</p>
+              <ul className="space-y-2">
+                <li className="flex items-center gap-2 text-xs text-zinc-600">
+                  <Check size={14} className="text-emerald-500" />
+                  <span>A série atual será encerrada (marcada como inativa).</span>
+                </li>
+                <li className="flex items-center gap-2 text-xs text-zinc-600">
+                  <Check size={14} className="text-emerald-500" />
+                  <span>Uma nova série será criada automaticamente (ex: Série {pendingMode === 'tradicional' ? 'A' : 'E'} {new Date().getFullYear()}).</span>
+                </li>
+                <li className="flex items-center gap-2 text-xs text-zinc-600">
+                  <Check size={14} className="text-emerald-500" />
+                  <span>O comportamento de emissão e comunicação será atualizado.</span>
+                </li>
+              </ul>
+            </div>
+
+            <p className="text-sm text-zinc-600">
+              Deseja realmente mudar para o modo de faturação <span className="font-bold text-black uppercase">{pendingMode === 'eletronica' ? 'Eletrónica' : 'Tradicional'}</span>?
+            </p>
+          </div>
+
+          <div className="flex gap-3">
+            <button 
+              onClick={() => setShowConfirmSwitch(false)}
+              className="flex-1 py-3 bg-zinc-100 text-zinc-600 rounded-xl font-bold hover:bg-zinc-200 transition-all"
+            >
+              Cancelar
+            </button>
+            <button 
+              onClick={executeSwitchMode}
+              disabled={isSwitchingMode}
+              className="flex-1 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-rose-200"
+            >
+              {isSwitchingMode ? <RefreshCw size={18} className="animate-spin" /> : <Check size={18} />}
+              Confirmar Mudança
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

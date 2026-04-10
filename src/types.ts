@@ -46,6 +46,7 @@ export interface User {
   permissions?: string[];
   status?: 'active' | 'suspended';
   fiscal_regime?: 'geral' | 'simplificado' | 'exclusao';
+  billing_mode?: 'tradicional' | 'eletronica';
 }
 
 export interface HRRole {
@@ -187,6 +188,8 @@ export interface Service {
   tax_id?: number;
   tax_percentage?: number;
   tax_code?: string;
+  retention_enabled: number;
+  retention_percentage: number;
   created_at: string;
 }
 

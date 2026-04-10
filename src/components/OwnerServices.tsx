@@ -36,6 +36,8 @@ interface Service {
   tax_id?: number;
   tax_percentage?: number;
   tax_code?: string;
+  retention_enabled: number;
+  retention_percentage: number;
   created_at: string;
 }
 
@@ -84,7 +86,9 @@ export const OwnerServices = ({ user }: { user: User }) => {
     price: '',
     availability_condition: 'always' as 'always' | 'product_purchased',
     show_in_pos: 1,
-    tax_id: ''
+    tax_id: '',
+    retention_enabled: 0,
+    retention_percentage: ''
   });
 
   useEffect(() => {
@@ -136,13 +140,16 @@ export const OwnerServices = ({ user }: { user: User }) => {
     const method = editingService ? 'PUT' : 'POST';
 
     try {
+      const isExclusao = user?.fiscal_regime === 'exclusao';
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
           owner_id: user.id,
-          price: Number(formData.price)
+          price: Number(formData.price),
+          retention_enabled: isExclusao ? 0 : formData.retention_enabled,
+          retention_percentage: (isExclusao || formData.retention_enabled === 0) ? 0 : Number(formData.retention_percentage)
         })
       });
 
@@ -157,7 +164,9 @@ export const OwnerServices = ({ user }: { user: User }) => {
           price: '',
           availability_condition: 'always',
           show_in_pos: 1,
-          tax_id: ''
+          tax_id: '',
+          retention_enabled: 0,
+          retention_percentage: ''
         });
         fetchData();
       }
@@ -170,13 +179,15 @@ export const OwnerServices = ({ user }: { user: User }) => {
     setEditingService(service);
     setFormData({
       store_id: service.store_id.toString(),
-      name: service.name,
-      code: service.code,
-      description: service.description,
+      name: service.name || '',
+      code: service.code || '',
+      description: service.description || '',
       price: service.price.toString(),
       availability_condition: service.availability_condition,
       show_in_pos: service.show_in_pos,
-      tax_id: service.tax_id?.toString() || ''
+      tax_id: service.tax_id?.toString() || '',
+      retention_enabled: service.retention_enabled || 0,
+      retention_percentage: service.retention_percentage?.toString() || ''
     });
     setIsModalOpen(true);
   };
@@ -309,6 +320,11 @@ export const OwnerServices = ({ user }: { user: User }) => {
                         {service.tax_code && (
                           <span className="text-[10px] font-black bg-zinc-100 text-zinc-500 px-2 py-0.5 rounded uppercase tracking-wider">
                             {service.tax_code} ({service.tax_percentage}%)
+                          </span>
+                        )}
+                        {service.retention_enabled === 1 && (
+                          <span className="text-[10px] font-black bg-orange-50 text-orange-600 px-2 py-0.5 rounded uppercase tracking-wider">
+                            Retenção ({service.retention_percentage}%)
                           </span>
                         )}
                       </div>
@@ -560,6 +576,74 @@ export const OwnerServices = ({ user }: { user: User }) => {
               </select>
               {user?.fiscal_regime === 'exclusao' && (
                 <p className="text-[10px] text-amber-600 mt-1 font-bold">Bloqueado: Regime de Exclusão exige 0% de IVA (ISENTO).</p>
+              )}
+            </div>
+
+            <div className={cn(
+              "p-4 rounded-2xl border space-y-4 transition-all",
+              user?.fiscal_regime === 'exclusao' 
+                ? "bg-zinc-50 border-zinc-100 opacity-60" 
+                : "bg-orange-50/50 border-orange-100"
+            )}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-black text-zinc-900 uppercase tracking-widest">Retenção na Fonte</h4>
+                  <p className="text-[10px] text-zinc-500 font-medium">
+                    {user?.fiscal_regime === 'exclusao' 
+                      ? "Não aplicável no Regime de Exclusão" 
+                      : "Aplicar desconto de retenção?"}
+                  </p>
+                </div>
+                <div className="flex bg-zinc-200 p-1 rounded-lg">
+                  <button
+                    type="button"
+                    disabled={user?.fiscal_regime === 'exclusao'}
+                    onClick={() => setFormData({...formData, retention_enabled: 1})}
+                    className={cn(
+                      "px-3 py-1 text-[10px] font-black rounded-md transition-all",
+                      formData.retention_enabled === 1 ? "bg-white text-orange-600 shadow-sm" : "text-zinc-500",
+                      user?.fiscal_regime === 'exclusao' && "cursor-not-allowed"
+                    )}
+                  >
+                    SIM
+                  </button>
+                  <button
+                    type="button"
+                    disabled={user?.fiscal_regime === 'exclusao'}
+                    onClick={() => setFormData({...formData, retention_enabled: 0})}
+                    className={cn(
+                      "px-3 py-1 text-[10px] font-black rounded-md transition-all",
+                      formData.retention_enabled === 0 ? "bg-white text-zinc-600 shadow-sm" : "text-zinc-500",
+                      user?.fiscal_regime === 'exclusao' && "cursor-not-allowed"
+                    )}
+                  >
+                    NÃO
+                  </button>
+                </div>
+              </div>
+
+              {formData.retention_enabled === 1 && user?.fiscal_regime !== 'exclusao' && (
+                <div className="animate-in slide-in-from-top-2 duration-200">
+                  <label className="block text-[10px] font-black text-orange-600 uppercase tracking-widest mb-2">Percentagem de Retenção (%)</label>
+                  <div className="relative">
+                    <input 
+                      type="number" step="0.01" required
+                      value={formData.retention_percentage}
+                      onChange={e => setFormData({...formData, retention_percentage: e.target.value})}
+                      className="w-full pl-4 pr-10 py-3 bg-white border border-orange-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all font-bold text-orange-700"
+                      placeholder="Ex: 6.5"
+                    />
+                    <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                      <span className="text-orange-400 font-bold">%</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {user?.fiscal_regime === 'exclusao' && (
+                <p className="text-[10px] text-amber-600 font-bold">
+                  Nota: Empresas no Regime de Exclusão estão isentas de retenção na fonte.
+                </p>
               )}
             </div>
           </div>

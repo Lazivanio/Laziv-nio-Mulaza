@@ -265,7 +265,7 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
                             onClick={() => {
                               setEditingSupplier(supplier);
                               setFormData({
-                                name: supplier.name,
+                                name: supplier.name || '',
                                 company_name: supplier.company_name || '',
                                 nif: supplier.nif || '',
                                 phone: supplier.phone || '',
