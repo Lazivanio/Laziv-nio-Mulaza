@@ -7773,6 +7773,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const [splitAmounts, setSplitAmounts] = useState({ cash: '', card: '' });
   const [cashReceived, setCashReceived] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false);
   const [hasActiveSession, setHasActiveSession] = useState<boolean | null>(null);
   const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
@@ -7796,6 +7797,17 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       setHasActiveSession(false);
       return false;
     }
+  };
+
+  const handleCancelSale = () => {
+    setCart([]);
+    setDiscount(0);
+    setClient({ name: 'Consumidor Final', nif: '999999999' });
+    setCashReceived('');
+    setSplitAmounts({ cash: '', card: '' });
+    setIsPaymentModalOpen(false);
+    setIsFormalInvoiceModalOpen(false);
+    setIsCancelConfirmOpen(false);
   };
 
   const fetchRegisters = () => {
@@ -8864,14 +8876,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               {isProcessing ? 'Processando...' : 'Confirmar Pagamento'}
             </button>
             <button
-              onClick={() => {
-                if (confirm('Tem certeza que deseja cancelar esta venda e limpar o carrinho?')) {
-                  setCart([]);
-                  setDiscount(0);
-                  setClient({ name: 'Consumidor Final', nif: '999999999' });
-                  setIsPaymentModalOpen(false);
-                }
-              }}
+              onClick={() => setIsCancelConfirmOpen(true)}
               className="w-full bg-rose-50 text-rose-600 py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 hover:bg-rose-100 transition-all active:scale-95"
             >
               <Trash2 size={18} />
@@ -9095,16 +9100,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           <div className="flex gap-4 pt-6">
             <button 
               type="button"
-              onClick={() => {
-                if (confirm('Tem certeza que deseja cancelar esta venda e limpar o carrinho?')) {
-                  setCart([]);
-                  setDiscount(0);
-                  setClient({ name: 'Consumidor Final', nif: '999999999' });
-                  setIsFormalInvoiceModalOpen(false);
-                } else {
-                  setIsFormalInvoiceModalOpen(false);
-                }
-              }}
+              onClick={() => setIsCancelConfirmOpen(true)}
               className="flex-1 px-8 py-4 bg-rose-50 text-rose-600 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-rose-100 transition-all"
             >
               Cancelar Venda
@@ -9183,6 +9179,33 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               <p className="text-sm">Nenhum serviço disponível para esta loja.</p>
             </div>
           )}
+        </div>
+      </Modal>
+
+      {/* Cancel Confirmation Modal */}
+      <Modal isOpen={isCancelConfirmOpen} onClose={() => setIsCancelConfirmOpen(false)} title="Confirmar Cancelamento">
+        <div className="space-y-6 text-center py-4">
+          <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Trash2 size={40} />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-xl font-black text-zinc-900">Cancelar Venda?</h3>
+            <p className="text-zinc-500 text-sm">Esta ação irá limpar todos os itens do carrinho e redefinir os dados da venda atual. Esta ação não pode ser desfeita.</p>
+          </div>
+          <div className="flex gap-3 pt-4">
+            <button 
+              onClick={() => setIsCancelConfirmOpen(false)}
+              className="flex-1 py-4 bg-zinc-100 text-zinc-600 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-200 transition-all"
+            >
+              Voltar
+            </button>
+            <button 
+              onClick={handleCancelSale}
+              className="flex-1 py-4 bg-rose-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-rose-700 transition-all shadow-lg shadow-rose-600/20"
+            >
+              Sim, Cancelar
+            </button>
+          </div>
         </div>
       </Modal>
     </div>
