@@ -3,7 +3,7 @@ import { Printer, Download } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 
-export const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => {
+export const ProformaInvoice = ({ proforma, establishment }: { proforma: any, establishment: any }) => {
   const invoiceRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
@@ -62,7 +62,7 @@ export const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any
     pdf.save(`PROFORMA_${proforma.id}.pdf`);
   };
 
-  if (!proforma || !store) return null;
+  if (!proforma || !establishment) return null;
 
   const bankAccounts = typeof proforma.bank_accounts === 'string' 
     ? JSON.parse(proforma.bank_accounts) 
@@ -169,30 +169,30 @@ export const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any
             {pageIdx === 0 && (
               <div className="flex justify-between items-start mb-12">
                 <div className="flex items-center gap-8">
-                  {store.logo_url && (
+                  {establishment.logo_url && (
                     <div className="w-24 h-24 bg-zinc-50 rounded-2xl flex items-center justify-center p-2 border border-zinc-100">
-                      <img src={store.logo_url} alt="" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                      <img src={establishment.logo_url} alt="" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
                     </div>
                   )}
                   <div className="space-y-4">
-                    <h2 className="text-3xl font-black uppercase tracking-tight text-orange-600 leading-none">{store.name}</h2>
+                    <h2 className="text-3xl font-black uppercase tracking-tight text-orange-600 leading-none">{establishment.name}</h2>
                     <div className="grid grid-cols-1 gap-2 text-sm">
                       <div className="grid grid-cols-[80px_1fr] gap-4 items-start">
                         <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] pt-1 shrink-0">Endereço</span>
-                        <span className="text-zinc-600 font-medium">{store.address}</span>
+                        <span className="text-zinc-600 font-medium">{establishment.address}</span>
                       </div>
                       <div className="grid grid-cols-[80px_1fr] gap-4 items-center">
                         <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] shrink-0">NIF</span>
-                        <span className="text-zinc-600 font-bold">{store.nif}</span>
+                        <span className="text-zinc-600 font-bold">{establishment.nif}</span>
                       </div>
                       <div className="grid grid-cols-[80px_1fr] gap-4 items-center">
                         <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] shrink-0">Telefone</span>
-                        <span className="text-zinc-600 font-bold">{store.phone}</span>
+                        <span className="text-zinc-600 font-bold">{establishment.phone}</span>
                       </div>
-                      {store.email && (
+                      {establishment.email && (
                         <div className="grid grid-cols-[80px_1fr] gap-4 items-center">
                           <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] shrink-0">Email</span>
-                          <span className="text-orange-600 font-bold">{store.email}</span>
+                          <span className="text-orange-600 font-bold">{establishment.email}</span>
                         </div>
                       )}
                     </div>
@@ -269,13 +269,13 @@ export const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any
           <div className="proforma-page bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden">
             <div className="flex justify-between items-start mb-12 opacity-50">
               <div className="flex items-center gap-8">
-                {store.logo_url && (
+                {establishment.logo_url && (
                   <div className="w-16 h-16 bg-zinc-50 rounded-2xl flex items-center justify-center p-2 border border-zinc-100">
-                    <img src={store.logo_url} alt="" className="max-w-full max-h-full object-contain opacity-50" referrerPolicy="no-referrer" />
+                    <img src={establishment.logo_url} alt="" className="max-w-full max-h-full object-contain opacity-50" referrerPolicy="no-referrer" />
                   </div>
                 )}
                 <div>
-                  <h2 className="text-xl font-black uppercase tracking-tight text-zinc-400 leading-none">{store.name}</h2>
+                  <h2 className="text-xl font-black uppercase tracking-tight text-zinc-400 leading-none">{establishment.name}</h2>
                   <p className="text-[10px] font-bold text-zinc-300 mt-2 uppercase tracking-widest">Página de Continuação / Coordenadas Bancárias</p>
                 </div>
               </div>

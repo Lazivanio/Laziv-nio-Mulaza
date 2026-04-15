@@ -4,13 +4,13 @@ import {
   Plus, 
   Trash2, 
   Edit2, 
-  Store as StoreIcon, 
+  Building2 as EstablishmentIcon, 
   CheckCircle2, 
   XCircle,
   Package,
   ArrowRight
 } from 'lucide-react';
-import { User, Store } from '../types';
+import { User, Establishment } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -41,12 +41,12 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
 
 export const OwnerWarehouses = ({ user }: { user: User }) => {
   const [warehouses, setWarehouses] = useState<any[]>([]);
-  const [stores, setStores] = useState<Store[]>([]);
+  const [establishments, setEstablishments] = useState<Establishment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingWarehouse, setEditingWarehouse] = useState<any>(null);
   const [formData, setFormData] = useState({
-    store_id: '',
+    establishment_id: '',
     name: '',
     type: 'principal',
     status: 'active'
@@ -59,12 +59,12 @@ export const OwnerWarehouses = ({ user }: { user: User }) => {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [warehousesRes, storesRes] = await Promise.all([
+      const [warehousesRes, establishmentsRes] = await Promise.all([
         fetch(`/api/owner/warehouses/${user.id}`),
-        fetch(`/api/owner/stores/${user.id}`)
+        fetch(`/api/owner/establishments/${user.id}`)
       ]);
       setWarehouses(await warehousesRes.json());
-      setStores(await storesRes.json());
+      setEstablishments(await establishmentsRes.json());
     } catch (e) {
       console.error(e);
     } finally {
@@ -89,7 +89,7 @@ export const OwnerWarehouses = ({ user }: { user: User }) => {
       if (res.ok) {
         setIsModalOpen(false);
         setEditingWarehouse(null);
-        setFormData({ store_id: '', name: '', type: 'principal', status: 'active' });
+        setFormData({ establishment_id: '', name: '', type: 'principal', status: 'active' });
         fetchData();
       }
     } catch (e) {
@@ -100,7 +100,7 @@ export const OwnerWarehouses = ({ user }: { user: User }) => {
   const handleEdit = (warehouse: any) => {
     setEditingWarehouse(warehouse);
     setFormData({
-      store_id: warehouse.store_id.toString(),
+      establishment_id: warehouse.establishment_id?.toString() || '',
       name: warehouse.name || '',
       type: warehouse.type || 'principal',
       status: warehouse.status || 'active'
@@ -125,12 +125,12 @@ export const OwnerWarehouses = ({ user }: { user: User }) => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black tracking-tight">Gestão de Armazéns</h2>
-          <p className="text-zinc-500">Organize seus produtos por armazéns específicos para cada loja.</p>
+          <p className="text-zinc-500">Organize seus produtos por armazéns específicos para cada estabelecimento.</p>
         </div>
         <button 
           onClick={() => {
             setEditingWarehouse(null);
-            setFormData({ store_id: '', name: '', type: 'principal', status: 'active' });
+            setFormData({ establishment_id: '', name: '', type: 'principal', status: 'active' });
             setIsModalOpen(true);
           }}
           className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-2xl font-bold hover:bg-zinc-800 transition-all active:scale-95 shadow-lg shadow-black/10"
@@ -180,7 +180,7 @@ export const OwnerWarehouses = ({ user }: { user: User }) => {
               </div>
               <h4 className="text-lg font-black text-zinc-900">{w.name}</h4>
               <p className="text-xs text-zinc-500 flex items-center gap-1 mt-1">
-                <StoreIcon size={12} /> {w.store_name}
+                <EstablishmentIcon size={12} /> {w.establishment_name}
               </p>
             </div>
 
@@ -199,7 +199,7 @@ export const OwnerWarehouses = ({ user }: { user: User }) => {
             <Warehouse size={48} className="mx-auto mb-4 text-zinc-300" />
             <h3 className="text-lg font-bold text-zinc-900">Nenhum armazém extra</h3>
             <p className="text-zinc-500 max-w-xs mx-auto mt-2">
-              Por padrão, cada loja já possui um armazém principal. Crie novos armazéns apenas se precisar de separação avançada.
+              Por padrão, cada estabelecimento já possui um armazém principal. Crie novos armazéns apenas se precisar de separação avançada.
             </p>
           </div>
         )}
@@ -213,16 +213,16 @@ export const OwnerWarehouses = ({ user }: { user: User }) => {
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Loja</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Estabelecimento</label>
               <select 
                 required
-                value={formData.store_id}
-                onChange={e => setFormData({...formData, store_id: e.target.value})}
+                value={formData.establishment_id}
+                onChange={e => setFormData({...formData, establishment_id: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
               >
-                <option value="">Selecione uma loja</option>
-                {stores.map(store => (
-                  <option key={store.id} value={store.id}>{store.name}</option>
+                <option value="">Selecione um estabelecimento</option>
+                {establishments.map(establishment => (
+                  <option key={establishment.id} value={establishment.id}>{establishment.name}</option>
                 ))}
               </select>
             </div>

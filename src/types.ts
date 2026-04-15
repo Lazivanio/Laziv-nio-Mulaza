@@ -2,7 +2,7 @@ export type UserRole = 'admin' | 'owner' | 'seller' | 'manager';
 
 export interface CashRegister {
   id: number;
-  store_id: number;
+  establishment_id: number;
   name: string;
   code: string;
   default_initial_balance: number;
@@ -16,7 +16,7 @@ export interface CashRegister {
 
 export interface CashSession {
   id: number;
-  store_id: number;
+  establishment_id: number;
   cash_register_id: number;
   seller_id: number;
   opening_amount: number;
@@ -39,9 +39,10 @@ export interface User {
   username?: string;
   name: string;
   role: UserRole;
-  store_id?: number | null;
+  establishment_id?: number | null;
   role_id?: number | null;
   cash_register_id?: number | null;
+  cash_register_name?: string | null;
   custom_permissions?: string | null; // JSON string
   permissions?: string[];
   status?: 'active' | 'suspended';
@@ -53,7 +54,7 @@ export interface HRRole {
   id: number;
   owner_id: number;
   name: string;
-  base_role: 'seller' | 'manager';
+  base_role: 'seller' | 'manager' | 'none';
   permissions: string; // JSON string
   created_at: string;
 }
@@ -87,14 +88,14 @@ export interface HRSalaryPayment {
 export interface HRAttendance {
   id: number;
   user_id: number;
-  store_id: number;
+  establishment_id: number;
   entry_time: string;
   exit_time?: string;
   status: 'present' | 'late' | 'absent' | 'half_day';
   date: string;
   notes?: string;
   employee_name?: string;
-  store_name?: string;
+  establishment_name?: string;
 }
 
 export interface HRVacation {
@@ -115,7 +116,7 @@ export interface BankAccount {
   account_number: string;
 }
 
-export interface Store {
+export interface Establishment {
   id: number;
   owner_id: number;
   name: string;
@@ -124,6 +125,7 @@ export interface Store {
   email?: string;
   nif?: string;
   logo_url?: string;
+  establishment_code?: string;
   status: 'active' | 'inactive';
   license_status: 'active' | 'expired' | 'pending';
   license_expiry: string;
@@ -132,9 +134,11 @@ export interface Store {
   bank_accounts?: BankAccount[];
 }
 
+export type Store = Establishment;
+
 export interface Product {
   id: number;
-  store_id: number;
+  establishment_id: number;
   name: string;
   price: number;
   stock: number;
@@ -144,6 +148,8 @@ export interface Product {
   discount_percent?: number;
   promo_name?: string;
   barcode: string;
+  warehouse_id?: number;
+  warehouse_name?: string;
   tax_id?: number;
   tax_percentage?: number;
   tax_code?: string;
@@ -151,7 +157,7 @@ export interface Product {
 
 export interface Transaction {
   id: number;
-  store_id: number;
+  establishment_id: number;
   seller_id: number;
   total_amount: number;
   timestamp: string;
@@ -160,7 +166,7 @@ export interface Transaction {
 
 export interface Staff {
   id: number;
-  store_id: number;
+  establishment_id: number;
   user_id: number;
   salary: number;
   shift_info: string;
@@ -168,7 +174,7 @@ export interface Staff {
 
 export interface License {
   id: number;
-  store_id: number;
+  establishment_id: number;
   type: string;
   price: number;
   start_date: string;
@@ -178,7 +184,7 @@ export interface License {
 export interface Service {
   id: number;
   owner_id: number;
-  store_id: number;
+  establishment_id: number;
   name: string;
   code: string;
   description: string;
@@ -195,7 +201,7 @@ export interface Service {
 
 export interface FinancialTransaction {
   id: number;
-  store_id: number;
+  establishment_id: number;
   owner_id: number;
   type: 'income' | 'expense';
   category: string;
@@ -210,7 +216,7 @@ export interface FinancialTransaction {
 
 export interface AccountReceivable {
   id: number;
-  store_id: number;
+  establishment_id: number;
   owner_id: number;
   client_name: string;
   amount: number;
@@ -222,7 +228,7 @@ export interface AccountReceivable {
 
 export interface AccountPayable {
   id: number;
-  store_id: number;
+  establishment_id: number;
   owner_id: number;
   supplier_name: string;
   amount: number;

@@ -15,7 +15,7 @@ import {
   AlertTriangle,
   Check,
   Zap,
-  Store as StoreIcon,
+  Building2 as EstablishmentIcon,
   RefreshCw,
   Info,
   Key,
@@ -25,7 +25,7 @@ import {
   UploadCloud
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Store } from '../types';
+import { User, Establishment } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -69,13 +69,13 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [stores, setStores] = useState<Store[]>([]);
+  const [establishments, setEstablishments] = useState<Establishment[]>([]);
   
   // Invoice Series State
   const [series, setSeries] = useState<any[]>([]);
   const [isSeriesModalOpen, setIsSeriesModalOpen] = useState(false);
   const [seriesFormData, setSeriesFormData] = useState({
-    store_id: '',
+    establishment_id: '',
     name: '',
     prefix: '',
     start_number: '1'
@@ -86,7 +86,7 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
   const [isTaxModalOpen, setIsTaxModalOpen] = useState(false);
   const [editingTaxId, setEditingTaxId] = useState<number | null>(null);
   const [taxFormData, setTaxFormData] = useState({
-    store_id: '',
+    establishment_id: '',
     name: '',
     percentage: '',
     tax_code: 'NOR'
@@ -167,19 +167,21 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
           fiscal_regime: user.fiscal_regime || data.client.fiscal_regime || 'geral'
         }));
       } else if (activeTab === 'series') {
-        const [seriesRes, storesRes] = await Promise.all([
+        const [seriesRes, establishmentsRes] = await Promise.all([
           fetch(`/api/owner/invoice-series/${user.id}`),
-          fetch(`/api/owner/stores/${user.id}`)
+          fetch(`/api/owner/establishments/${user.id}`)
         ]);
         setSeries(await seriesRes.json());
-        setStores(await storesRes.json());
+        const establishmentsData = await establishmentsRes.json();
+        setEstablishments(Array.isArray(establishmentsData) ? establishmentsData : []);
       } else if (activeTab === 'taxes') {
-        const [taxesRes, storesRes] = await Promise.all([
+        const [taxesRes, establishmentsRes] = await Promise.all([
           fetch(`/api/owner/taxes/${user.id}`),
-          fetch(`/api/owner/stores/${user.id}`)
+          fetch(`/api/owner/establishments/${user.id}`)
         ]);
         setTaxes(await taxesRes.json());
-        setStores(await storesRes.json());
+        const establishmentsData = await establishmentsRes.json();
+        setEstablishments(Array.isArray(establishmentsData) ? establishmentsData : []);
       } else if (activeTab === 'backups') {
         const res = await fetch(`/api/owner/backups/${user.id}`);
         const data = await res.json();
@@ -315,7 +317,7 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
       if (res.ok) {
         setIsTaxModalOpen(false);
         setEditingTaxId(null);
-        setTaxFormData({ store_id: '', name: '', percentage: '', tax_code: 'NOR' });
+        setTaxFormData({ establishment_id: '', name: '', percentage: '', tax_code: 'NOR' });
         setNotification({ type: 'success', message: `Imposto ${editingTaxId ? 'actualizado' : 'criado'} com sucesso!` });
         fetchData();
       } else {
@@ -331,7 +333,7 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
   const handleEditTax = (tax: any) => {
     setEditingTaxId(tax.id);
     setTaxFormData({
-      store_id: tax.store_id.toString(),
+      establishment_id: tax.establishment_id.toString(),
       name: tax.name,
       percentage: tax.percentage.toString(),
       tax_code: tax.tax_code
@@ -359,12 +361,12 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
     }
   };
 
-  const handleSetDefaultTax = async (id: number, storeId: number) => {
+  const handleSetDefaultTax = async (id: number, establishmentId: number) => {
     try {
       const res = await fetch(`/api/owner/taxes/${id}/default`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ store_id: storeId })
+        body: JSON.stringify({ establishment_id: establishmentId })
       });
       if (!res.ok) {
         const errorData = await res.json();
@@ -1070,7 +1072,7 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
                   </div>
                   <h4 className="text-lg font-black text-zinc-900">{s.name}</h4>
                   <p className="text-xs text-zinc-500 flex items-center gap-1 mt-1">
-                    <StoreIcon size={12} /> {s.store_name}
+                    <EstablishmentIcon size={12} /> {s.establishment_name}
                   </p>
                 </div>
                 <div className="pt-4 border-t border-zinc-100 flex justify-between items-center">
@@ -1098,11 +1100,11 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
       {activeTab === 'taxes' && (
         <div className="space-y-6">
           <div className="flex justify-between items-center">
-            <h3 className="text-xl font-black text-zinc-900">Impostos por Loja</h3>
+            <h3 className="text-xl font-black text-zinc-900">Impostos por Estabelecimento</h3>
             <button 
               onClick={() => {
                 setEditingTaxId(null);
-                setTaxFormData({ store_id: '', name: '', percentage: '', tax_code: 'NOR' });
+                setTaxFormData({ establishment_id: '', name: '', percentage: '', tax_code: 'NOR' });
                 setIsTaxModalOpen(true);
               }}
               className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-2xl font-bold hover:bg-zinc-800 transition-all active:scale-95"
@@ -1123,7 +1125,7 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
                     <button 
                       onClick={() => {
                         if (formData.fiscal_regime === 'exclusao' && t.percentage > 0) return;
-                        handleSetDefaultTax(t.id, t.store_id);
+                        handleSetDefaultTax(t.id, t.establishment_id);
                       }}
                       disabled={formData.fiscal_regime === 'exclusao' && t.percentage > 0}
                       className={cn(
@@ -1184,7 +1186,7 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
                   </div>
                   <h4 className="text-lg font-black text-zinc-900">{t.name}</h4>
                   <p className="text-xs text-zinc-500 flex items-center gap-1 mt-1">
-                    <StoreIcon size={12} /> {t.store_name}
+                    <EstablishmentIcon size={12} /> {t.establishment_name}
                   </p>
                 </div>
                 <div className="pt-4 border-t border-zinc-100">
@@ -1435,16 +1437,16 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
         <form onSubmit={handleCreateSeries} className="space-y-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Loja</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Estabelecimento</label>
               <select 
                 required
-                value={seriesFormData.store_id}
-                onChange={e => setSeriesFormData({...seriesFormData, store_id: e.target.value})}
+                value={seriesFormData.establishment_id}
+                onChange={e => setSeriesFormData({...seriesFormData, establishment_id: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
               >
-                <option value="">Selecione uma loja</option>
-                {stores.map(store => (
-                  <option key={store.id} value={store.id}>{store.name}</option>
+                <option value="">Selecione um estabelecimento</option>
+                {establishments.map(establishment => (
+                  <option key={establishment.id} value={establishment.id}>{establishment.name}</option>
                 ))}
               </select>
             </div>
@@ -1495,23 +1497,23 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
         onClose={() => {
           setIsTaxModalOpen(false);
           setEditingTaxId(null);
-          setTaxFormData({ store_id: '', name: '', percentage: '', tax_code: 'NOR' });
+          setTaxFormData({ establishment_id: '', name: '', percentage: '', tax_code: 'NOR' });
         }} 
         title={editingTaxId ? "Editar Imposto" : "Novo Imposto"}
       >
         <form onSubmit={handleCreateTax} className="space-y-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Loja</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Estabelecimento</label>
               <select 
                 required
-                value={taxFormData.store_id}
-                onChange={e => setTaxFormData({...taxFormData, store_id: e.target.value})}
+                value={taxFormData.establishment_id}
+                onChange={e => setTaxFormData({...taxFormData, establishment_id: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
               >
-                <option value="">Selecione uma loja</option>
-                {stores.map(store => (
-                  <option key={store.id} value={store.id}>{store.name}</option>
+                <option value="">Selecione um estabelecimento</option>
+                {establishments.map(establishment => (
+                  <option key={establishment.id} value={establishment.id}>{establishment.name}</option>
                 ))}
               </select>
             </div>

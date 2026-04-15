@@ -21,7 +21,7 @@ import {
   FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Store, FinancialTransaction, AccountReceivable, AccountPayable } from '../types';
+import { User, Establishment, FinancialTransaction, AccountReceivable, AccountPayable } from '../types';
 
 interface OwnerFinanceProps {
   user: User;
@@ -40,15 +40,15 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
   const [receivables, setReceivables] = useState<AccountReceivable[]>([]);
   const [payables, setPayables] = useState<AccountPayable[]>([]);
-  const [stores, setStores] = useState<Store[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState<string>('');
+  const [establishments, setEstablishments] = useState<Establishment[]>([]);
+  const [selectedEstablishmentId, setSelectedEstablishmentId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState<'income' | 'expense' | 'receivable' | 'payable'>('income');
 
   // Form states
   const [formData, setFormData] = useState({
-    store_id: '',
+    establishment_id: '',
     type: 'income',
     category: '',
     amount: '',
@@ -62,18 +62,18 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
 
   useEffect(() => {
     fetchData();
-  }, [user.id, selectedStoreId]);
+  }, [user.id, selectedEstablishmentId]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const queryParams = selectedStoreId ? `?storeId=${selectedStoreId}` : '';
+      const queryParams = selectedEstablishmentId ? `?establishmentId=${selectedEstablishmentId}` : '';
       const endpoints = [
         `/api/owner/financial/summary/${user.id}${queryParams}`,
         `/api/owner/financial/transactions/${user.id}${queryParams}`,
         `/api/owner/financial/receivable/${user.id}${queryParams}`,
         `/api/owner/financial/payable/${user.id}${queryParams}`,
-        `/api/owner/stores/${user.id}`
+        `/api/owner/establishments/${user.id}`
       ];
 
       const responses = await Promise.all(endpoints.map(url => fetch(url)));
@@ -94,13 +94,13 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
         }
       }));
 
-      const [summaryData, transData, recData, payData, storesData] = data;
+      const [summaryData, transData, recData, payData, establishmentsData] = data;
 
       if (summaryData) setSummary(summaryData);
       if (transData) setTransactions(transData);
       if (recData) setReceivables(recData);
       if (payData) setPayables(payData);
-      if (storesData) setStores(storesData);
+      if (establishmentsData) setEstablishments(Array.isArray(establishmentsData) ? establishmentsData : []);
     } catch (error) {
       console.error('Error fetching financial data:', error);
     } finally {
@@ -134,7 +134,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
         fetchData();
         // Reset form
         setFormData({
-          store_id: '',
+          establishment_id: '',
           type: 'income',
           category: '',
           amount: '',
@@ -342,7 +342,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
           <button 
             onClick={() => {
               setModalType(type);
-              setFormData(prev => ({ ...prev, store_id: selectedStoreId }));
+              setFormData(prev => ({ ...prev, establishment_id: selectedEstablishmentId }));
               setShowModal(true);
             }}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-white font-medium transition-colors ${type === 'income' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}
@@ -405,7 +405,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
         <button 
           onClick={() => {
             setModalType('receivable');
-            setFormData(prev => ({ ...prev, store_id: selectedStoreId }));
+            setFormData(prev => ({ ...prev, establishment_id: selectedEstablishmentId }));
             setShowModal(true);
           }}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-600 text-white font-medium hover:bg-orange-700 transition-colors"
@@ -482,7 +482,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
         <button 
           onClick={() => {
             setModalType('payable');
-            setFormData(prev => ({ ...prev, store_id: selectedStoreId }));
+            setFormData(prev => ({ ...prev, establishment_id: selectedEstablishmentId }));
             setShowModal(true);
           }}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-rose-600 text-white font-medium hover:bg-rose-700 transition-colors"
@@ -558,29 +558,29 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
           <p className="text-gray-500">Controle total de receitas, despesas e fluxo de caixa.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          {stores.length > 1 && (
+          {establishments.length > 1 && (
             <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg p-1">
               <button
-                onClick={() => setSelectedStoreId('')}
+                onClick={() => setSelectedEstablishmentId('')}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
-                  selectedStoreId === '' 
+                  selectedEstablishmentId === '' 
                     ? 'bg-indigo-50 text-indigo-600' 
                     : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
-                Todas as Lojas
+                Todos os Estabelecimentos
               </button>
-              {stores.map(store => (
+              {establishments.map(establishment => (
                 <button
-                  key={store.id}
-                  onClick={() => setSelectedStoreId(store.id.toString())}
+                  key={establishment.id}
+                  onClick={() => setSelectedEstablishmentId(establishment.id.toString())}
                   className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
-                    selectedStoreId === store.id.toString()
+                    selectedEstablishmentId === establishment.id.toString()
                       ? 'bg-indigo-50 text-indigo-600'
                       : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  {store.name}
+                  {establishment.name}
                 </button>
               ))}
             </div>
@@ -637,15 +637,15 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Loja</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Estabelecimento</label>
                   <select 
                     required
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                    value={formData.store_id}
-                    onChange={e => setFormData({...formData, store_id: e.target.value})}
+                    value={formData.establishment_id}
+                    onChange={e => setFormData({...formData, establishment_id: e.target.value})}
                   >
-                    <option value="">Selecione a Loja</option>
-                    {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    <option value="">Selecione o Estabelecimento</option>
+                    {establishments.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
 

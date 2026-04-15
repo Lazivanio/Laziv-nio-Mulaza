@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-export const generatePurchasePDF = (purchase: any, store: any, owner: any) => {
+export const generatePurchasePDF = (purchase: any, establishment: any, owner: any) => {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.width;
 
@@ -29,7 +29,7 @@ export const generatePurchasePDF = (purchase: any, store: any, owner: any) => {
   doc.setTextColor(100, 100, 100);
   doc.text(`Número: ${purchase.invoice_number || '---'}`, pageWidth - 80, 26);
   doc.text(`Data: ${new Date(purchase.timestamp).toLocaleDateString()}`, pageWidth - 80, 31);
-  doc.text(`Loja: ${store.name || '---'}`, pageWidth - 80, 36);
+  doc.text(`Estabelecimento: ${establishment.name || '---'}`, pageWidth - 80, 36);
 
   // Supplier Info
   doc.setFillColor(255, 247, 237); // Orange 50
@@ -92,7 +92,7 @@ export const generatePurchasePDF = (purchase: any, store: any, owner: any) => {
   doc.save(`Fatura_Compra_${purchase.invoice_number}.pdf`);
 };
 
-export const generatePurchaseNotePDF = (note: any, store: any, owner: any) => {
+export const generatePurchaseNotePDF = (note: any, establishment: any, owner: any) => {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.width;
 

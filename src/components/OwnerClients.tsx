@@ -74,15 +74,15 @@ export const OwnerClients = ({ user }: { user: User }) => {
   }, [user.id]);
 
   const fetchClients = async () => {
-    const storeId = user.store_id || 1;
-    const res = await fetch(`/api/owner/clients/${storeId}`);
+    const establishmentId = user.establishment_id || 1;
+    const res = await fetch(`/api/owner/clients/${establishmentId}`);
     const data = await res.json();
     setClients(data);
   };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    const storeId = user.store_id || 1;
+    const establishmentId = user.establishment_id || 1;
     const url = editingClient ? `/api/owner/clients/${editingClient.id}` : '/api/owner/clients';
     const method = editingClient ? 'PUT' : 'POST';
 
@@ -90,7 +90,7 @@ export const OwnerClients = ({ user }: { user: User }) => {
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, store_id: storeId })
+        body: JSON.stringify({ ...formData, establishment_id: establishmentId })
       });
 
       if (res.ok) {

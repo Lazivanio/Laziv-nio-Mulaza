@@ -2,7 +2,7 @@ import React, { useState, useEffect, FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   Plus, 
-  Store, 
+  Building2 as EstablishmentIcon, 
   FileText, 
   Edit2, 
   Settings2, 
@@ -14,7 +14,7 @@ import {
   CheckCircle,
   Lock
 } from 'lucide-react';
-import { User, Store as StoreType, BankAccount } from '../types';
+import { User, Establishment as EstablishmentType, BankAccount } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -52,10 +52,10 @@ const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
-export const MyStores = ({ user }: { user: User }) => {
-  const [stores, setStores] = useState<StoreType[]>([]);
+export const MyEstablishments = ({ user }: { user: User }) => {
+  const [establishments, setEstablishments] = useState<EstablishmentType[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingStore, setEditingStore] = useState<StoreType | null>(null);
+  const [editingEstablishment, setEditingEstablishment] = useState<EstablishmentType | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     address: '',
@@ -63,44 +63,56 @@ export const MyStores = ({ user }: { user: User }) => {
     email: '',
     nif: '',
     logo_url: '',
+    establishment_code: '',
     status: 'active' as 'active' | 'inactive',
     bank_accounts: [] as BankAccount[]
   });
 
-  const [viewingProformasStore, setViewingProformasStore] = useState<StoreType | null>(null);
+  const [viewingProformasEstablishment, setViewingProformasEstablishment] = useState<EstablishmentType | null>(null);
   const [proformas, setProformas] = useState<any[]>([]);
   const [isProformaListModalOpen, setIsProformaListModalOpen] = useState(false);
   const [isOpeningModalOpen, setIsOpeningModalOpen] = useState(false);
-  const [selectedStoreForOpening, setSelectedStoreForOpening] = useState<StoreType | null>(null);
-  const [registersForSelectedStore, setRegistersForSelectedStore] = useState<any[]>([]);
+  const [selectedEstablishmentForOpening, setSelectedEstablishmentForOpening] = useState<EstablishmentType | null>(null);
+  const [registersForSelectedEstablishment, setRegistersForSelectedEstablishment] = useState<any[]>([]);
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
 
-  const fetchStores = () => {
-    fetch(`/api/owner/stores/${user.id}`)
+  const fetchEstablishments = () => {
+    fetch(`/api/owner/establishments/${user.id}`)
       .then(res => res.json())
-      .then(setStores);
+      .then(data => {
+        if (Array.isArray(data)) {
+          setEstablishments(data);
+        } else {
+          console.error("Establishments data is not an array:", data);
+          setEstablishments([]);
+        }
+      })
+      .catch(err => {
+        console.error("Error fetching establishments:", err);
+        setEstablishments([]);
+      });
   };
 
-  const fetchProformas = (storeId: number) => {
-    fetch(`/api/owner/proforma/${storeId}`)
+  const fetchProformas = (establishmentId: number) => {
+    fetch(`/api/owner/proforma/${establishmentId}`)
       .then(res => res.json())
       .then(setProformas);
   };
 
-  useEffect(fetchStores, [user.id]);
+  useEffect(fetchEstablishments, [user.id]);
 
   useEffect(() => {
-    if (viewingProformasStore) {
-      fetchProformas(viewingProformasStore.id);
+    if (viewingProformasEstablishment) {
+      fetchProformas(viewingProformasEstablishment.id);
     }
-  }, [viewingProformasStore]);
+  }, [viewingProformasEstablishment]);
 
-  const handleOpenRegisterModal = (store: StoreType) => {
-    setSelectedStoreForOpening(store);
-    fetch(`/api/owner/stores/${store.id}/cash-registers`)
+  const handleOpenRegisterModal = (establishment: EstablishmentType) => {
+    setSelectedEstablishmentForOpening(establishment);
+    fetch(`/api/owner/establishments/${establishment.id}/cash-registers`)
       .then(res => res.json())
       .then(data => {
-        setRegistersForSelectedStore(data);
+        setRegistersForSelectedEstablishment(data);
         setIsOpeningModalOpen(true);
       });
   };
@@ -116,7 +128,7 @@ export const MyStores = ({ user }: { user: User }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          store_id: selectedStoreForOpening?.id,
+          establishment_id: selectedEstablishmentForOpening?.id,
           seller_id: user.id,
           cash_register_id: registerId,
           opening_amount: parseFloat(amount)
@@ -125,10 +137,10 @@ export const MyStores = ({ user }: { user: User }) => {
 
       if (res.ok) {
         setOpeningAmounts(prev => ({ ...prev, [registerId]: '' }));
-        if (selectedStoreForOpening) {
-          fetch(`/api/owner/stores/${selectedStoreForOpening.id}/cash-registers`)
+        if (selectedEstablishmentForOpening) {
+          fetch(`/api/owner/establishments/${selectedEstablishmentForOpening.id}/cash-registers`)
             .then(res => res.json())
-            .then(setRegistersForSelectedStore);
+            .then(setRegistersForSelectedEstablishment);
         }
         alert('Caixa aberto com sucesso!');
       } else {
@@ -164,10 +176,10 @@ export const MyStores = ({ user }: { user: User }) => {
       });
 
       if (res.ok) {
-        if (selectedStoreForOpening) {
-          fetch(`/api/owner/stores/${selectedStoreForOpening.id}/cash-registers`)
+        if (selectedEstablishmentForOpening) {
+          fetch(`/api/owner/establishments/${selectedEstablishmentForOpening.id}/cash-registers`)
             .then(res => res.json())
-            .then(setRegistersForSelectedStore);
+            .then(setRegistersForSelectedEstablishment);
         }
         alert('Caixa fechado com sucesso!');
       } else {
@@ -182,8 +194,8 @@ export const MyStores = ({ user }: { user: User }) => {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    const url = editingStore ? `/api/owner/stores/${editingStore.id}` : '/api/owner/stores';
-    const method = editingStore ? 'PUT' : 'POST';
+    const url = editingEstablishment ? `/api/owner/establishments/${editingEstablishment.id}` : '/api/owner/establishments';
+    const method = editingEstablishment ? 'PUT' : 'POST';
     
     const res = await fetch(url, {
       method,
@@ -193,26 +205,27 @@ export const MyStores = ({ user }: { user: User }) => {
 
     if (res.ok) {
       setIsModalOpen(false);
-      setEditingStore(null);
-      setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', status: 'active', bank_accounts: [] });
-      fetchStores();
+      setEditingEstablishment(null);
+      setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', establishment_code: '', status: 'active', bank_accounts: [] });
+      fetchEstablishments();
     } else {
       const data = await res.json();
       alert(data.error || "Erro ao processar pedido");
     }
   };
 
-  const handleEdit = (store: StoreType) => {
-    setEditingStore(store);
+  const handleEdit = (establishment: EstablishmentType) => {
+    setEditingEstablishment(establishment);
     setFormData({
-      name: store.name || '',
-      address: store.address || '',
-      phone: store.phone || '',
-      email: store.email || '',
-      nif: store.nif || '',
-      logo_url: store.logo_url || '',
-      status: store.status,
-      bank_accounts: store.bank_accounts || []
+      name: establishment.name || '',
+      address: establishment.address || '',
+      phone: establishment.phone || '',
+      email: establishment.email || '',
+      nif: establishment.nif || '',
+      logo_url: establishment.logo_url || '',
+      establishment_code: establishment.establishment_code || '',
+      status: establishment.status,
+      bank_accounts: establishment.bank_accounts || []
     });
     setIsModalOpen(true);
   };
@@ -241,38 +254,38 @@ export const MyStores = ({ user }: { user: User }) => {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Minhas Lojas</h2>
+          <h2 className="text-2xl font-bold tracking-tight">Meus Estabelecimentos</h2>
           <p className="text-zinc-500">Gerencie e configure suas unidades de negócio.</p>
         </div>
         <button 
           onClick={() => {
-            setEditingStore(null);
-            setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', status: 'active', bank_accounts: [] });
+            setEditingEstablishment(null);
+            setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', establishment_code: '', status: 'active', bank_accounts: [] });
             setIsModalOpen(true);
           }}
           className="w-full md:w-auto bg-black text-white px-6 py-3 rounded-xl flex items-center justify-center gap-2 font-bold hover:bg-zinc-800 transition-all active:scale-95 shadow-lg shadow-black/10"
         >
           <Plus size={20} />
-          Nova Loja
+          Novo Estabelecimento
         </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {stores.map(store => (
-          <Card key={store.id} className="group hover:border-black transition-all duration-300">
+        {establishments.map(establishment => (
+          <Card key={establishment.id} className="group hover:border-black transition-all duration-300">
             <div className="p-6">
               <div className="flex justify-between items-start mb-6">
                 <div className="w-16 h-16 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-400 group-hover:bg-black group-hover:text-white transition-colors overflow-hidden">
-                  {store.logo_url ? (
-                    <img src={store.logo_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  {establishment.logo_url ? (
+                    <img src={establishment.logo_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
-                    <Store size={32} />
+                    <EstablishmentIcon size={32} />
                   )}
                 </div>
                 <div className="flex gap-2">
                   <button 
                     onClick={() => {
-                      setViewingProformasStore(store);
+                      setViewingProformasEstablishment(establishment);
                       setIsProformaListModalOpen(true);
                     }}
                     className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
@@ -281,20 +294,20 @@ export const MyStores = ({ user }: { user: User }) => {
                     <FileText size={18} />
                   </button>
                   <button 
-                    onClick={() => handleOpenRegisterModal(store)}
+                    onClick={() => handleOpenRegisterModal(establishment)}
                     className="p-2 text-zinc-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
                     title="Abrir Caixa"
                   >
                     <Wallet size={18} />
                   </button>
                   <button 
-                    onClick={() => handleEdit(store)}
+                    onClick={() => handleEdit(establishment)}
                     className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
                   >
                     <Edit2 size={18} />
                   </button>
                   <Link 
-                    to={`/owner/stores/${store.id}`}
+                    to={`/owner/establishments/${establishment.id}`}
                     className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
                   >
                     <Settings2 size={18} />
@@ -304,32 +317,37 @@ export const MyStores = ({ user }: { user: User }) => {
 
               <div className="mb-6">
                 <div className="flex items-center gap-2 mb-1">
-                  <h3 className="text-lg font-bold">{store.name}</h3>
+                  <h3 className="text-lg font-bold">{establishment.name}</h3>
+                  {establishment.establishment_code && (
+                    <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[10px] font-bold">
+                      {establishment.establishment_code}
+                    </span>
+                  )}
                   <span className={cn(
                     "px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest",
-                    store.status === 'active' ? "bg-emerald-100 text-emerald-700" : "bg-zinc-100 text-zinc-500"
+                    establishment.status === 'active' ? "bg-emerald-100 text-emerald-700" : "bg-zinc-100 text-zinc-500"
                   )}>
-                    {store.status === 'active' ? 'Ativa' : 'Inativa'}
+                    {establishment.status === 'active' ? 'Ativa' : 'Inativa'}
                   </span>
                 </div>
                 <p className="text-sm text-zinc-500 flex items-center gap-1">
-                  <Home size={14} /> {store.address}
+                  <Home size={14} /> {establishment.address}
                 </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4 pt-6 border-t border-zinc-100">
                 <div>
                   <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-widest mb-1">Vendas Hoje</p>
-                  <p className="font-bold text-zinc-800">Kz {(store.today_sales || 0).toLocaleString()}</p>
+                  <p className="font-bold text-zinc-800">Kz {(establishment.today_sales || 0).toLocaleString()}</p>
                 </div>
                 <div>
                   <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-widest mb-1">Pessoal</p>
-                  <p className="font-bold text-zinc-800">{store.staff_count} Colaboradores</p>
+                  <p className="font-bold text-zinc-800">{establishment.staff_count} Colaboradores</p>
                 </div>
               </div>
             </div>
             <Link 
-              to={`/owner/stores/${store.id}`}
+              to={`/owner/establishments/${establishment.id}`}
               className="block w-full py-4 bg-zinc-50 text-center text-sm font-black text-zinc-600 hover:bg-black hover:text-white transition-all border-t border-zinc-100 flex items-center justify-center gap-2"
             >
               <Settings2 size={16} />
@@ -342,12 +360,12 @@ export const MyStores = ({ user }: { user: User }) => {
       <Modal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
-        title={editingStore ? "Editar Loja" : "Cadastrar Nova Loja"}
+        title={editingEstablishment ? "Editar Estabelecimento" : "Cadastrar Novo Estabelecimento"}
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome da Loja</label>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Estabelecimento</label>
               <input 
                 type="text" 
                 required
@@ -393,8 +411,18 @@ export const MyStores = ({ user }: { user: User }) => {
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
               />
             </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Código do Estabelecimento</label>
+              <input 
+                type="text" 
+                placeholder="Ex: LJ01, LJ02, T01"
+                value={formData.establishment_code}
+                onChange={e => setFormData({...formData, establishment_code: e.target.value})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+              />
+            </div>
             <div className="col-span-2">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Logotipo da Loja</label>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Logotipo do Estabelecimento</label>
               <div className="flex flex-col md:flex-row gap-4">
                 <div className="flex-1 space-y-2">
                   <input 
@@ -420,10 +448,10 @@ export const MyStores = ({ user }: { user: User }) => {
                         }
                       }}
                       className="hidden"
-                      id="store-logo-upload"
+                      id="establishment-logo-upload"
                     />
                     <label 
-                      htmlFor="store-logo-upload"
+                      htmlFor="establishment-logo-upload"
                       className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-white border-2 border-dashed border-zinc-200 rounded-xl cursor-pointer hover:border-black hover:bg-zinc-50 transition-all text-sm font-bold text-zinc-600"
                     >
                       <Upload size={18} /> Carregar Imagem Local
@@ -437,16 +465,16 @@ export const MyStores = ({ user }: { user: User }) => {
                 )}
               </div>
             </div>
-            {editingStore && (
+            {editingEstablishment && (
               <div className="col-span-2">
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Estado da Loja</label>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Estado do Estabelecimento</label>
                 <select 
                   value={formData.status}
                   onChange={e => setFormData({...formData, status: e.target.value as any})}
                   className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all"
                 >
-                  <option value="active">Ativa</option>
-                  <option value="inactive">Inativa</option>
+                  <option value="active">Ativo</option>
+                  <option value="inactive">Inativo</option>
                 </select>
               </div>
             )}
@@ -528,7 +556,7 @@ export const MyStores = ({ user }: { user: User }) => {
             </div>
           </div>
           <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95 mt-4">
-            {editingStore ? "Guardar Alterações" : "Criar Loja"}
+            {editingEstablishment ? "Guardar Alterações" : "Criar Estabelecimento"}
           </button>
         </form>
       </Modal>
@@ -536,11 +564,11 @@ export const MyStores = ({ user }: { user: User }) => {
       <Modal 
         isOpen={isOpeningModalOpen} 
         onClose={() => setIsOpeningModalOpen(false)} 
-        title={`Abrir Caixa - ${selectedStoreForOpening?.name}`}
+        title={`Abrir Caixa - ${selectedEstablishmentForOpening?.name}`}
       >
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {registersForSelectedStore.map(register => {
+            {registersForSelectedEstablishment.map(register => {
               const isOpenedByMe = register.session_status === 'open' && register.seller_id === user.id;
               const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id;
 
@@ -607,9 +635,9 @@ export const MyStores = ({ user }: { user: User }) => {
                 </div>
               );
             })}
-            {registersForSelectedStore.length === 0 && (
+            {registersForSelectedEstablishment.length === 0 && (
               <div className="col-span-2 py-12 text-center text-zinc-400">
-                Nenhum caixa registado para esta loja.
+                Nenhum caixa registado para este estabelecimento.
               </div>
             )}
           </div>

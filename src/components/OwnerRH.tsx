@@ -14,7 +14,7 @@ import {
   AlertCircle,
   ChevronRight,
   Briefcase,
-  Store,
+  Building2 as EstablishmentIcon,
   User as UserIcon,
   UserCheck,
   UserX,
@@ -23,7 +23,7 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, HRRole, HRSalary, HRSalaryPayment, HRAttendance, HRVacation, Store as StoreType } from '../types';
+import { User, HRRole, HRSalary, HRSalaryPayment, HRAttendance, HRVacation, Establishment as EstablishmentType } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -89,7 +89,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
   const [salaryPayments, setSalaryPayments] = useState<HRSalaryPayment[]>([]);
   const [attendance, setAttendance] = useState<HRAttendance[]>([]);
   const [vacations, setVacations] = useState<HRVacation[]>([]);
-  const [stores, setStores] = useState<StoreType[]>([]);
+  const [establishments, setEstablishments] = useState<EstablishmentType[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Modals
@@ -107,9 +107,15 @@ export const OwnerRH = ({ user }: { user: User }) => {
 
   // Forms
   const [employeeForm, setEmployeeForm] = useState({
-    name: '', email: '', username: '', password: '', role: 'seller' as any, store_id: '', role_id: '', custom_permissions: [] as string[], base_salary: '', status: 'active' as 'active' | 'suspended'
+    name: '', email: '', username: '', password: '', role: 'seller' as any, establishment_id: '', role_id: '', custom_permissions: [] as string[], base_salary: '', status: 'active' as 'active' | 'suspended',
+    is_system_user: true
   });
-  const [roleForm, setRoleForm] = useState({ name: '', base_role: 'seller' as 'seller' | 'manager', permissions: [] as string[] });
+  const [roleForm, setRoleForm] = useState({ 
+    name: '', 
+    base_role: 'seller' as 'seller' | 'manager' | 'none', 
+    permissions: [] as string[],
+    is_system_role: true
+  });
   const [salaryPaymentForm, setSalaryPaymentForm] = useState({ 
     amount: '', 
     bonus: '0',
@@ -118,20 +124,20 @@ export const OwnerRH = ({ user }: { user: User }) => {
     month: new Date().toISOString().slice(0, 7)
   });
   const [salaryError, setSalaryError] = useState<string | null>(null);
-  const [attendanceForm, setAttendanceForm] = useState({ user_id: '', store_id: '', entry_time: '', exit_time: '', status: 'present' as any, date: new Date().toISOString().split('T')[0], notes: '' });
+  const [attendanceForm, setAttendanceForm] = useState({ user_id: '', establishment_id: '', entry_time: '', exit_time: '', status: 'present' as any, date: new Date().toISOString().split('T')[0], notes: '' });
   const [vacationForm, setVacationForm] = useState({ user_id: '', start_date: '', end_date: '', notes: '' });
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [empRes, rolesRes, salRes, salPayRes, attRes, vacRes, storesRes] = await Promise.all([
+      const [empRes, rolesRes, salRes, salPayRes, attRes, vacRes, establishmentsRes] = await Promise.all([
         fetch(`/api/owner/hr/employees/${user.id}`),
         fetch(`/api/owner/hr/roles/${user.id}`),
         fetch(`/api/owner/hr/salaries/${user.id}`),
         fetch(`/api/owner/hr/salaries/payments/${user.id}`),
         fetch(`/api/owner/hr/attendance/${user.id}`),
         fetch(`/api/owner/hr/vacations/${user.id}`),
-        fetch(`/api/owner/stores/${user.id}`)
+        fetch(`/api/owner/establishments/${user.id}`)
       ]);
 
       if (empRes.ok) setEmployees(await empRes.json());
@@ -140,7 +146,10 @@ export const OwnerRH = ({ user }: { user: User }) => {
       if (salPayRes.ok) setSalaryPayments(await salPayRes.json());
       if (attRes.ok) setAttendance(await attRes.json());
       if (vacRes.ok) setVacations(await vacRes.json());
-      if (storesRes.ok) setStores(await storesRes.json());
+      if (establishmentsRes.ok) {
+        const data = await establishmentsRes.json();
+        setEstablishments(Array.isArray(data) ? data : []);
+      }
     } catch (error) {
       console.error("Error fetching HR data:", error);
     } finally {
@@ -158,14 +167,20 @@ export const OwnerRH = ({ user }: { user: User }) => {
     const method = editingEmployee ? 'PUT' : 'POST';
     
     try {
+      const payload = {
+        ...employeeForm,
+        email: employeeForm.is_system_user ? employeeForm.email : null,
+        username: employeeForm.is_system_user ? employeeForm.username : null,
+        password: employeeForm.is_system_user ? employeeForm.password : null,
+        custom_permissions: employeeForm.is_system_user ? employeeForm.custom_permissions : [],
+        base_salary: Number(employeeForm.base_salary) || 0,
+        owner_id: user.id
+      };
+
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...employeeForm,
-          base_salary: Number(employeeForm.base_salary) || 0,
-          owner_id: user.id
-        })
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         setIsEmployeeModalOpen(false);
@@ -183,13 +198,17 @@ export const OwnerRH = ({ user }: { user: User }) => {
     const method = editingRole ? 'PUT' : 'POST';
     
     try {
+      const payload = {
+        ...roleForm,
+        permissions: roleForm.is_system_role ? roleForm.permissions : [],
+        base_role: roleForm.is_system_role ? roleForm.base_role : 'none',
+        owner_id: user.id
+      };
+
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...roleForm,
-          owner_id: user.id
-        })
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         setIsRoleModalOpen(false);
@@ -406,7 +425,8 @@ export const OwnerRH = ({ user }: { user: User }) => {
                   onClick={() => {
                     setEditingEmployee(null);
                     setEmployeeForm({
-                      name: '', email: '', username: '', password: '', role: 'seller', store_id: '', role_id: '', custom_permissions: [], base_salary: '', status: 'active'
+                      name: '', email: '', username: '', password: '', role: 'seller', establishment_id: '', role_id: '', custom_permissions: [], base_salary: '', status: 'active',
+                      is_system_user: true
                     });
                     setIsEmployeeModalOpen(true);
                   }}
@@ -423,7 +443,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                     <thead>
                       <tr className="bg-zinc-50 border-b border-zinc-100">
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Funcionário</th>
-                        <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Cargo / Loja</th>
+                        <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Cargo / Estabelecimento</th>
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Salário Base</th>
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Status</th>
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider text-right">Ações</th>
@@ -438,15 +458,20 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                 {emp.name.charAt(0)}
                               </div>
                               <div>
-                                <p className="font-bold text-zinc-900">{emp.name}</p>
-                                <p className="text-xs text-zinc-500">{emp.email}</p>
+                                <div className="flex items-center gap-2">
+                                  <p className="font-bold text-zinc-900">{emp.name}</p>
+                                  {!(emp.email || emp.username) && (
+                                    <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 text-[8px] font-black uppercase rounded tracking-tighter">Staff</span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-zinc-500">{emp.email || 'Sem acesso ao sistema'}</p>
                               </div>
                             </div>
                           </td>
                           <td className="px-6 py-4">
                             <div>
                               <p className="text-sm font-bold text-zinc-900">{(emp as any).role_name || emp.role}</p>
-                              <p className="text-xs text-zinc-500">{(emp as any).store_name || 'Sem loja'}</p>
+                              <p className="text-xs text-zinc-500">{(emp as any).establishment_name || 'Sem estabelecimento'}</p>
                             </div>
                           </td>
                           <td className="px-6 py-4">
@@ -486,11 +511,12 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                     username: emp.username || '',
                                     password: '',
                                     role: emp.role,
-                                    store_id: emp.store_id?.toString() || '',
+                                    establishment_id: emp.establishment_id?.toString() || '',
                                     role_id: emp.role_id?.toString() || '',
                                     custom_permissions: emp.custom_permissions ? (typeof emp.custom_permissions === 'string' ? JSON.parse(emp.custom_permissions) : emp.custom_permissions) : rolePerms,
                                     base_salary: (emp as any).base_salary?.toString() || '',
-                                    status: emp.status || 'active'
+                                    status: emp.status || 'active',
+                                    is_system_user: !!(emp.email || emp.username)
                                   });
                                   setIsEmployeeModalOpen(true);
                                 }}
@@ -525,7 +551,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 <button 
                   onClick={() => {
                     setEditingRole(null);
-                    setRoleForm({ name: '', base_role: 'seller', permissions: [] });
+                    setRoleForm({ name: '', base_role: 'seller', permissions: [], is_system_role: true });
                     setIsRoleModalOpen(true);
                   }}
                   className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
@@ -549,7 +575,8 @@ export const OwnerRH = ({ user }: { user: User }) => {
                             setRoleForm({ 
                               name: role.name || '', 
                               base_role: role.base_role || 'seller',
-                              permissions: typeof role.permissions === 'string' ? JSON.parse(role.permissions) : role.permissions 
+                              permissions: typeof role.permissions === 'string' ? JSON.parse(role.permissions) : role.permissions,
+                              is_system_role: role.base_role !== 'none'
                             });
                             setIsRoleModalOpen(true);
                           }}
@@ -565,8 +592,17 @@ export const OwnerRH = ({ user }: { user: User }) => {
                         </button>
                       </div>
                     </div>
-                    <h4 className="font-bold text-lg mb-1">{role.name}</h4>
-                    <p className="text-xs text-zinc-500 mb-4">{(typeof role.permissions === 'string' ? JSON.parse(role.permissions) : (role.permissions || [])).length} permissões atribuídas</p>
+                    <div className="flex items-center gap-2 mb-1">
+                      <h4 className="font-bold text-lg">{role.name}</h4>
+                      {role.base_role === 'none' && (
+                        <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 text-[8px] font-black uppercase rounded tracking-tighter">Staff</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-500 mb-4">
+                      {role.base_role === 'none' 
+                        ? 'Sem acesso ao sistema' 
+                        : `${(typeof role.permissions === 'string' ? JSON.parse(role.permissions) : (role.permissions || [])).length} permissões atribuídas`}
+                    </p>
                     <div className="flex flex-wrap gap-1">
                       {(typeof role.permissions === 'string' ? JSON.parse(role.permissions) : (role.permissions || [])).slice(0, 3).map((p: string) => (
                         <span key={p} className="px-2 py-1 bg-zinc-50 text-zinc-600 text-[10px] font-bold rounded-lg border border-zinc-100">
@@ -729,7 +765,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 <h3 className="font-bold text-lg">Registo de Presenças</h3>
                 <button 
                   onClick={() => {
-                    setAttendanceForm({ user_id: '', store_id: '', entry_time: '', exit_time: '', status: 'present', date: new Date().toISOString().split('T')[0], notes: '' });
+                    setAttendanceForm({ user_id: '', establishment_id: '', entry_time: '', exit_time: '', status: 'present', date: new Date().toISOString().split('T')[0], notes: '' });
                     setIsAttendanceModalOpen(true);
                   }}
                   className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
@@ -746,7 +782,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                       <tr className="bg-zinc-50 border-b border-zinc-100">
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Data</th>
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Funcionário</th>
-                        <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Loja</th>
+                        <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Estabelecimento</th>
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Horário</th>
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Status</th>
                       </tr>
@@ -761,7 +797,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                             <p className="text-sm font-bold text-zinc-900">{att.employee_name}</p>
                           </td>
                           <td className="px-6 py-4">
-                            <p className="text-xs text-zinc-500">{att.store_name}</p>
+                            <p className="text-xs text-zinc-500">{att.establishment_name}</p>
                           </td>
                           <td className="px-6 py-4">
                             <p className="text-xs text-zinc-900 font-bold">{att.entry_time} - {att.exit_time || '--:--'}</p>
@@ -887,6 +923,29 @@ export const OwnerRH = ({ user }: { user: User }) => {
         maxWidth="max-w-2xl"
       >
         <form onSubmit={handleSaveEmployee} className="space-y-6">
+          <div className="flex items-center gap-4 p-1 bg-zinc-100 rounded-xl w-fit">
+            <button
+              type="button"
+              onClick={() => setEmployeeForm({ ...employeeForm, is_system_user: true })}
+              className={cn(
+                "px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                employeeForm.is_system_user ? "bg-white text-black shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+              )}
+            >
+              Usuário do Sistema
+            </button>
+            <button
+              type="button"
+              onClick={() => setEmployeeForm({ ...employeeForm, is_system_user: false })}
+              className={cn(
+                "px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                !employeeForm.is_system_user ? "bg-white text-black shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+              )}
+            >
+              Apenas Funcionário
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-zinc-500 uppercase">Nome Completo</label>
@@ -898,45 +957,49 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
               />
             </div>
+            {employeeForm.is_system_user && (
+              <>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-500 uppercase">Email</label>
+                  <input 
+                    required
+                    type="email" 
+                    value={employeeForm.email}
+                    onChange={e => setEmployeeForm({...employeeForm, email: e.target.value})}
+                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-500 uppercase">Username</label>
+                  <input 
+                    required
+                    type="text" 
+                    value={employeeForm.username}
+                    onChange={e => setEmployeeForm({...employeeForm, username: e.target.value})}
+                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-500 uppercase">Password {editingEmployee && "(Deixe em branco para manter)"}</label>
+                  <input 
+                    type="password" 
+                    value={employeeForm.password}
+                    onChange={e => setEmployeeForm({...employeeForm, password: e.target.value})}
+                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+                  />
+                </div>
+              </>
+            )}
             <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Email</label>
-              <input 
-                required
-                type="email" 
-                value={employeeForm.email}
-                onChange={e => setEmployeeForm({...employeeForm, email: e.target.value})}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Username</label>
-              <input 
-                required
-                type="text" 
-                value={employeeForm.username}
-                onChange={e => setEmployeeForm({...employeeForm, username: e.target.value})}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Password {editingEmployee && "(Deixe em branco para manter)"}</label>
-              <input 
-                type="password" 
-                value={employeeForm.password}
-                onChange={e => setEmployeeForm({...employeeForm, password: e.target.value})}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Loja Principal</label>
+              <label className="text-xs font-bold text-zinc-500 uppercase">Estabelecimento Principal</label>
               <select 
                 required
-                value={employeeForm.store_id}
-                onChange={e => setEmployeeForm({...employeeForm, store_id: e.target.value})}
+                value={employeeForm.establishment_id}
+                onChange={e => setEmployeeForm({...employeeForm, establishment_id: e.target.value})}
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
               >
-                <option value="">Selecionar Loja</option>
-                {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                <option value="">Selecionar Estabelecimento</option>
+                {establishments.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
             <div className="space-y-2">
@@ -972,48 +1035,50 @@ export const OwnerRH = ({ user }: { user: User }) => {
             </div>
           </div>
 
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="text-xs font-bold text-zinc-500 uppercase">Permissões Específicas</label>
-                <p className="text-[10px] text-zinc-400 italic">Estas permissões definem o acesso total do funcionário</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const role = roles.find(r => r.id.toString() === employeeForm.role_id);
-                  if (role) {
-                    const rolePerms = typeof role.permissions === 'string' ? JSON.parse(role.permissions) : role.permissions;
-                    setEmployeeForm({ ...employeeForm, custom_permissions: rolePerms });
-                  }
-                }}
-                className="text-[10px] font-bold text-orange-600 hover:text-orange-700 underline"
-              >
-                Resetar para Padrão do Cargo
-              </button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {AVAILABLE_PERMISSIONS.map(perm => (
+          {employeeForm.is_system_user && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-xs font-bold text-zinc-500 uppercase">Permissões Específicas</label>
+                  <p className="text-[10px] text-zinc-400 italic">Estas permissões definem o acesso total do funcionário</p>
+                </div>
                 <button
-                  key={perm.id}
                   type="button"
-                  onClick={() => togglePermission(perm.id)}
-                  className={cn(
-                    "flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all",
-                    employeeForm.custom_permissions.includes(perm.id)
-                      ? "bg-black border-black text-white"
-                      : "bg-white border-zinc-100 text-zinc-600 hover:border-zinc-300"
-                  )}
+                  onClick={() => {
+                    const role = roles.find(r => r.id.toString() === employeeForm.role_id);
+                    if (role) {
+                      const rolePerms = typeof role.permissions === 'string' ? JSON.parse(role.permissions) : role.permissions;
+                      setEmployeeForm({ ...employeeForm, custom_permissions: rolePerms });
+                    }
+                  }}
+                  className="text-[10px] font-bold text-orange-600 hover:text-orange-700 underline"
                 >
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold truncate">{perm.label}</p>
-                    <p className={cn("text-[10px]", employeeForm.custom_permissions.includes(perm.id) ? "text-zinc-400" : "text-zinc-400")}>{perm.category}</p>
-                  </div>
-                  {employeeForm.custom_permissions.includes(perm.id) && <Check size={14} />}
+                  Resetar para Padrão do Cargo
                 </button>
-              ))}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {AVAILABLE_PERMISSIONS.map(perm => (
+                  <button
+                    key={perm.id}
+                    type="button"
+                    onClick={() => togglePermission(perm.id)}
+                    className={cn(
+                      "flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all",
+                      employeeForm.custom_permissions.includes(perm.id)
+                        ? "bg-black border-black text-white"
+                        : "bg-white border-zinc-100 text-zinc-600 hover:border-zinc-300"
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold truncate">{perm.label}</p>
+                      <p className={cn("text-[10px]", employeeForm.custom_permissions.includes(perm.id) ? "text-zinc-400" : "text-zinc-400")}>{perm.category}</p>
+                    </div>
+                    {employeeForm.custom_permissions.includes(perm.id) && <Check size={14} />}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-4">
             <button 
@@ -1040,56 +1105,83 @@ export const OwnerRH = ({ user }: { user: User }) => {
         title={editingRole ? "Editar Cargo" : "Novo Cargo"}
       >
         <form onSubmit={handleSaveRole} className="space-y-6">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="flex items-center gap-4 p-1 bg-zinc-100 rounded-xl w-fit">
+            <button
+              type="button"
+              onClick={() => setRoleForm({ ...roleForm, is_system_role: true, base_role: 'seller' })}
+              className={cn(
+                "px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                roleForm.is_system_role ? "bg-white text-black shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+              )}
+            >
+              Cargo do Sistema
+            </button>
+            <button
+              type="button"
+              onClick={() => setRoleForm({ ...roleForm, is_system_role: false, base_role: 'none', permissions: [] })}
+              className={cn(
+                "px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                !roleForm.is_system_role ? "bg-white text-black shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+              )}
+            >
+              Cargo Comum
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-zinc-500 uppercase">Nome do Cargo</label>
               <input 
                 required
                 type="text" 
-                placeholder="Ex: Vendedor Senior, Gerente de Loja"
+                placeholder="Ex: Vendedor Senior, Gerente de Estabelecimento"
                 value={roleForm.name}
                 onChange={e => setRoleForm({...roleForm, name: e.target.value})}
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Tipo de Acesso</label>
-              <select 
-                required
-                value={roleForm.base_role}
-                onChange={e => setRoleForm({...roleForm, base_role: e.target.value as any})}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
-              >
-                <option value="seller">Vendedor (Acesso ao PDV)</option>
-                <option value="manager">Gerente (Acesso ao Painel Administrativo)</option>
-              </select>
-            </div>
+            {roleForm.is_system_role && (
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase">Tipo de Acesso</label>
+                <select 
+                  required
+                  value={roleForm.base_role}
+                  onChange={e => setRoleForm({...roleForm, base_role: e.target.value as any})}
+                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+                >
+                  <option value="seller">Vendedor (Acesso ao PDV)</option>
+                  <option value="manager">Gerente (Acesso ao Painel Administrativo)</option>
+                </select>
+              </div>
+            )}
           </div>
 
-          <div className="space-y-4">
-            <label className="text-xs font-bold text-zinc-500 uppercase">Permissões do Cargo</label>
-            <div className="grid grid-cols-1 gap-2">
-              {AVAILABLE_PERMISSIONS.map(perm => (
-                <button
-                  key={perm.id}
-                  type="button"
-                  onClick={() => toggleRolePermission(perm.id)}
-                  className={cn(
-                    "flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all",
-                    roleForm.permissions.includes(perm.id)
-                      ? "bg-black border-black text-white"
-                      : "bg-white border-zinc-100 text-zinc-600 hover:border-zinc-300"
-                  )}
-                >
-                  <div>
-                    <p className="text-xs font-bold">{perm.label}</p>
-                    <p className={cn("text-[10px]", roleForm.permissions.includes(perm.id) ? "text-zinc-400" : "text-zinc-400")}>{perm.category}</p>
-                  </div>
-                  {roleForm.permissions.includes(perm.id) && <Check size={14} />}
-                </button>
-              ))}
+          {roleForm.is_system_role && (
+            <div className="space-y-4">
+              <label className="text-xs font-bold text-zinc-500 uppercase">Permissões do Cargo</label>
+              <div className="grid grid-cols-1 gap-2">
+                {AVAILABLE_PERMISSIONS.map(perm => (
+                  <button
+                    key={perm.id}
+                    type="button"
+                    onClick={() => toggleRolePermission(perm.id)}
+                    className={cn(
+                      "flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all",
+                      roleForm.permissions.includes(perm.id)
+                        ? "bg-black border-black text-white"
+                        : "bg-white border-zinc-100 text-zinc-600 hover:border-zinc-300"
+                    )}
+                  >
+                    <div>
+                      <p className="text-xs font-bold">{perm.label}</p>
+                      <p className={cn("text-[10px]", roleForm.permissions.includes(perm.id) ? "text-zinc-400" : "text-zinc-400")}>{perm.category}</p>
+                    </div>
+                    {roleForm.permissions.includes(perm.id) && <Check size={14} />}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-4">
             <button 
@@ -1226,15 +1318,15 @@ export const OwnerRH = ({ user }: { user: User }) => {
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Loja</label>
+              <label className="text-xs font-bold text-zinc-500 uppercase">Estabelecimento</label>
               <select 
                 required
-                value={attendanceForm.store_id}
-                onChange={e => setAttendanceForm({...attendanceForm, store_id: e.target.value})}
+                value={attendanceForm.establishment_id}
+                onChange={e => setAttendanceForm({...attendanceForm, establishment_id: e.target.value})}
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
               >
-                <option value="">Selecionar Loja</option>
-                {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                <option value="">Selecionar Estabelecimento</option>
+                {establishments.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
             <div className="grid grid-cols-2 gap-4">

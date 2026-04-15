@@ -6,7 +6,7 @@ import {
   Package, 
   Users, 
   ChevronRight, 
-  Store, 
+  Building2 as EstablishmentIcon, 
   BarChart3,
   Clock,
   ArrowUpRight,
@@ -35,7 +35,7 @@ import {
   Pie,
   Legend
 } from 'recharts';
-import { User, Store as StoreType } from '../types';
+import { User, Establishment as EstablishmentType } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -92,21 +92,21 @@ export const OwnerOverview = ({ user }: { user: User }) => {
     topProducts: [],
     recentTransactions: [],
     salesByDay: [],
-    salesByStore: [],
+    salesByEstablishment: [],
     paymentMethods: [],
     totalExpenses: 0
   });
-  const [stores, setStores] = useState<StoreType[]>([]);
+  const [establishments, setEstablishments] = useState<EstablishmentType[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
     Promise.all([
       fetch(`/api/owner/dashboard-stats/all?ownerId=${user.id}`).then(res => res.json()),
-      fetch(`/api/owner/stores/${user.id}`).then(res => res.json())
-    ]).then(([statsData, storesData]) => {
+      fetch(`/api/owner/establishments/${user.id}`).then(res => res.json())
+    ]).then(([statsData, establishmentsData]) => {
       setStats(statsData);
-      setStores(storesData);
+      setEstablishments(Array.isArray(establishmentsData) ? establishmentsData : []);
       setLoading(false);
     }).catch(err => {
       console.error("Error fetching overview data:", err);
@@ -130,7 +130,7 @@ export const OwnerOverview = ({ user }: { user: User }) => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Visão Geral do Negócio</h2>
-          <p className="text-zinc-500">Resumo de desempenho de todas as suas unidades.</p>
+          <p className="text-zinc-500">Resumo de desempenho de todos os seus estabelecimentos.</p>
         </div>
         <div className="text-left md:text-right">
           <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Estado Global</p>
@@ -227,7 +227,7 @@ export const OwnerOverview = ({ user }: { user: User }) => {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={stats.paymentMethods}
+                  data={stats.paymentMethods || []}
                   cx="50%"
                   cy="50%"
                   innerRadius={60}
@@ -235,7 +235,7 @@ export const OwnerOverview = ({ user }: { user: User }) => {
                   paddingAngle={5}
                   dataKey="value"
                 >
-                  {stats.paymentMethods.map((entry: any, index: number) => (
+                  {(stats.paymentMethods || []).map((entry: any, index: number) => (
                     <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
                   ))}
                 </Pie>
@@ -248,10 +248,10 @@ export const OwnerOverview = ({ user }: { user: User }) => {
             </ResponsiveContainer>
           </div>
           <div className="mt-4 space-y-2">
-            {stats.paymentMethods.map((pm: any, idx: number) => (
+            {(stats.paymentMethods || []).map((pm: any, idx: number) => (
               <div key={idx} className="flex justify-between items-center text-xs">
                 <span className="text-zinc-500">{pm.name}</span>
-                <span className="font-bold">Kz {pm.value.toLocaleString()}</span>
+                <span className="font-bold">Kz {(pm.value || 0).toLocaleString()}</span>
               </div>
             ))}
           </div>
@@ -260,10 +260,10 @@ export const OwnerOverview = ({ user }: { user: User }) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="p-6">
-          <h3 className="font-bold text-lg mb-6">Desempenho por Unidade</h3>
+          <h3 className="font-bold text-lg mb-6">Desempenho por Estabelecimento</h3>
           <div className="h-[250px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stats.salesByStore} layout="vertical">
+              <BarChart data={stats.salesByEstablishment || []} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f4f4f5" />
                 <XAxis type="number" hide />
                 <YAxis 
@@ -317,8 +317,8 @@ export const OwnerOverview = ({ user }: { user: User }) => {
         <Card className="p-6">
           <h3 className="font-bold text-lg mb-6">Estado das Licenças</h3>
           <div className="space-y-4">
-            {stores.map(store => {
-              const expiryDate = new Date(store.license_expiry);
+            {establishments.map(establishment => {
+              const expiryDate = new Date(establishment.license_expiry);
               const today = new Date();
               const diffTime = expiryDate.getTime() - today.getTime();
               const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -326,9 +326,9 @@ export const OwnerOverview = ({ user }: { user: User }) => {
               const isExpired = diffDays <= 0;
 
               return (
-                <div key={store.id} className="p-3 rounded-xl border border-zinc-100 bg-zinc-50">
+                <div key={establishment.id} className="p-3 rounded-xl border border-zinc-100 bg-zinc-50">
                   <div className="flex justify-between items-start mb-2">
-                    <p className="font-bold text-sm">{store.name}</p>
+                    <p className="font-bold text-sm">{establishment.name}</p>
                     <span className={cn(
                       "text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider",
                       isExpired ? "bg-rose-100 text-rose-600" : (isExpiring ? "bg-amber-100 text-amber-600" : "bg-emerald-100 text-emerald-600")
@@ -368,7 +368,7 @@ export const OwnerOverview = ({ user }: { user: User }) => {
             </div>
           </div>
           <div className="divide-y divide-zinc-100">
-            {stats.recentTransactions.length > 0 ? stats.recentTransactions.map((tx: any) => (
+            {(stats.recentTransactions || []).length > 0 ? (stats.recentTransactions || []).map((tx: any) => (
               <div key={tx.id} className="p-4 flex items-center justify-between hover:bg-zinc-50 transition-colors">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center">
@@ -376,7 +376,7 @@ export const OwnerOverview = ({ user }: { user: User }) => {
                   </div>
                   <div>
                     <p className="font-semibold text-sm">Venda Realizada</p>
-                    <p className="text-xs text-zinc-500">{tx.store_name} • {new Date(tx.timestamp).toLocaleTimeString('pt-AO', { hour: '2-digit', minute: '2-digit' })}</p>
+                    <p className="text-xs text-zinc-500">{tx.establishment_name} • {new Date(tx.timestamp).toLocaleTimeString('pt-AO', { hour: '2-digit', minute: '2-digit' })}</p>
                   </div>
                 </div>
                 <div className="text-right">

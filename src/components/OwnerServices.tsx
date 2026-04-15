@@ -1,5 +1,5 @@
 import React, { useState, useEffect, FormEvent } from 'react';
-import { User, Store } from '../types';
+import { User, Establishment } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -12,7 +12,7 @@ import {
   Tag, 
   Info, 
   DollarSign, 
-  Store as StoreIcon,
+  Building2 as EstablishmentIcon,
   CheckCircle2,
   XCircle,
   AlertCircle,
@@ -25,8 +25,8 @@ import {
 interface Service {
   id: number;
   owner_id: number;
-  store_id: number;
-  store_name?: string;
+  establishment_id: number;
+  establishment_name?: string;
   name: string;
   code: string;
   description: string;
@@ -69,7 +69,7 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
 export const OwnerServices = ({ user }: { user: User }) => {
   const [activeTab, setActiveTab] = useState<'management' | 'report'>('management');
   const [services, setServices] = useState<Service[]>([]);
-  const [stores, setStores] = useState<Store[]>([]);
+  const [establishments, setEstablishments] = useState<Establishment[]>([]);
   const [taxes, setTaxes] = useState<any[]>([]);
   const [reportData, setReportData] = useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -79,7 +79,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
   const [isReportLoading, setIsReportLoading] = useState(false);
 
   const [formData, setFormData] = useState({
-    store_id: '',
+    establishment_id: '',
     name: '',
     code: '',
     description: '',
@@ -114,18 +114,18 @@ export const OwnerServices = ({ user }: { user: User }) => {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [servicesRes, storesRes, taxesRes] = await Promise.all([
+      const [servicesRes, establishmentsRes, taxesRes] = await Promise.all([
         fetch(`/api/owner/services/${user.id}`),
-        fetch(`/api/admin/stores`),
+        fetch(`/api/owner/establishments/${user.id}`),
         fetch(`/api/owner/taxes/${user.id}`)
       ]);
       
       const servicesData = await servicesRes.json();
-      const storesData = await storesRes.json();
+      const establishmentsData = await establishmentsRes.json();
       const taxesData = await taxesRes.json();
       
       setServices(servicesData);
-      setStores(storesData.filter((s: Store) => s.owner_id === user.id));
+      setEstablishments(Array.isArray(establishmentsData) ? establishmentsData : []);
       setTaxes(taxesData);
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -157,7 +157,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
         setIsModalOpen(false);
         setEditingService(null);
         setFormData({
-          store_id: '',
+          establishment_id: '',
           name: '',
           code: '',
           description: '',
@@ -178,7 +178,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
   const handleEdit = (service: Service) => {
     setEditingService(service);
     setFormData({
-      store_id: service.store_id.toString(),
+      establishment_id: service.establishment_id.toString(),
       name: service.name || '',
       code: service.code || '',
       description: service.description || '',
@@ -213,7 +213,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black tracking-tight text-zinc-900">Serviços</h2>
-          <p className="text-zinc-500">Gestão e relatórios de serviços prestados em suas lojas.</p>
+          <p className="text-zinc-500">Gestão e relatórios de serviços prestados em seus estabelecimentos.</p>
         </div>
         <div className="flex items-center gap-2 bg-zinc-100 p-1 rounded-2xl">
           <button 
@@ -252,7 +252,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
               onClick={() => {
                 setEditingService(null);
                 setFormData({
-                  store_id: '',
+                  establishment_id: '',
                   name: '',
                   code: '',
                   description: '',
@@ -339,7 +339,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
                       </div>
                       <div className="text-right">
                         <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex items-center justify-end gap-1">
-                          <StoreIcon size={10} /> {service.store_name}
+                          <EstablishmentIcon size={10} /> {service.establishment_name}
                         </p>
                         <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mt-1">
                           {service.availability_condition === 'always' ? 'Sempre Disponível' : 'Requer Compra'}
@@ -410,7 +410,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
                 <thead>
                   <tr className="border-b border-zinc-100">
                     <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Serviço</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Loja</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estabelecimento</th>
                     <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-center">Qtd Vendida</th>
                     <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Receita Total</th>
                     <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Última Venda</th>
@@ -431,15 +431,15 @@ export const OwnerServices = ({ user }: { user: User }) => {
                     </tr>
                   ) : (
                     reportData.map((item, idx) => (
-                      <tr key={`${item.id}_${item.store_id}`} className="hover:bg-zinc-50/50 transition-colors">
+                      <tr key={`${item.id}_${item.establishment_id}`} className="hover:bg-zinc-50/50 transition-colors">
                         <td className="px-6 py-4">
                           <p className="text-sm font-bold text-zinc-900">{item.name}</p>
                           <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">{item.code}</p>
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
-                            <StoreIcon size={14} className="text-zinc-400" />
-                            <span className="text-sm font-medium text-zinc-600">{item.store_name}</span>
+                            <EstablishmentIcon size={14} className="text-zinc-400" />
+                            <span className="text-sm font-medium text-zinc-600">{item.establishment_name}</span>
                           </div>
                         </td>
                         <td className="px-6 py-4 text-center">
@@ -474,16 +474,16 @@ export const OwnerServices = ({ user }: { user: User }) => {
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Loja</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Estabelecimento</label>
               <select 
                 required
-                value={formData.store_id}
-                onChange={e => setFormData({...formData, store_id: e.target.value})}
+                value={formData.establishment_id}
+                onChange={e => setFormData({...formData, establishment_id: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
               >
-                <option value="">Selecione uma loja</option>
-                {stores.map(store => (
-                  <option key={store.id} value={store.id}>{store.name}</option>
+                <option value="">Selecione um estabelecimento</option>
+                {establishments.map(establishment => (
+                  <option key={establishment.id} value={establishment.id}>{establishment.name}</option>
                 ))}
               </select>
             </div>
@@ -569,8 +569,8 @@ export const OwnerServices = ({ user }: { user: User }) => {
                   user?.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
                 )}
               >
-                <option value="">Usar Padrão da Loja</option>
-                {taxes.filter(t => t.store_id === Number(formData.store_id) && t.status === 'active').map(tax => (
+                <option value="">Usar Padrão do Estabelecimento</option>
+                {taxes.filter(t => t.establishment_id === Number(formData.establishment_id) && t.status === 'active').map(tax => (
                   <option key={tax.id} value={tax.id}>{tax.name} ({tax.percentage}%)</option>
                 ))}
               </select>

@@ -3,7 +3,7 @@ import {
   FileText, 
   Download, 
   Calendar, 
-  Store, 
+  Building2 as EstablishmentIcon, 
   FileCode, 
   FileSpreadsheet, 
   File as FileIcon,
@@ -11,10 +11,14 @@ import {
   Search,
   Loader2,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  RefreshCcw,
+  CheckCircle,
+  XCircle,
+  Clock
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { User, Store as StoreType } from '../types';
+import { User, Establishment as EstablishmentType } from '../types';
 
 interface GeneratedFile {
   id: number;
@@ -25,32 +29,67 @@ interface GeneratedFile {
 }
 
 const OwnerFiscalDocuments = ({ user }: { user: User }) => {
-  const [stores, setStores] = useState<StoreType[]>([]);
+  const [establishments, setEstablishments] = useState<EstablishmentType[]>([]);
   const [history, setHistory] = useState<GeneratedFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [series, setSeries] = useState<any[]>([]);
+  const [selectedEstablishmentForSeries, setSelectedEstablishmentForSeries] = useState<string>('');
 
   // SAFT Form
   const [saftForm, setSaftForm] = useState({
     startDate: new Date().toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
-    storeId: '',
+    establishmentId: '',
     docType: ''
   });
 
   useEffect(() => {
-    fetchStores();
+    fetchEstablishments();
     fetchHistory();
   }, []);
 
-  const fetchStores = async () => {
+  useEffect(() => {
+    if (selectedEstablishmentForSeries) {
+      fetchSeries(selectedEstablishmentForSeries);
+    }
+  }, [selectedEstablishmentForSeries]);
+
+  const fetchSeries = async (establishmentId: string) => {
     try {
-      const response = await fetch(`/api/owner/stores/${user.id}`);
+      const response = await fetch(`/api/owner/establishments/${establishmentId}/invoice-series`);
       const data = await response.json();
-      setStores(data);
+      setSeries(data);
     } catch (error) {
-      console.error('Error fetching stores:', error);
+      console.error('Error fetching series:', error);
+    }
+  };
+
+  const handleRequestApproval = async (seriesId: number) => {
+    try {
+      const response = await fetch(`/api/owner/invoice-series/${seriesId}/request-approval`, {
+        method: 'POST'
+      });
+      const data = await response.json();
+      if (data.success) {
+        setMessage({ type: 'success', text: data.message });
+        fetchSeries(selectedEstablishmentForSeries);
+      } else {
+        setMessage({ type: 'error', text: data.error });
+      }
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Erro ao solicitar aprovação' });
+    }
+  };
+
+  const fetchEstablishments = async () => {
+    try {
+      const response = await fetch(`/api/owner/establishments/${user.id}`);
+      const data = await response.json();
+      setEstablishments(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error fetching establishments:', error);
     }
   };
 
@@ -76,7 +115,7 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           owner_id: user.id,
-          store_id: saftForm.storeId,
+          establishment_id: saftForm.establishmentId,
           start_date: saftForm.startDate,
           end_date: saftForm.endDate,
           doc_type: saftForm.docType,
@@ -97,7 +136,7 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
     }
   };
 
-  const handleExport = async (type: string, storeId?: string) => {
+  const handleExport = async (type: string, establishmentId?: string) => {
     setGenerating(true);
     setMessage(null);
     try {
@@ -107,7 +146,7 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
         body: JSON.stringify({
           owner_id: user.id,
           export_type: type,
-          store_id: storeId || stores[0]?.id,
+          establishment_id: establishmentId || establishments[0]?.id,
           user_name: user.name
         })
       });
@@ -190,17 +229,17 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-zinc-700">Loja (Opcional)</label>
+              <label className="text-sm font-medium text-zinc-700">Estabelecimento (Opcional)</label>
               <div className="relative">
-                <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                <EstablishmentIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
                 <select 
-                  value={saftForm.storeId}
-                  onChange={(e) => setSaftForm({ ...saftForm, storeId: e.target.value })}
+                  value={saftForm.establishmentId}
+                  onChange={(e) => setSaftForm({ ...saftForm, establishmentId: e.target.value })}
                   className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all appearance-none"
                 >
-                  <option value="">Todas as Lojas</option>
-                  {stores.map(store => (
-                    <option key={store.id} value={store.id}>{store.name}</option>
+                  <option value="">Todos os Estabelecimentos</option>
+                  {establishments.map(establishment => (
+                    <option key={establishment.id} value={establishment.id}>{establishment.name}</option>
                   ))}
                 </select>
               </div>

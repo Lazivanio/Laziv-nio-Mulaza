@@ -100,9 +100,9 @@ export const OwnerReports = ({ user }: { user: User }) => {
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumo');
     
-    // Store Revenue Sheet
-    const wsStore = XLSX.utils.json_to_sheet(data.revenueByStore);
-    XLSX.utils.book_append_sheet(wb, wsStore, 'Receita por Loja');
+    // Establishment Revenue Sheet
+    const wsEstablishment = XLSX.utils.json_to_sheet(data.revenueByEstablishment);
+    XLSX.utils.book_append_sheet(wb, wsEstablishment, 'Receita por Estabelecimento');
     
     // Top Products Sheet
     const wsProducts = XLSX.utils.json_to_sheet(data.topProducts);
@@ -119,7 +119,7 @@ export const OwnerReports = ({ user }: { user: User }) => {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-black tracking-tight">Relatórios Globais</h2>
-          <p className="text-zinc-500">Desempenho consolidado de todas as suas lojas.</p>
+          <p className="text-zinc-500">Desempenho consolidado de todos os seus estabelecimentos.</p>
         </div>
         <div className="flex gap-2">
           <button 
@@ -150,7 +150,7 @@ export const OwnerReports = ({ user }: { user: User }) => {
           <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Total de Vendas</p>
             <h3 className="text-3xl font-black">{data.totalSales.toLocaleString()}</h3>
-            <p className="text-xs text-zinc-400 mt-4 font-medium">Consolidado de todas as lojas</p>
+            <p className="text-xs text-zinc-400 mt-4 font-medium">Consolidado de todos os estabelecimentos</p>
           </Card>
 
           <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
@@ -160,8 +160,8 @@ export const OwnerReports = ({ user }: { user: User }) => {
           </Card>
 
           <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Lojas Ativas</p>
-            <h3 className="text-3xl font-black">{data.revenueByStore.length}</h3>
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Estabelecimentos Ativos</p>
+            <h3 className="text-3xl font-black">{data.revenueByEstablishment.length}</h3>
             <p className="text-xs text-zinc-400 mt-4 font-medium">Contribuindo para os resultados</p>
           </Card>
         </div>
@@ -203,11 +203,11 @@ export const OwnerReports = ({ user }: { user: User }) => {
           <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
             <h4 className="text-lg font-black mb-6 flex items-center gap-2">
               <PieChartIcon size={20} className="text-blue-500" />
-              Lucro por Loja
+              Lucro por Estabelecimento
             </h4>
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.storeComparison} layout="vertical">
+                <BarChart data={data.establishmentComparison || []} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
                   <XAxis type="number" hide />
                   <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 600}} width={100} />
@@ -224,12 +224,12 @@ export const OwnerReports = ({ user }: { user: User }) => {
         </div>
 
         <Card className="p-8 border-zinc-100 rounded-3xl shadow-sm">
-          <h4 className="text-lg font-black mb-6">Análise Comparativa entre Lojas</h4>
+          <h4 className="text-lg font-black mb-6">Análise Comparativa entre Estabelecimentos</h4>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
                 <tr className="text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">
-                  <th className="pb-4">Loja</th>
+                  <th className="pb-4">Estabelecimento</th>
                   <th className="pb-4 text-right">Vendas</th>
                   <th className="pb-4 text-right">Receita</th>
                   <th className="pb-4 text-right">Despesas</th>
@@ -239,7 +239,7 @@ export const OwnerReports = ({ user }: { user: User }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-50">
-                {data.storeComparison.map((s: any, i: number) => (
+                {(data.establishmentComparison || []).map((s: any, i: number) => (
                   <tr key={i} className="group hover:bg-zinc-50/50 transition-colors">
                     <td className="py-4 font-bold text-zinc-800">{s.name}</td>
                     <td className="py-4 text-right font-medium text-zinc-600">{s.salesCount}</td>
@@ -292,7 +292,7 @@ export const OwnerReports = ({ user }: { user: User }) => {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={data.paymentMethods}
+                    data={data.paymentMethods || []}
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
@@ -300,7 +300,7 @@ export const OwnerReports = ({ user }: { user: User }) => {
                     paddingAngle={5}
                     dataKey="value"
                   >
-                    {data.paymentMethods.map((entry: any, index: number) => (
+                    {(data.paymentMethods || []).map((entry: any, index: number) => (
                       <Cell key={`cell-${index}`} fill={['#f97316', '#3b82f6', '#10b981', '#6366f1', '#f43f5e'][index % 5]} />
                     ))}
                   </Pie>
@@ -328,7 +328,7 @@ export const OwnerReports = ({ user }: { user: User }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-50">
-                  {data.topProducts.map((p: any, i: number) => (
+                  {(data.topProducts || []).map((p: any, i: number) => (
                     <tr key={i} className="group hover:bg-zinc-50/50 transition-colors">
                       <td className="py-4 font-bold text-zinc-800">{p.name}</td>
                       <td className="py-4 text-center font-medium text-zinc-600">{p.quantity}</td>

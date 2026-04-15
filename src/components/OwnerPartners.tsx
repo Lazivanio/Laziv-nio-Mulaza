@@ -19,7 +19,7 @@ import {
   Calendar
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Store as StoreType } from '../types';
+import { User, Establishment as EstablishmentType } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -81,14 +81,14 @@ export const OwnerPartners = ({ user }: { user: User }) => {
 
   useEffect(() => {
     fetchData();
-  }, [user.store_id, user.id]);
+  }, [user.establishment_id, user.id]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const storeId = user.store_id || 1;
+      const establishmentId = user.establishment_id || 1;
       const [clientsRes, suppliersRes, reportRes] = await Promise.all([
-        fetch(`/api/owner/clients/${storeId}`),
+        fetch(`/api/owner/clients/${establishmentId}`),
         fetch(`/api/owner/suppliers/${user.id}`),
         fetch(`/api/owner/suppliers/${user.id}/report`)
       ]);
@@ -109,7 +109,7 @@ export const OwnerPartners = ({ user }: { user: User }) => {
 
   const handleSaveClient = async (e: React.FormEvent) => {
     e.preventDefault();
-    const storeId = user.store_id || 1;
+    const establishmentId = user.establishment_id || 1;
     const url = editingClient ? `/api/owner/clients/${editingClient.id}` : '/api/owner/clients';
     const method = editingClient ? 'PUT' : 'POST';
 
@@ -117,7 +117,7 @@ export const OwnerPartners = ({ user }: { user: User }) => {
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...clientForm, store_id: storeId })
+        body: JSON.stringify({ ...clientForm, establishment_id: establishmentId })
       });
 
       if (res.ok) {

@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, us
 import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable';
 import html2canvas from "html2canvas";
+import QRCode from 'qrcode';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, PieChart, Pie, Legend
@@ -86,14 +87,14 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { User, Store as StoreType, Product, Transaction, BankAccount, CashRegister } from './types';
+import { User, Establishment as EstablishmentType, Product, Transaction, BankAccount, CashRegister } from './types';
 import { OwnerRH } from './components/OwnerRH';
 import { OwnerPartners } from './components/OwnerPartners';
 import { OwnerPurchases } from './components/OwnerPurchases';
 import { OwnerServices } from './components/OwnerServices';
 import OwnerFiscalDocuments from './components/OwnerFiscalDocuments';
 import { OwnerOverview } from './components/OwnerOverview';
-import { MyStores } from './components/MyStores';
+import { MyEstablishments } from './components/MyEstablishments';
 import { OwnerReports } from './components/OwnerReports';
 import { OwnerSettings } from './components/OwnerSettings';
 import { OwnerWarehouses } from './components/OwnerWarehouses';
@@ -379,7 +380,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             {user.role === 'admin' && (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Dashboard" to="/admin" onClick={closeSidebar} />
-                <SidebarItem icon={Store} label="Lojas" to="/admin/stores" onClick={closeSidebar} />
+                <SidebarItem icon={Store} label="Estabelecimentos" to="/admin/establishments" onClick={closeSidebar} />
                 <SidebarItem icon={Users} label="Clientes" to="/admin/clients" onClick={closeSidebar} />
                 <SidebarItem icon={CreditCard} label="Pagamentos" to="/admin/payments" onClick={closeSidebar} />
                 <SidebarItem icon={Settings} label="Configurações" to="/admin/settings" onClick={closeSidebar} />
@@ -388,7 +389,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             {user.role === 'owner' && (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Visão Geral" to="/owner" onClick={closeSidebar} />
-                <SidebarItem icon={Store} label="Minhas Lojas" to="/owner/stores" onClick={closeSidebar} />
+                <SidebarItem icon={Store} label="Meus Estabelecimentos" to="/owner/establishments" onClick={closeSidebar} />
                 <SidebarItem icon={Briefcase} label="RH" to="/owner/rh" onClick={closeSidebar} />
                 <SidebarItem icon={Users} label="Parceiros" to="/owner/partners" onClick={closeSidebar} />
                 <SidebarItem icon={ShoppingCart} label="Compras" to="/owner/purchases" onClick={closeSidebar} />
@@ -470,7 +471,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
 
         <div className={cn(
           "flex-1",
-          (location.pathname === '/seller' || location.pathname.includes('/owner/stores/')) 
+          (location.pathname === '/seller' || location.pathname.includes('/owner/establishments/')) 
             ? "overflow-hidden flex flex-col" 
             : "overflow-y-auto p-4 md:p-6 pb-24 lg:pb-6"
         )}>
@@ -518,14 +519,14 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [dashboardData, setDashboardData] = useState<any>({
-    stats: { totalClients: 0, activeClients: 0, totalStores: 0, pendingSupport: 0, expiredLicenses: 0, expiringSoon: 0 },
+    stats: { totalClients: 0, activeClients: 0, totalEstablishments: 0, pendingSupport: 0, expiredLicenses: 0, expiringSoon: 0 },
     recentClients: []
   });
   const [clients, setClients] = useState<any[]>([]);
   const [licenses, setLicenses] = useState<any[]>([]);
   const [tickets, setTickets] = useState<any[]>([]);
   const [monitoring, setMonitoring] = useState<any>({
-    stats: { totalTransactions: 0, todayTransactions: 0, activeUsers: 0, totalStores: 0 },
+    stats: { totalTransactions: 0, todayTransactions: 0, activeUsers: 0, totalEstablishments: 0 },
     recentActivity: [],
     systemAlerts: [],
     memory: { rss: 0, heapTotal: 0, heapUsed: 0 },
@@ -598,7 +599,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [licenseFormData, setLicenseFormData] = useState({
     plan_type: '',
     duration_months: 1,
-    store_id: '',
+    establishment_id: '',
     user_id: ''
   });
 
@@ -613,9 +614,9 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [planFormData, setPlanFormData] = useState({
     name: '',
     price: 0,
-    max_stores: 1,
+    max_establishments: 1,
     max_products: 100,
-    features: { reports: true, multi_store: false }
+    features: { reports: true, multi_establishment: false }
   });
 
   const fetchData = async () => {
@@ -749,19 +750,19 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: userId,
-          store_id: licenseFormData.store_id || null,
+          establishment_id: licenseFormData.establishment_id || null,
           plan_type: licenseFormData.plan_type,
           start_date: new Date().toISOString().split('T')[0],
           expiry_date: expiry.toISOString().split('T')[0],
           features: { 
-            max_stores: selectedPlan?.max_stores || 1, 
+            max_establishments: selectedPlan?.max_establishments || 1, 
             max_products: selectedPlan?.max_products || 100 
           }
         })
       });
       if (!res.ok) throw new Error("Failed to manage license");
       setIsLicenseModalOpen(false);
-      setLicenseFormData({ plan_type: '', duration_months: 1, store_id: '', user_id: '' });
+      setLicenseFormData({ plan_type: '', duration_months: 1, establishment_id: '', user_id: '' });
       fetchData();
       if (isClientDetailsOpen && userId === selectedClient?.id) fetchClientDetails(userId);
     } catch (e) {
@@ -893,7 +894,11 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(planFormData)
+        body: JSON.stringify({
+          ...planFormData,
+          max_establishments: planFormData.max_establishments,
+          max_products: planFormData.max_products
+        })
       });
       if (!res.ok) throw new Error("Failed to save plan");
       setIsPlanModalOpen(false);
@@ -1126,7 +1131,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard label="Total de Clientes" value={dashboardData.stats.totalClients} icon={Users} color="blue" />
                 <StatCard label="Clientes Ativos" value={dashboardData.stats.activeClients} icon={ShieldCheck} color="emerald" />
-                <StatCard label="Lojas no Sistema" value={dashboardData.stats.totalStores} icon={Store} color="amber" />
+                <StatCard label="Estabelecimentos no Sistema" value={dashboardData.stats.totalEstablishments} icon={Store} color="amber" />
                 <StatCard label="Suporte Pendente" value={dashboardData.stats.pendingSupport} icon={LifeBuoy} color="rose" />
               </div>
 
@@ -1261,7 +1266,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       <p className="text-sm text-zinc-400 text-center py-4">Nenhum pagamento pendente.</p>
                     ) : (
                       financeData.pendingPayments.map((pending: any) => (
-                        <div key={pending.store_id} className="p-4 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-3">
+                        <div key={pending.establishment_id} className="p-4 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-3">
                           <AlertTriangle className="text-amber-600 mt-0.5" size={18} />
                           <div>
                             <p className="text-sm font-bold text-amber-900">{pending.client_name}</p>
@@ -1472,7 +1477,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Empresa / Proprietário</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Contacto</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano Atual</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Lojas</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estabelecimentos</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estado</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Acções</th>
                       </tr>
@@ -1505,7 +1510,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                               {client.current_plan || 'Sem Plano'}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-sm font-bold text-zinc-600">{client.store_count}</td>
+                          <td className="px-6 py-4 text-sm font-bold text-zinc-600">{client.establishment_count}</td>
                           <td className="px-6 py-4">
                             <span className={cn(
                               "px-2 py-1 rounded-full text-[10px] font-black uppercase",
@@ -1592,7 +1597,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                           <p className="text-[10px] text-zinc-400">{client.phone || 'Sem telefone'}</p>
                         </div>
                         <div>
-                          <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Plano / Lojas</p>
+                          <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Plano / Estabelecimentos</p>
                           <div className="flex items-center gap-2">
                             <span className={cn(
                               "px-2 py-0.5 rounded-full text-[10px] font-black uppercase",
@@ -1602,7 +1607,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                             )}>
                               {client.current_plan || 'Sem Plano'}
                             </span>
-                            <span className="text-xs font-bold text-zinc-600">{client.store_count} lojas</span>
+                            <span className="text-xs font-bold text-zinc-600">{client.establishment_count} estabelecimentos</span>
                           </div>
                         </div>
                       </div>
@@ -1734,7 +1739,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                         <tr key={license.id} className="hover:bg-zinc-50/50 transition-colors">
                           <td className="px-6 py-4">
                             <p className="text-sm font-bold">{license.company_name || license.client_name}</p>
-                            <p className="text-[10px] text-zinc-400">{license.store_name || 'Licença Global'}</p>
+                            <p className="text-[10px] text-zinc-400">{license.establishment_name || 'Licença Global'}</p>
                           </td>
                           <td className="px-6 py-4">
                             <span className={cn(
@@ -1803,7 +1808,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-sm font-bold">{license.company_name || license.client_name}</p>
-                          <p className="text-[10px] text-zinc-400">{license.store_name || 'Licença Global'}</p>
+                          <p className="text-[10px] text-zinc-400">{license.establishment_name || 'Licença Global'}</p>
                         </div>
                         <span className={cn(
                           "px-2 py-1 rounded-full text-[10px] font-black uppercase",
@@ -2148,7 +2153,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                           <div className="flex-1">
                             <div className="flex justify-between items-start">
                               <p className="text-sm">
-                                <span className="font-bold">Nova {activity.type}</span> processada em <span className="font-bold">{activity.store_name}</span>
+                                <span className="font-bold">Nova {activity.type}</span> processada em <span className="font-bold">{activity.establishment_name}</span>
                               </p>
                               <span className="text-[10px] font-bold text-zinc-400">{new Date(activity.timestamp).toLocaleTimeString()}</span>
                             </div>
@@ -2347,7 +2352,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   <button 
                     onClick={() => {
                       setSelectedPlan(null);
-                      setPlanFormData({ name: '', price: 0, max_stores: 1, max_products: 100, features: { reports: true, multi_store: false } });
+                      setPlanFormData({ name: '', price: 0, max_establishments: 1, max_products: 100, features: { reports: true, multi_establishment: false } });
                       setIsPlanModalOpen(true);
                     }}
                     className="px-4 py-2 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition-all flex items-center gap-2"
@@ -2372,7 +2377,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                                 setPlanFormData({ 
                                   name: plan.name, 
                                   price: plan.price, 
-                                  max_stores: plan.max_stores, 
+                                  max_establishments: plan.max_establishments, 
                                   max_products: plan.max_products, 
                                   features: typeof plan.features === 'string' ? JSON.parse(plan.features) : plan.features 
                                 });
@@ -2393,7 +2398,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                         <ul className="space-y-3 mb-6">
                           <li className="flex items-center gap-2 text-sm text-zinc-600">
                             <ShieldCheck size={16} className="text-emerald-500" />
-                            Até {plan.max_stores} lojas
+                            Até {plan.max_establishments} estabelecimentos
                           </li>
                           <li className="flex items-center gap-2 text-sm text-zinc-600">
                             <ShieldCheck size={16} className="text-emerald-500" />
@@ -2406,7 +2411,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                             setPlanFormData({ 
                               name: plan.name, 
                               price: plan.price, 
-                              max_stores: plan.max_stores, 
+                              max_establishments: plan.max_establishments, 
                               max_products: plan.max_products, 
                               features: typeof plan.features === 'string' ? JSON.parse(plan.features) : plan.features 
                             });
@@ -2421,7 +2426,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     <button 
                       onClick={() => {
                         setSelectedPlan(null);
-                        setPlanFormData({ name: '', price: 0, max_stores: 1, max_products: 100, features: { reports: true, multi_store: false } });
+                        setPlanFormData({ name: '', price: 0, max_establishments: 1, max_products: 100, features: { reports: true, multi_establishment: false } });
                         setIsPlanModalOpen(true);
                       }}
                       className="p-6 border-2 border-dashed border-zinc-200 rounded-2xl flex flex-col items-center justify-center gap-2 text-zinc-400 hover:text-black hover:border-black transition-all group"
@@ -2528,11 +2533,11 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               />
             </div>
             <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Máx. Lojas</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Máx. Estabelecimentos</label>
               <input 
                 type="number" 
-                value={isNaN(Number(planFormData.max_stores)) ? '' : planFormData.max_stores}
-                onChange={(e) => setPlanFormData({ ...planFormData, max_stores: Number(e.target.value) })}
+                value={isNaN(Number(planFormData.max_establishments)) ? '' : planFormData.max_establishments}
+                onChange={(e) => setPlanFormData({ ...planFormData, max_establishments: Number(e.target.value) })}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
                 required
               />
@@ -2564,11 +2569,11 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               <label className="flex items-center gap-3 cursor-pointer group">
                 <input 
                   type="checkbox" 
-                  checked={planFormData.features.multi_store}
-                  onChange={(e) => setPlanFormData({ ...planFormData, features: { ...planFormData.features, multi_store: e.target.checked } })}
+                  checked={planFormData.features.multi_establishment}
+                  onChange={(e) => setPlanFormData({ ...planFormData, features: { ...planFormData.features, multi_establishment: e.target.checked } })}
                   className="w-5 h-5 rounded-lg border-zinc-200 text-black focus:ring-black"
                 />
-                <span className="text-sm font-medium text-zinc-600 group-hover:text-black transition-colors">Gestão Multi-Loja</span>
+                <span className="text-sm font-medium text-zinc-600 group-hover:text-black transition-colors">Gestão Multi-Estabelecimento</span>
               </label>
             </div>
           </div>
@@ -2618,8 +2623,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     {/* Stats Summary */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
-                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Lojas</p>
-                        <p className="text-2xl font-black">{clientDetails.stats.totalStores}</p>
+                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Estabelecimentos</p>
+                        <p className="text-2xl font-black">{clientDetails.stats.totalEstablishments}</p>
                       </div>
                       <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
                         <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Usuários</p>
@@ -2631,18 +2636,18 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       </div>
                     </div>
 
-                    {/* Stores List */}
+                    {/* Establishments List */}
                     <div>
-                      <h4 className="font-black text-sm uppercase tracking-widest text-zinc-400 mb-4">Lojas do Cliente</h4>
+                      <h4 className="font-black text-sm uppercase tracking-widest text-zinc-400 mb-4">Estabelecimentos do Cliente</h4>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {clientDetails.stores.map((store: any) => (
-                          <div key={store.id} className="p-4 border border-zinc-100 rounded-2xl flex items-center gap-4 hover:border-black transition-all">
+                        {Array.isArray(clientDetails.establishments) && clientDetails.establishments.map((establishment: any) => (
+                          <div key={establishment.id} className="p-4 border border-zinc-100 rounded-2xl flex items-center gap-4 hover:border-black transition-all">
                             <div className="w-10 h-10 bg-zinc-100 rounded-xl flex items-center justify-center text-zinc-600">
                               <Store size={20} />
                             </div>
                             <div>
-                              <p className="font-bold text-sm">{store.name}</p>
-                              <p className="text-[10px] text-zinc-400">{store.address}</p>
+                              <p className="font-bold text-sm">{establishment.name}</p>
+                              <p className="text-[10px] text-zinc-400">{establishment.address}</p>
                             </div>
                           </div>
                         ))}
@@ -2653,7 +2658,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     <div>
                       <h4 className="font-black text-sm uppercase tracking-widest text-zinc-400 mb-4">Histórico de Licenças</h4>
                       <div className="space-y-3">
-                        {clientDetails.licenses.map((license: any) => (
+                        {(clientDetails.licenses || []).map((license: any) => (
                           <div key={license.id} className="p-4 border border-zinc-100 rounded-2xl flex items-center justify-between">
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 bg-zinc-50 rounded-lg flex items-center justify-center text-zinc-400">
@@ -2661,7 +2666,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                               </div>
                               <div>
                                 <p className="text-sm font-bold">Plano {license.plan_type.toUpperCase()}</p>
-                                <p className="text-[10px] text-zinc-400">{license.store_name || 'Global'}</p>
+                                <p className="text-[10px] text-zinc-400">{license.establishment_name || 'Global'}</p>
                               </div>
                             </div>
                             <div className="text-right">
@@ -3049,7 +3054,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     <div key={h.id} className="p-4 border border-zinc-100 rounded-2xl flex items-center justify-between">
                       <div>
                         <p className="text-sm font-bold">Plano {h.plan_type.toUpperCase()}</p>
-                        <p className="text-[10px] text-zinc-400">{h.store_name || 'Global'}</p>
+                        <p className="text-[10px] text-zinc-400">{h.establishment_name || 'Global'}</p>
                         <p className="text-[10px] text-zinc-500 mt-1">
                           {new Date(h.start_date).toLocaleDateString()} - {new Date(h.expiry_date).toLocaleDateString()}
                         </p>
@@ -3090,9 +3095,9 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
 };
 
 
-const StoreAdmin = ({ user }: { user: User }) => {
-  const { storeId: paramStoreId } = useParams();
-  const storeId = paramStoreId || user.store_id?.toString();
+const EstablishmentAdmin = ({ user }: { user: User }) => {
+  const { establishmentId: paramEstablishmentId } = useParams();
+  const establishmentId = paramEstablishmentId || user.establishment_id?.toString();
   const location = useLocation();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'products' | 'promotions' | 'stock' | 'staff' | 'reports' | 'settings' | 'support' | 'cash-registers' | 'suppliers' | 'purchases' | 'proformas' | 'invoices'>('dashboard');
 
@@ -3108,7 +3113,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
       else setActiveTab('dashboard');
     }
   }, [location.pathname, user.role]);
-  const [storeData, setStoreData] = useState<any>(null);
+  const [establishmentData, setEstablishmentData] = useState<any>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [staff, setStaff] = useState<any[]>([]);
   const [staffPerformance, setStaffPerformance] = useState<any[]>([]);
@@ -3116,28 +3121,20 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [stockMovements, setStockMovements] = useState<any[]>([]);
   const [stockReport, setStockReport] = useState<any>(null);
   const [reportsData, setReportsData] = useState<any>(null);
-  const [stores, setStores] = useState<any[]>([]);
+  const [establishments, setEstablishments] = useState<any[]>([]);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
   const [taxes, setTaxes] = useState<any[]>([]);
   const [supportTickets, setSupportTickets] = useState<any[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<any>(null);
   const [ticketMessages, setTicketMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isTicketModalOpen, setIsTicketModalOpen] = useState(false);
-  const [ticketForm, setTicketForm] = useState({ subject: '', description: '', priority: 'medium' });
-  const [settingsForm, setSettingsForm] = useState({ 
-    name: '', 
-    nif: '', 
-    phone: '', 
-    email: '',
-    address: '', 
-    logo_url: '', 
-    status: 'active',
-    bank_accounts: [] as BankAccount[]
-  });
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [isWarehouseModalOpen, setIsWarehouseModalOpen] = useState(false);
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<any>(null);
   const [editingProduct, setEditingProduct] = useState<any>(null);
+  const [editingWarehouse, setEditingWarehouse] = useState<any>(null);
   const [isPromoModalOpen, setIsPromoModalOpen] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isProformaModalOpen, setIsProformaModalOpen] = useState(false);
@@ -3191,7 +3188,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [activePurchaseTab, setActivePurchaseTab] = useState<'orders' | 'received' | 'returns'>('orders');
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
   const [purchaseForm, setPurchaseForm] = useState({
-    store_id: storeId || '',
+    establishment_id: establishmentId || '',
     supplier_id: '',
     invoice_number: '',
     due_date: '',
@@ -3230,7 +3227,13 @@ const StoreAdmin = ({ user }: { user: User }) => {
     category: '', 
     image_url: '', 
     min_stock: '5',
-    tax_id: ''
+    tax_id: '',
+    warehouse_id: ''
+  });
+  const [warehouseForm, setWarehouseForm] = useState({
+    name: '',
+    type: 'principal',
+    establishment_id: establishmentId || ''
   });
   const [staffForm, setStaffForm] = useState({ 
     name: '', 
@@ -3243,6 +3246,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
     cash_register_id: ''
   });
   const [promoForm, setPromoForm] = useState({ name: '', start_date: '', end_date: '', discount_percent: '', product_ids: [] as number[] });
+  const [ticketForm, setTicketForm] = useState({ subject: '', description: '', priority: 'medium' });
   const [proformaForm, setProformaForm] = useState({ 
     client_name: '', 
     client_nif: '', 
@@ -3254,7 +3258,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
     type: 'in', 
     quantity: '', 
     reason: '', 
-    to_store_id: '',
+    to_establishment_id: '',
     supplier_id: '',
     isBulk: false,
     bulkType: 'grade',
@@ -3274,81 +3278,100 @@ const StoreAdmin = ({ user }: { user: User }) => {
   const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
   const [closingSessionId, setClosingSessionId] = useState<number | null>(null);
   const [closingAmount, setClosingAmount] = useState('');
+  const [settingsForm, setSettingsForm] = useState({
+    name: '',
+    address: '',
+    phone: '',
+    email: '',
+    nif: '',
+    logo_url: '',
+    bank_accounts: [] as any[],
+    status: 'active'
+  });
+
+  useEffect(() => {
+    if (establishmentData) {
+      setSettingsForm({
+        name: establishmentData.name || '',
+        address: establishmentData.address || '',
+        phone: establishmentData.phone || '',
+        email: establishmentData.email || '',
+        nif: establishmentData.nif || '',
+        logo_url: establishmentData.logo_url || '',
+        bank_accounts: typeof establishmentData.bank_accounts === 'string' 
+          ? JSON.parse(establishmentData.bank_accounts) 
+          : (establishmentData.bank_accounts || []),
+        status: establishmentData.status || 'active'
+      });
+    }
+  }, [establishmentData]);
+
   const navigate = useNavigate();
 
   const fetchData = () => {
-    fetch(`/api/owner/store-details/${storeId}`)
+    fetch(`/api/owner/establishment-details/${establishmentId}`)
       .then(res => res.json())
       .then(data => {
-        setStoreData(data);
-        if (data.store) {
-          setSettingsForm({
-            name: data.store.name || '',
-            nif: data.store.nif || '',
-            phone: data.store.phone || '',
-            email: data.store.email || '',
-            address: data.store.address || '',
-            logo_url: data.store.logo_url || '',
-            status: data.store.status || 'active',
-            bank_accounts: data.store.bank_accounts ? (typeof data.store.bank_accounts === 'string' ? JSON.parse(data.store.bank_accounts) : data.store.bank_accounts) : []
-          });
-        }
-      });
-    fetch(`/api/owner/products/${storeId}`)
+        setEstablishmentData(data);
+      }).catch(() => {});
+    fetch(`/api/owner/products/${establishmentId}`)
       .then(res => res.json())
-      .then(setProducts);
-    fetch(`/api/owner/staff/${storeId}`)
+      .then(setProducts).catch(() => {});
+    fetch(`/api/owner/staff/${establishmentId}`)
       .then(res => res.json())
-      .then(setStaff);
-    fetch(`/api/owner/staff-performance/${storeId}`)
+      .then(setStaff).catch(() => {});
+    fetch(`/api/owner/staff-performance/${establishmentId}`)
       .then(res => res.json())
-      .then(setStaffPerformance);
-    fetch(`/api/owner/promotions/${storeId}`)
+      .then(setStaffPerformance).catch(() => {});
+    fetch(`/api/owner/promotions/${establishmentId}`)
       .then(res => res.json())
-      .then(setPromotions);
-    fetch(`/api/owner/stock/movements/${storeId}`)
+      .then(setPromotions).catch(() => {});
+    fetch(`/api/owner/stock/movements/${establishmentId}`)
       .then(res => res.json())
-      .then(setStockMovements);
-    fetch(`/api/owner/stock/report/${storeId}`)
+      .then(setStockMovements).catch(() => {});
+    fetch(`/api/owner/stock/report/${establishmentId}`)
       .then(res => res.json())
-      .then(setStockReport);
-    fetch(`/api/owner/reports/${storeId}`)
+      .then(setStockReport).catch(() => {});
+    fetch(`/api/owner/reports/${establishmentId}`)
       .then(res => res.json())
-      .then(setReportsData);
-    fetch(`/api/owner/taxes/store/${storeId}`)
+      .then(setReportsData).catch(() => {});
+    fetch(`/api/owner/taxes/establishment/${establishmentId}`)
       .then(res => res.json())
-      .then(setTaxes);
-    fetch(`/api/owner/proforma/${storeId}`)
+      .then(setTaxes).catch(() => {});
+    fetch(`/api/owner/warehouses/${user.id}`)
       .then(res => res.json())
-      .then(setProformas);
-    fetch(`/api/owner/credit-invoices/${storeId}`)
+      .then(setWarehouses).catch(() => {});
+    fetch(`/api/owner/proforma/${establishmentId}`)
       .then(res => res.json())
-      .then(setCreditInvoices);
-    fetch(`/api/owner/stores/${storeId}/cash-registers`)
+      .then(setProformas).catch(() => {});
+    fetch(`/api/owner/credit-invoices/${establishmentId}`)
       .then(res => res.json())
-      .then(setCashRegisters);
-    fetch('/api/admin/stores')
+      .then(setCreditInvoices).catch(() => {});
+    fetch(`/api/owner/establishments/${establishmentId}/cash-registers`)
       .then(res => res.json())
-      .then(setStores);
+      .then(setCashRegisters).catch(() => {});
+    fetch('/api/admin/establishments')
+      .then(res => res.json())
+      .then(setEstablishments).catch(() => {});
     fetch(`/api/owner/support/${user.id}`)
       .then(res => res.json())
-      .then(setSupportTickets);
+      .then(setSupportTickets).catch(() => {});
     fetch(`/api/owner/suppliers/${user.id}`)
       .then(res => res.json())
-      .then(setSuppliers);
-    fetch(`/api/owner/purchases/${storeId}`)
+      .then(setSuppliers).catch(() => {});
+    fetch(`/api/owner/purchases/${establishmentId}`)
       .then(res => res.json())
-      .then(setPurchases);
-    fetch(`/api/owner/purchase-returns/${storeId}`)
+      .then(setPurchases).catch(() => {});
+    fetch(`/api/owner/purchase-returns/${establishmentId}`)
       .then(res => res.json())
-      .then(setPurchaseReturns);
+      .then(setPurchaseReturns).catch(() => {});
   };
 
-  useEffect(fetchData, [storeId]);
+  useEffect(fetchData, [establishmentId]);
 
   const handleSaveCashRegister = async (e: FormEvent) => {
     e.preventDefault();
-    const url = editingCashRegister ? `/api/owner/stores/cash-registers/${editingCashRegister.id}` : `/api/owner/stores/${storeId}/cash-registers`;
+    const url = editingCashRegister ? `/api/owner/establishments/cash-registers/${editingCashRegister.id}` : `/api/owner/establishments/${establishmentId}/cash-registers`;
     const method = editingCashRegister ? 'PUT' : 'POST';
 
     const res = await fetch(url, {
@@ -3380,7 +3403,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          store_id: Number(storeId),
+          establishment_id: Number(establishmentId),
           seller_id: user.id,
           cash_register_id: registerId,
           opening_amount: parseFloat(amount)
@@ -3461,7 +3484,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
 
   const handleDeleteCashRegister = async (id: number) => {
     if (!confirm('Tem certeza que deseja eliminar este caixa?')) return;
-    const res = await fetch(`/api/owner/stores/cash-registers/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/owner/establishments/cash-registers/${id}`, { method: 'DELETE' });
     if (res.ok) fetchData();
   };
 
@@ -3475,7 +3498,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         ...productForm, 
-        store_id: Number(storeId), 
+        establishment_id: Number(establishmentId), 
+        warehouse_id: productForm.warehouse_id ? Number(productForm.warehouse_id) : null,
         price: Number(productForm.price), 
         stock: Number(productForm.stock),
         min_stock: Number(productForm.min_stock)
@@ -3491,7 +3515,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
         category: '', 
         image_url: '', 
         min_stock: '5',
-        tax_id: ''
+        tax_id: '',
+        warehouse_id: ''
       });
       fetchData();
     } else {
@@ -3509,7 +3534,8 @@ const StoreAdmin = ({ user }: { user: User }) => {
       category: product.category,
       image_url: product.image_url,
       min_stock: (product.min_stock || 5).toString(),
-      tax_id: product.tax_id?.toString() || ''
+      tax_id: product.tax_id?.toString() || '',
+      warehouse_id: product.warehouse_id?.toString() || ''
     });
     setIsProductModalOpen(true);
   };
@@ -3524,7 +3550,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         ...staffForm, 
-        store_id: Number(storeId), 
+        establishment_id: Number(establishmentId), 
         salary: Number(staffForm.salary),
         cash_register_id: staffForm.cash_register_id ? Number(staffForm.cash_register_id) : null
       })
@@ -3612,7 +3638,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         ...promoForm, 
-        store_id: Number(storeId), 
+        establishment_id: Number(establishmentId), 
         discount_percent: Number(promoForm.discount_percent) 
       })
     });
@@ -3647,14 +3673,14 @@ const StoreAdmin = ({ user }: { user: User }) => {
     }
 
     const body = isTransfer ? {
-      from_store_id: Number(storeId),
-      to_store_id: Number(stockForm.to_store_id),
+      from_establishment_id: Number(establishmentId),
+      to_establishment_id: Number(stockForm.to_establishment_id),
       product_id: Number(stockForm.product_id),
       user_id: user.id,
       quantity: finalQuantity,
       reason: stockForm.reason
     } : {
-      store_id: Number(storeId),
+      establishment_id: Number(establishmentId),
       product_id: Number(stockForm.product_id),
       user_id: user.id,
       type: stockForm.type,
@@ -3676,7 +3702,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
         type: 'in', 
         quantity: '', 
         reason: '', 
-        to_store_id: '',
+        to_establishment_id: '',
         supplier_id: '',
         isBulk: false,
         bulkType: 'grade',
@@ -3692,7 +3718,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
 
   const handleUpdateSettings = async (e: FormEvent) => {
     e.preventDefault();
-    const res = await fetch(`/api/owner/store-settings/${storeId}`, {
+    const res = await fetch(`/api/owner/establishment-settings/${establishmentId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settingsForm)
@@ -3780,7 +3806,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...proformaForm,
-          store_id: storeId,
+          establishment_id: establishmentId,
           owner_id: user.id,
           total_amount
         })
@@ -3791,7 +3817,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
         setIsProformaModalOpen(false);
         setProformaForm({ client_name: '', client_nif: '', client_address: '', items: [] });
         alert("Fatura Proforma criada com sucesso!");
-        await generateProformaPDF(proformaData, store, user);
+        await generateProformaPDF(proformaData, establishment, user);
         fetchData();
       }
     } catch (e) {
@@ -3859,7 +3885,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         ...creditInvoiceForm, 
-        store_id: storeId,
+        establishment_id: establishmentId,
         total_amount,
         tax_amount,
         seller_id: user?.id
@@ -3937,10 +3963,10 @@ const StoreAdmin = ({ user }: { user: User }) => {
     });
   };
 
-  if (!storeData) return <div className="p-8 text-center text-zinc-500">Carregando dados da loja...</div>;
-  if (!storeData.store) return <div className="p-8 text-center text-zinc-500">Loja não encontrada ou acesso negado.</div>;
+  if (!establishmentData) return <div className="p-8 text-center text-zinc-500">Carregando dados do estabelecimento...</div>;
+  if (!establishmentData.establishment) return <div className="p-8 text-center text-zinc-500">Estabelecimento não encontrado ou acesso negado.</div>;
 
-  const { store, dashboard } = storeData;
+  const { establishment, dashboard } = establishmentData;
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6 space-y-6">
@@ -3948,7 +3974,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
         <div className="flex items-center gap-4">
           {user.role === 'owner' && (
             <button 
-              onClick={() => navigate('/owner/stores')}
+              onClick={() => navigate('/owner/establishments')}
               className="p-2 hover:bg-zinc-100 rounded-xl transition-colors text-zinc-400 hover:text-black"
             >
               <ChevronLeft size={24} />
@@ -3956,17 +3982,17 @@ const StoreAdmin = ({ user }: { user: User }) => {
           )}
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 md:w-12 md:h-12 bg-black text-white rounded-2xl flex items-center justify-center overflow-hidden shrink-0">
-              {store.logo_url ? (
-                <img src={store.logo_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              {establishment.logo_url ? (
+                <img src={establishment.logo_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
                 <Store size={20} className="md:w-6 md:h-6" />
               )}
             </div>
             <div className="min-w-0">
-              <h2 className="text-xl md:text-2xl font-bold tracking-tight truncate">{store.name}</h2>
+              <h2 className="text-xl md:text-2xl font-bold tracking-tight truncate">{establishment.name}</h2>
               <p className="text-zinc-500 text-[10px] md:text-sm flex items-center gap-1 truncate">
-                <Activity size={12} className={store.status === 'active' ? 'text-emerald-500' : 'text-rose-500'} />
-                Painel Administrativo • {store.status === 'active' ? 'Ativa' : 'Inativa'}
+                <Activity size={12} className={establishment.status === 'active' ? 'text-emerald-500' : 'text-rose-500'} />
+                Painel Administrativo • {establishment.status === 'active' ? 'Ativo' : 'Inativo'}
               </p>
             </div>
           </div>
@@ -4112,6 +4138,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                       <th className="px-6 py-4 font-semibold">Produto</th>
                       <th className="px-6 py-4 font-semibold">Código de Barra</th>
                       <th className="px-6 py-4 font-semibold">Categoria</th>
+                      <th className="px-6 py-4 font-semibold">Armazém</th>
                       <th className="px-6 py-4 font-semibold">Preço</th>
                       <th className="px-6 py-4 font-semibold">Stock</th>
                       <th className="px-6 py-4 font-semibold text-right">Ações</th>
@@ -4130,6 +4157,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                           <span className="font-mono text-xs bg-zinc-100 px-2 py-1 rounded border border-zinc-200">{product.barcode}</span>
                         </td>
                         <td className="px-6 py-4 text-sm text-zinc-500">{product.category}</td>
+                        <td className="px-6 py-4 text-sm text-zinc-500">{product.warehouse_name || 'N/A'}</td>
                         <td className="px-6 py-4 text-sm font-bold">
                           {product.discount_percent ? (
                             <div className="flex flex-col">
@@ -4205,6 +4233,10 @@ const StoreAdmin = ({ user }: { user: User }) => {
                         )}
                       </div>
                       <div className="text-right">
+                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Armazém</p>
+                        <p className="text-xs font-bold text-zinc-600">{product.warehouse_name || 'N/A'}</p>
+                      </div>
+                      <div className="text-right">
                         <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Categoria</p>
                         <p className="text-xs font-bold text-zinc-600">{product.category}</p>
                       </div>
@@ -4231,7 +4263,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
         </div>
       )}
 
-          {activeTab === 'promotions' && (
+      {activeTab === 'promotions' && (
             <div className="flex-1 flex flex-col min-h-0">
               <Card className="flex-1 flex flex-col min-h-0 overflow-hidden">
                 <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shrink-0">
@@ -4329,7 +4361,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <Card className="lg:col-span-2">
                   <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                    <h3 className="font-bold">Equipa da Loja</h3>
+                    <h3 className="font-bold">Equipa do Estabelecimento</h3>
                     <button 
                       onClick={() => {
                         setEditingStaff(null);
@@ -4573,7 +4605,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                 maxWidth="max-w-4xl"
               >
                 {selectedProforma && (
-                  <ProformaInvoice proforma={selectedProforma} store={store} />
+                  <ProformaInvoice proforma={selectedProforma} establishment={establishment} />
                 )}
               </Modal>
               <div className="flex justify-between items-center mb-6 shrink-0">
@@ -4643,7 +4675,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                                   <Eye size={16} />
                                 </button>
                                 <button 
-                                  onClick={async () => await generateProformaPDF(p, store, user)}
+                                  onClick={async () => await generateProformaPDF(p, establishment, user)}
                                   className="p-2 hover:bg-zinc-200 rounded-xl transition-colors text-zinc-600"
                                   title="Imprimir / Descarregar"
                                 >
@@ -4670,7 +4702,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                 maxWidth="max-w-4xl"
               >
                 {selectedCreditInvoice && (
-                  <CreditInvoicePreview invoice={selectedCreditInvoice} store={store} />
+                  <CreditInvoicePreview invoice={selectedCreditInvoice} establishment={establishment} />
                 )}
               </Modal>
 
@@ -5358,12 +5390,12 @@ const StoreAdmin = ({ user }: { user: User }) => {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <Card className="lg:col-span-2">
                 <div className="p-6 border-b border-zinc-100">
-                  <h3 className="font-bold">Configurações da Loja</h3>
+                  <h3 className="font-bold">Configurações do Estabelecimento</h3>
                 </div>
                 <form onSubmit={handleUpdateSettings} className="p-4 md:p-6 space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                     <div>
-                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome da Loja</label>
+                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Estabelecimento</label>
                       <input 
                         type="text" 
                         value={settingsForm.name}
@@ -5390,7 +5422,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email da Loja (Opcional)</label>
+                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email do Estabelecimento (Opcional)</label>
                       <input 
                         type="email" 
                         value={settingsForm.email}
@@ -5408,7 +5440,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                       />
                     </div>
                     <div className="col-span-full">
-                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Logotipo da Loja</label>
+                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Logotipo do Estabelecimento</label>
                       <div className="flex flex-col md:flex-row gap-4">
                         <div className="flex-1 space-y-2">
                           <input 
@@ -5567,11 +5599,11 @@ const StoreAdmin = ({ user }: { user: User }) => {
                   </div>
                   <div className="p-6 space-y-4">
                     <p className="text-xs text-zinc-500">
-                      Eliminar uma loja é uma acção irreversível. Todos os dados de produtos, vendas e colaboradores serão perdidos.
+                      Eliminar um estabelecimento é uma acção irreversível. Todos os dados de produtos, vendas e colaboradores serão perdidos.
                     </p>
                     <button className="w-full flex items-center justify-center gap-2 py-3 text-rose-600 font-bold hover:bg-rose-100 rounded-xl transition-colors border border-rose-200">
                       <Trash2 size={18} />
-                      Eliminar Loja Permanentemente
+                      Eliminar Estabelecimento Permanentemente
                     </button>
                   </div>
                 </Card>
@@ -5586,7 +5618,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                 <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shrink-0">
                   <div>
                     <h3 className="font-bold">Gestão de Caixas</h3>
-                    <p className="text-xs text-zinc-500">Configure os pontos de venda da sua loja.</p>
+                    <p className="text-xs text-zinc-500">Configure os pontos de venda do seu estabelecimento.</p>
                   </div>
                   <div className="flex items-center gap-3 w-full md:w-auto">
                     <button 
@@ -5888,7 +5920,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                       <thead>
                         <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
                           <th className="px-6 py-4 font-semibold">Produto</th>
-                          <th className="px-6 py-4 font-semibold">Loja</th>
+                          <th className="px-6 py-4 font-semibold">Estabelecimento</th>
                           <th className="px-6 py-4 font-semibold">Stock Atual</th>
                           <th className="px-6 py-4 font-semibold">Mínimo</th>
                           <th className="px-6 py-4 font-semibold">Status</th>
@@ -5903,7 +5935,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                                 <span className="font-medium text-sm">{product.name}</span>
                               </div>
                             </td>
-                            <td className="px-6 py-4 text-sm text-zinc-500">{store.name}</td>
+                            <td className="px-6 py-4 text-sm text-zinc-500">{establishment.name}</td>
                             <td className="px-6 py-4 text-sm font-bold">{product.stock} un</td>
                             <td className="px-6 py-4 text-sm text-zinc-400">{product.min_stock || 5} un</td>
                             <td className="px-6 py-4">
@@ -6344,7 +6376,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
       <Modal 
         isOpen={isOpeningModalOpen} 
         onClose={() => setIsOpeningModalOpen(false)} 
-        title={`Abrir Caixa - ${store.name}`}
+        title={`Abrir Caixa - ${establishment.name}`}
       >
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -6407,7 +6439,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
             })}
             {cashRegisters.length === 0 && (
               <div className="col-span-2 py-12 text-center text-zinc-400">
-                Nenhum caixa registado para esta loja.
+                Nenhum caixa registado para este estabelecimento.
               </div>
             )}
           </div>
@@ -6520,6 +6552,20 @@ const StoreAdmin = ({ user }: { user: User }) => {
             </div>
           </div>
           <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Armazém</label>
+            <select 
+              required
+              value={productForm.warehouse_id}
+              onChange={e => setProductForm({...productForm, warehouse_id: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+            >
+              <option value="">Selecione um armazém</option>
+              {warehouses.filter(w => w.establishment_id === Number(establishmentId)).map(w => (
+                <option key={w.id} value={w.id}>{w.name} ({w.type})</option>
+              ))}
+            </select>
+          </div>
+          <div>
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Imagem do Produto</label>
             <div className="flex flex-col md:flex-row gap-4">
               <div className="flex-1 space-y-2">
@@ -6574,7 +6620,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
                 user?.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
               )}
             >
-              <option value="">Usar Padrão da Loja</option>
+              <option value="">Usar Padrão do Estabelecimento</option>
               {taxes.filter(t => t.status === 'active').map(tax => (
                 <option key={tax.id} value={tax.id}>{tax.name} ({tax.percentage}%)</option>
               ))}
@@ -6827,7 +6873,7 @@ const StoreAdmin = ({ user }: { user: User }) => {
               >
                 <option value="in">Entrada de Stock</option>
                 <option value="out">Saída de Stock</option>
-                <option value="transfer">Transferência entre Lojas</option>
+                <option value="transfer">Transferência entre Estabelecimentos</option>
                 <option value="adjustment">Ajuste Manual</option>
               </select>
             </div>
@@ -6866,15 +6912,15 @@ const StoreAdmin = ({ user }: { user: User }) => {
 
           {stockForm.type === 'transfer' && (
             <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Loja de Destino</label>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Estabelecimento de Destino</label>
               <select 
                 required
-                value={stockForm.to_store_id}
-                onChange={e => setStockForm({...stockForm, to_store_id: e.target.value})}
+                value={stockForm.to_establishment_id}
+                onChange={e => setStockForm({...stockForm, to_establishment_id: e.target.value})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
               >
-                <option value="">Selecionar Loja</option>
-                {stores.filter(s => s.id !== Number(storeId)).map(s => (
+                <option value="">Selecionar Estabelecimento</option>
+                {establishments.filter(s => s.id !== Number(establishmentId)).map(s => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
@@ -7014,8 +7060,18 @@ const StoreAdmin = ({ user }: { user: User }) => {
 };
 
 
-const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) => {
+const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establishment: any }) => {
   const invoiceRef = useRef<HTMLDivElement>(null);
+  const [qrCode, setQrCode] = useState<string>('');
+
+  useEffect(() => {
+    if (invoice.billing_mode === 'eletronica' || invoice.doc_type === 'FR') {
+      const qrData = `https://agt.minfin.gov.ao/m?nif=${establishment.nif}&num=${invoice.invoice_number}&dt=${new Date(invoice.invoice_date || invoice.timestamp || invoice.created_at).toISOString().split('T')[0]}&val=${invoice.total_amount.toFixed(2)}`;
+      QRCode.toDataURL(qrData, { margin: 1, width: 120 }, (err, url) => {
+        if (!err) setQrCode(url);
+      });
+    }
+  }, [invoice, establishment]);
 
   const handlePrint = () => {
     window.print();
@@ -7067,7 +7123,7 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
     pdf.save(`${invoice.doc_type === 'NC' ? 'NOTA_CREDITO' : invoice.doc_type === 'ND' ? 'NOTA_DEBITO' : invoice.doc_type === 'FR' ? 'FATURA_RECIBO' : 'FATURA_CREDITO'}_${invoice.invoice_number.replace('/', '_')}.pdf`);
   };
 
-  if (!invoice || !store) return null;
+  if (!invoice || !establishment) return null;
 
   const subtotal = invoice.items.reduce((acc: number, item: any) => acc + (item.price * item.quantity), 0);
   const taxTotal = invoice.items.reduce((acc: number, item: any) => acc + (item.price * item.quantity * (item.tax / 100)), 0);
@@ -7094,22 +7150,22 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
         {/* Header */}
         <div className="flex justify-between items-start mb-12">
           <div className="flex items-center gap-8">
-            {store.logo_url && (
+            {establishment.logo_url && (
               <div className="w-24 h-24 bg-zinc-50 rounded-2xl flex items-center justify-center p-4 border border-zinc-100">
-                <img src={store.logo_url} alt="" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                <img src={establishment.logo_url} alt="" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
               </div>
             )}
             <div>
-              <h2 className="text-3xl font-black uppercase tracking-tight text-zinc-900 leading-none">{store.name}</h2>
+              <h2 className="text-3xl font-black uppercase tracking-tight text-zinc-900 leading-none">{establishment.name}</h2>
               <div className="mt-4 space-y-1 text-xs font-bold text-zinc-500 uppercase tracking-widest">
-                <p>{store.address}</p>
-                <p>NIF: {store.nif} | TEL: {store.phone}</p>
-                {store.email && <p>{store.email}</p>}
+                <p>{establishment.address}</p>
+                <p>NIF: {establishment.nif} | TEL: {establishment.phone}</p>
+                {establishment.email && <p>{establishment.email}</p>}
               </div>
             </div>
           </div>
           <div className="text-right">
-            <h1 className="text-4xl font-black text-zinc-100 uppercase mb-2">
+            <h1 className="text-4xl font-black text-orange-500 uppercase mb-2">
               {invoice.doc_type === 'FR' ? 'FATURA RECIBO' : 
                invoice.doc_type === 'FT' ? 'FATURA CRÉDITO' : 
                invoice.doc_type === 'NC' ? 'NOTA DE CRÉDITO' :
@@ -7117,7 +7173,7 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
                'DOCUMENTO'}
             </h1>
             <div className="space-y-1 text-xs font-bold text-zinc-500 uppercase tracking-widest">
-              <p>Nº {invoice.invoice_number}</p>
+              <p className="text-orange-600">Nº {invoice.invoice_number}</p>
               <p>DATA {new Date(invoice.invoice_date || invoice.timestamp || invoice.created_at).toLocaleDateString()}</p>
               <p>MOEDA {invoice.currency || 'Kz'}</p>
               <p>PAGAMENTO {
@@ -7207,6 +7263,15 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
                 <span>Total</span>
                 <span>Kz {total.toLocaleString()}</span>
               </div>
+              
+              {qrCode && (invoice.billing_mode === 'eletronica' || invoice.doc_type === 'FR') && (
+                <div className="pt-6 flex flex-col items-center gap-2">
+                  <img src={qrCode} alt="QR Code AGT" className="w-24 h-24" />
+                  <p className="text-[8px] text-zinc-400 font-bold uppercase tracking-widest text-center">
+                    Faturação Eletrónica - Código QR AGT
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -7215,7 +7280,7 @@ const CreditInvoicePreview = ({ invoice, store }: { invoice: any, store: any }) 
   );
 };
 
-const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => {
+const ProformaInvoice = ({ proforma, establishment }: { proforma: any, establishment: any }) => {
   const invoiceRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
@@ -7274,7 +7339,7 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
     pdf.save(`PROFORMA_${proforma.id}.pdf`);
   };
 
-  if (!proforma || !store) return null;
+  if (!proforma || !establishment) return null;
 
   const bankAccounts = typeof proforma.bank_accounts === 'string' 
     ? JSON.parse(proforma.bank_accounts) 
@@ -7382,30 +7447,30 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
             {pageIdx === 0 && (
               <div className="flex justify-between items-start mb-12">
                 <div className="flex items-center gap-8">
-                  {store.logo_url && (
+                  {establishment.logo_url && (
                     <div className="w-24 h-24 bg-zinc-50 rounded-2xl flex items-center justify-center p-2 border border-zinc-100">
-                      <img src={store.logo_url} alt="" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                      <img src={establishment.logo_url} alt="" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
                     </div>
                   )}
                   <div className="space-y-4">
-                    <h2 className="text-3xl font-black uppercase tracking-tight text-orange-600 leading-none">{store.name}</h2>
+                    <h2 className="text-3xl font-black uppercase tracking-tight text-orange-600 leading-none">{establishment.name}</h2>
                     <div className="grid grid-cols-1 gap-2 text-sm">
                       <div className="grid grid-cols-[80px_1fr] gap-4 items-start">
                         <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] pt-1 shrink-0">Endereço</span>
-                        <span className="text-zinc-600 font-medium">{store.address}</span>
+                        <span className="text-zinc-600 font-medium">{establishment.address}</span>
                       </div>
                       <div className="grid grid-cols-[80px_1fr] gap-4 items-center">
                         <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] shrink-0">NIF</span>
-                        <span className="text-zinc-600 font-bold">{store.nif}</span>
+                        <span className="text-zinc-600 font-bold">{establishment.nif}</span>
                       </div>
                       <div className="grid grid-cols-[80px_1fr] gap-4 items-center">
                         <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] shrink-0">Telefone</span>
-                        <span className="text-zinc-600 font-bold">{store.phone}</span>
+                        <span className="text-zinc-600 font-bold">{establishment.phone}</span>
                       </div>
-                      {store.email && (
+                      {establishment.email && (
                         <div className="grid grid-cols-[80px_1fr] gap-4 items-center">
                           <span className="font-black text-zinc-400 uppercase text-[8px] tracking-[0.2em] shrink-0">Email</span>
-                          <span className="text-orange-600 font-bold">{store.email}</span>
+                          <span className="text-orange-600 font-bold">{establishment.email}</span>
                         </div>
                       )}
                     </div>
@@ -7482,13 +7547,13 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
           <div className="proforma-page bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden">
             <div className="flex justify-between items-start mb-12 opacity-50">
               <div className="flex items-center gap-8">
-                {store.logo_url && (
+                {establishment.logo_url && (
                   <div className="w-16 h-16 bg-zinc-50 rounded-2xl flex items-center justify-center p-2 border border-zinc-100">
-                    <img src={store.logo_url} alt="" className="max-w-full max-h-full object-contain opacity-50" referrerPolicy="no-referrer" />
+                    <img src={establishment.logo_url} alt="" className="max-w-full max-h-full object-contain opacity-50" referrerPolicy="no-referrer" />
                   </div>
                 )}
                 <div>
-                  <h2 className="text-xl font-black uppercase tracking-tight text-zinc-400 leading-none">{store.name}</h2>
+                  <h2 className="text-xl font-black uppercase tracking-tight text-zinc-400 leading-none">{establishment.name}</h2>
                   <p className="text-[10px] font-bold text-zinc-300 mt-2 uppercase tracking-widest">Página de Continuação / Coordenadas Bancárias</p>
                 </div>
               </div>
@@ -7518,8 +7583,18 @@ const ProformaInvoice = ({ proforma, store }: { proforma: any, store: any }) => 
 
 // --- Seller Module ---
 
-const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) => {
+const Invoice = ({ sale, establishment, user }: { sale: any, establishment: any, user: User }) => {
   const invoiceRef = useRef<HTMLDivElement>(null);
+  const [qrCode, setQrCode] = useState<string>('');
+
+  useEffect(() => {
+    if (sale.billing_mode === 'eletronica') {
+      const qrData = `https://agt.minfin.gov.ao/m?nif=${establishment.nif}&num=${sale.invoice_number}&dt=${new Date(sale.timestamp).toISOString().split('T')[0]}&val=${sale.total_amount.toFixed(2)}`;
+      QRCode.toDataURL(qrData, { margin: 1, width: 100 }, (err, url) => {
+        if (!err) setQrCode(url);
+      });
+    }
+  }, [sale, establishment]);
 
   const handlePrint = () => {
     window.print();
@@ -7574,28 +7649,29 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
     // but this triggers the system download dialog.
   };
 
-  if (!sale || !store) return null;
+  if (!sale || !establishment) return null;
 
   return (
     <div className="space-y-4">
       <div ref={invoiceRef} className="bg-white p-4 max-w-[280px] mx-auto shadow-sm border border-zinc-100 rounded-lg invoice-print font-mono text-zinc-900">
-        <div className="text-center mb-2 border-b-2 border-dashed border-zinc-200 pb-2">
-          {store.logo_url && (
-            <img src={store.logo_url || undefined} alt="" className="w-10 h-10 mx-auto mb-1 object-contain grayscale" referrerPolicy="no-referrer" />
+          <div className="text-center mb-2 border-b-2 border-dashed border-orange-500 pb-2">
+          {establishment.logo_url && (
+            <img src={establishment.logo_url || undefined} alt="" className="w-10 h-10 mx-auto mb-1 object-contain grayscale" referrerPolicy="no-referrer" />
           )}
-          <h2 className="text-base font-black uppercase tracking-tight">{store.name}</h2>
-          <h1 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] mt-0.5">Fatura Recibo</h1>
-          <p className="text-[8px] leading-tight text-zinc-500 mb-0.5 mt-0.5">{store.address}</p>
+          <h2 className="text-base font-black uppercase tracking-tight text-orange-600">{establishment.name}</h2>
+          <h1 className="text-[10px] font-black text-orange-400 uppercase tracking-[0.2em] mt-0.5">Fatura Recibo</h1>
+          <p className="text-[8px] leading-tight text-zinc-500 mb-0.5 mt-0.5">{establishment.address}</p>
           <div className="text-[7px] font-bold flex flex-wrap justify-center gap-x-2">
-            <span>NIF: {store.nif}</span>
-            <span>TEL: {store.phone}</span>
+            <span className="text-orange-600">NIF: {establishment.nif}</span>
+            <span>TEL: {establishment.phone}</span>
+            {establishment.establishment_code && <span>CÓD. ESTAB: {establishment.establishment_code}</span>}
           </div>
         </div>
 
         <div className="space-y-0.5 mb-2 text-[8px] text-zinc-600">
           <div className="flex justify-between">
             <span>Nº DOCUMENTO:</span>
-            <span className="font-bold">{sale.invoice_number}</span>
+            <span className="font-bold text-orange-600">{sale.invoice_number}</span>
           </div>
           <div className="flex justify-between">
             <span>DATA/HORA:</span>
@@ -7605,10 +7681,10 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
             <span>OPERADOR:</span>
             <span>{user.name.toUpperCase()}</span>
           </div>
-          <div className="mt-1 pt-1 border-t border-dashed border-zinc-100">
+          <div className="mt-1 pt-1 border-t border-dashed border-orange-200">
             <div className="flex justify-between">
               <span>CLIENTE:</span>
-              <span className="font-bold truncate max-w-[140px]">{sale.client_name.toUpperCase()}</span>
+              <span className="font-bold truncate max-w-[140px] text-orange-600">{sale.client_name.toUpperCase()}</span>
             </div>
             <div className="flex justify-between">
               <span>NIF CLIENTE:</span>
@@ -7663,6 +7739,13 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
             <span>TOTAL A PAGAR</span>
             <span>Kz {sale.total_amount.toLocaleString()}</span>
           </div>
+          
+          {qrCode && sale.billing_mode === 'eletronica' && (
+            <div className="mt-4 flex flex-col items-center gap-1">
+              <img src={qrCode} alt="QR Code AGT" className="w-20 h-20" />
+              <p className="text-[6px] text-zinc-400 font-bold uppercase">Código QR AGT - Faturação Eletrónica</p>
+            </div>
+          )}
         </div>
 
         <div className="mt-4 text-center space-y-2">
@@ -7670,13 +7753,25 @@ const Invoice = ({ sale, store, user }: { sale: any, store: any, user: User }) =
             <p className="text-[8px] font-bold uppercase tracking-widest">Obrigado pela preferência!</p>
           </div>
           <div className="space-y-0.5">
-            <p className="text-[6px] text-zinc-400 uppercase">Processado por Fatu-R (Experimental AGT)</p>
-            <p className={cn(
-              "text-[7px] font-bold uppercase px-1.5 py-0.5 rounded-full inline-block",
-              sale.agt_status === 'sent' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
-            )}>
-              AGT: {sale.agt_status === 'sent' ? 'Submetido' : 'Pendente'}
-            </p>
+            {sale.billing_mode === 'eletronica' ? (
+              <>
+                <p className="text-[6px] text-zinc-400 uppercase">Processado por Fatu-R (Experimental AGT)</p>
+                <div className="flex justify-center">
+                  <p className={cn(
+                    "text-[7px] font-bold uppercase px-1.5 py-0.5 rounded-full inline-block",
+                    (sale.agt_status === 'sent' || sale.agt_status === 'accepted') ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+                  )}>
+                    AGT: {(sale.agt_status === 'sent' || sale.agt_status === 'accepted') ? 'Submetido' : 'Pendente'}
+                  </p>
+                </div>
+              </>
+            ) : (
+              <div className="mt-2 space-y-1">
+                <p className="text-[7px] text-zinc-600 font-bold uppercase">
+                  Processado por Fatu-R programa válido nº 321/AGT/2026
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -7759,7 +7854,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     payment_method: 'cash',
     items: [] as any[]
   });
-  const [storeInfo, setStoreInfo] = useState<any>(null);
+  const [establishmentInfo, setEstablishmentInfo] = useState<any>(null);
   
   // Payment states
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -7772,11 +7867,11 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'transfer' | 'split'>('cash');
   const [splitAmounts, setSplitAmounts] = useState({ cash: '', card: '' });
   const [cashReceived, setCashReceived] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false);
   const [hasActiveSession, setHasActiveSession] = useState<boolean | null>(null);
+  const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false);
   const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const checkActiveSession = async () => {
     if (!user.cash_register_id) {
@@ -7784,8 +7879,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       return false;
     }
 
-    const storeId = user.store_id || 1;
-    let url = `/api/seller/active-session/${storeId}?cash_register_id=${user.cash_register_id}`;
+    const establishmentId = user.establishment_id || 1;
+    let url = `/api/seller/active-session/${establishmentId}?cash_register_id=${user.cash_register_id}`;
 
     try {
       const res = await fetch(url);
@@ -7811,33 +7906,33 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   };
 
   const fetchRegisters = () => {
-    const storeId = user.store_id || 1;
-    fetch(`/api/owner/stores/${storeId}/cash-registers`)
+    const establishmentId = user.establishment_id || 1;
+    fetch(`/api/owner/establishments/${establishmentId}/cash-registers`)
       .then(res => res.json())
       .then(setCashRegisters);
   };
 
   useEffect(() => {
-    const storeId = user.store_id || 1;
-    fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
-    fetch(`/api/seller/services/${storeId}`).then(res => res.json()).then(setServices);
-    fetch(`/api/seller/clients/${storeId}`).then(res => res.json()).then(setClients);
-    fetch(`/api/admin/stores`).then(res => res.json()).then(stores => {
-      if (Array.isArray(stores)) {
-        const currentStore = stores.find((s: any) => s.id === storeId);
-        setStoreInfo(currentStore);
+    const establishmentId = user.establishment_id || 1;
+    fetch(`/api/seller/products/${establishmentId}`).then(res => res.json()).then(setProducts).catch(() => {});
+    fetch(`/api/seller/services/${establishmentId}`).then(res => res.json()).then(setServices).catch(() => {});
+    fetch(`/api/seller/clients/${establishmentId}`).then(res => res.json()).then(setClients).catch(() => {});
+    fetch(`/api/admin/establishments`).then(res => res.json()).then(establishments => {
+      if (Array.isArray(establishments)) {
+        const currentEstablishment = establishments.find((s: any) => s.id === establishmentId);
+        setEstablishmentInfo(currentEstablishment);
       }
-    });
-    fetch(`/api/owner/taxes/store/${storeId}`).then(res => res.json()).then(taxes => {
+    }).catch(() => {});
+    fetch(`/api/owner/taxes/establishment/${establishmentId}`).then(res => res.json()).then(taxes => {
       if (Array.isArray(taxes)) {
         const defTax = taxes.find((t: any) => t.is_default === 1 && t.status === 'active');
         setDefaultTax(defTax || taxes.find((t: any) => t.status === 'active'));
       }
-    });
+    }).catch(() => {});
 
     checkActiveSession();
     fetchRegisters();
-  }, [user.store_id, user.cash_register_id]);
+  }, [user.establishment_id, user.cash_register_id]);
 
   const handleSelectRegister = async (registerId: number) => {
     const res = await fetch('/api/seller/select-register', {
@@ -7863,14 +7958,14 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       return;
     }
 
-    const storeId = user.store_id || 1;
+    const establishmentId = user.establishment_id || 1;
     
     try {
       const res = await fetch('/api/seller/open-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          store_id: storeId,
+          establishment_id: establishmentId,
           seller_id: user.id,
           cash_register_id: registerId,
           opening_amount: parseFloat(amount)
@@ -8068,8 +8163,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     
     setIsProcessing(true);
     try {
-      const storeId = user.store_id || 1;
-      let url = `/api/seller/active-session/${storeId}`;
+      const establishmentId = user.establishment_id || 1;
+      let url = `/api/seller/active-session/${establishmentId}`;
       if (user.cash_register_id) {
         url += `?cash_register_id=${user.cash_register_id}`;
       }
@@ -8097,16 +8192,16 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       alert('Você não tem permissão para gerar proformas.');
       return;
     }
-    if (cart.length === 0 || !storeInfo) return;
+    if (cart.length === 0 || !establishmentInfo) return;
 
     try {
-      const storeId = user.store_id || 1;
+      const establishmentId = user.establishment_id || 1;
       const res = await fetch('/api/owner/proforma', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...proformaForm,
-          store_id: storeId,
+          establishment_id: establishmentId,
           owner_id: user.id,
           total_amount: total,
           items: cart.map(i => {
@@ -8141,7 +8236,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         setIsProformaModalOpen(false);
         setProformaForm({ client_name: '', client_nif: '', client_address: '' });
         alert("Fatura Proforma criada com sucesso!");
-        await generateProformaPDF(proformaData, storeInfo, user);
+        await generateProformaPDF(proformaData, establishmentInfo, user);
       }
     } catch (e) {
       console.error(e);
@@ -8149,8 +8244,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   };
 
   const finalizeSale = async () => {
-    if (cart.length === 0 || !storeInfo) {
-      alert('O carrinho está vazio ou informações da loja não carregadas!');
+    if (cart.length === 0 || !establishmentInfo) {
+      alert('O carrinho está vazio ou informações do estabelecimento não carregadas!');
       return;
     }
 
@@ -8178,12 +8273,12 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
 
     setIsProcessing(true);
     try {
-      const storeId = user.store_id || 1;
-      const res = await fetch('/api/seller/sale', {
+      const establishmentId = user.establishment_id || 1;
+      const res = await fetch('/api/v1/process-checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          store_id: storeId,
+          establishment_id: establishmentId,
           seller_id: user.id,
           cash_register_id: user.cash_register_id,
           total_amount: total,
@@ -8234,18 +8329,34 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           setSplitAmounts({ cash: '', card: '' });
           setDiscount(0);
           setClient({ name: 'Consumidor Final', nif: '999999999' });
-          fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
+          fetch(`/api/seller/products/${establishmentId}`).then(res => res.json()).then(setProducts);
         } else {
           throw new Error("Dados da venda não recebidos do servidor.");
         }
-      } else if (res.status === 403) {
-        const data = await res.json();
-        alert(data.error || 'O caixa deve estar aberto para realizar vendas.');
-        setHasActiveSession(false);
-        setIsPaymentModalOpen(false);
       } else {
-        const data = await res.json();
-        throw new Error(data.error || "Erro ao processar venda.");
+        let errorMessage = "Erro ao processar venda.";
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          if (res.status === 403) {
+            if (data.series_status) {
+              alert(`ERRO DE FATURAÇÃO ELETRÓNICA: ${data.error}\n\nPor favor, contacte o administrador para aprovar a série de faturação nas configurações fiscais.`);
+              setIsPaymentModalOpen(false);
+              return;
+            } else {
+              alert(data.error || 'O caixa deve estar aberto para realizar vendas.');
+              setHasActiveSession(false);
+              setIsPaymentModalOpen(false);
+              return;
+            }
+          }
+          errorMessage = data.error || errorMessage;
+        } else {
+          const text = await res.text();
+          console.error("Non-JSON error response:", text);
+          errorMessage = `Erro do servidor (${res.status}). Por favor, tente novamente.`;
+        }
+        throw new Error(errorMessage);
       }
     } catch (error) {
       console.error('Error finalizing sale:', error);
@@ -8261,7 +8372,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
 
     setIsProcessing(true);
     try {
-      const storeId = user.store_id || 1;
+      const establishmentId = user.establishment_id || 1;
       const items = cart.map(i => {
         const price = i.type === 'product' 
           ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
@@ -8292,7 +8403,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         body: JSON.stringify({ 
           ...formalInvoiceForm, 
           items,
-          store_id: storeId,
+          establishment_id: establishmentId,
           total_amount,
           tax_amount,
           seller_id: user.id
@@ -8307,7 +8418,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         setCart([]);
         setDiscount(0);
         setClient({ name: 'Consumidor Final', nif: '999999999' });
-        fetch(`/api/seller/products/${storeId}`).then(res => res.json()).then(setProducts);
+        fetch(`/api/seller/products/${establishmentId}`).then(res => res.json()).then(setProducts);
         alert('Fatura Recibo emitida com sucesso!');
       } else {
         const data = await res.json();
@@ -8362,8 +8473,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           <div className="bg-orange-500 -mx-6 -mt-6 p-6 text-white rounded-b-[2rem] shadow-lg">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-2xl font-bold tracking-tight">PDV - Loja 1</h2>
-                <p className="text-orange-100 text-sm opacity-80">Terminal: Caixa 3</p>
+                <h2 className="text-2xl font-bold tracking-tight">PDV - Estabelecimento</h2>
+                <p className="text-orange-100 text-sm opacity-80">Terminal: {user.cash_register_name || 'Caixa'}</p>
               </div>
               <div className="flex items-center gap-2 bg-orange-400/30 px-3 py-1 rounded-full text-xs font-bold">
                 <div className="w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
@@ -8972,7 +9083,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
 
       {/* Invoice Modal */}
       <Modal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} title="Fatura Gerada">
-        <Invoice sale={lastSale} store={storeInfo} user={user} />
+        <Invoice sale={lastSale} establishment={establishmentInfo} user={user} />
       </Modal>
 
       {/* Formal Invoice Form Modal */}
@@ -9123,7 +9234,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         title="Fatura Formal Gerada"
         maxWidth="max-w-4xl"
       >
-        <CreditInvoicePreview invoice={lastFormalInvoice} store={storeInfo} />
+        <CreditInvoicePreview invoice={lastFormalInvoice} establishment={establishmentInfo} />
       </Modal>
 
       {/* Services Modal */}
@@ -9176,7 +9287,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           {services.length === 0 && (
             <div className="text-center py-8 text-zinc-400">
               <Package size={32} className="mx-auto mb-2 opacity-20" />
-              <p className="text-sm">Nenhum serviço disponível para esta loja.</p>
+              <p className="text-sm">Nenhum serviço disponível para este estabelecimento.</p>
             </div>
           )}
         </div>
@@ -9216,17 +9327,17 @@ const SellerHistory = ({ user }: { user: User }) => {
   const [sales, setSales] = useState<any[]>([]);
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
-  const [storeInfo, setStoreInfo] = useState<any>(null);
+  const [establishmentInfo, setEstablishmentInfo] = useState<any>(null);
 
   useEffect(() => {
     fetch(`/api/seller/sales/${user.id}`).then(res => res.json()).then(setSales);
-    fetch(`/api/admin/stores`).then(res => res.json()).then(stores => {
-      if (Array.isArray(stores)) {
-        const currentStore = stores.find((s: any) => s.id === (user.store_id || 1));
-        setStoreInfo(currentStore);
+    fetch(`/api/admin/establishments`).then(res => res.json()).then(establishments => {
+      if (Array.isArray(establishments)) {
+        const currentEstablishment = establishments.find((s: any) => s.id === (user.establishment_id || 1));
+        setEstablishmentInfo(currentEstablishment);
       }
     });
-  }, [user.id, user.store_id]);
+  }, [user.id, user.establishment_id]);
 
   const openInvoice = (sale: any) => {
     let formattedSale = { ...sale };
@@ -9315,9 +9426,9 @@ const SellerHistory = ({ user }: { user: User }) => {
         maxWidth={selectedSale?.source === 'formal' ? "max-w-4xl" : "max-w-md"}
       >
         {selectedSale?.source === 'formal' ? (
-          <CreditInvoicePreview invoice={{...selectedSale, invoice_date: selectedSale.timestamp}} store={storeInfo} />
+          <CreditInvoicePreview invoice={{...selectedSale, invoice_date: selectedSale.timestamp}} establishment={establishmentInfo} />
         ) : (
-          <Invoice sale={selectedSale} store={storeInfo} user={user} />
+          <Invoice sale={selectedSale} establishment={establishmentInfo} user={user} />
         )}
       </Modal>
     </div>
@@ -9341,12 +9452,12 @@ const SellerDashboard = ({ user }: { user: User }) => {
   const [hasActiveSession, setHasActiveSession] = useState<boolean | null>(null);
 
   useEffect(() => {
-    const storeId = user.store_id || 1;
+    const establishmentId = user.establishment_id || 1;
     fetch(`/api/seller/dashboard-stats/${user.id}`)
       .then(res => res.json())
       .then(setStats);
     
-    let url = `/api/seller/active-session/${storeId}`;
+    let url = `/api/seller/active-session/${establishmentId}`;
     if (user.cash_register_id) {
       url += `?cash_register_id=${user.cash_register_id}`;
     }
@@ -9476,9 +9587,9 @@ const SellerCashMovements = ({ user }: { user: User }) => {
   };
 
   useEffect(() => {
-    const storeId = user.store_id || 1;
+    const establishmentId = user.establishment_id || 1;
     fetchMovements();
-    fetch(`/api/seller/active-session/${storeId}`)
+    fetch(`/api/seller/active-session/${establishmentId}`)
       .then(res => res.json())
       .then(data => setHasActiveSession(!!data));
   }, [user.id]);
@@ -9493,12 +9604,12 @@ const SellerCashMovements = ({ user }: { user: User }) => {
       alert('O caixa deve estar aberto para registar movimentos.');
       return;
     }
-    const storeId = user.store_id || 1;
+    const establishmentId = user.establishment_id || 1;
     const res = await fetch('/api/seller/cash-movements', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        store_id: storeId,
+        establishment_id: establishmentId,
         seller_id: user.id,
         cash_register_id: user.cash_register_id,
         type,
@@ -9659,12 +9770,12 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
   const [selectedRegisterId, setSelectedRegisterId] = useState<string>(user.cash_register_id?.toString() || '');
 
   const [searchParams] = useSearchParams();
-  const queryStoreId = searchParams.get('storeId');
+  const queryEstablishmentId = searchParams.get('establishmentId');
   const queryRegisterId = searchParams.get('registerId');
 
   const fetchSession = async () => {
     setLoading(true);
-    const storeId = queryStoreId || user.store_id || 1;
+    const establishmentId = queryEstablishmentId || user.establishment_id || 1;
     const registerId = queryRegisterId || selectedRegisterId || user.cash_register_id;
     
     if (!registerId) {
@@ -9673,7 +9784,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
       return null;
     }
 
-    let url = `/api/seller/active-session/${storeId}?cash_register_id=${registerId}`;
+    let url = `/api/seller/active-session/${establishmentId}?cash_register_id=${registerId}`;
 
     try {
       const res = await fetch(url);
@@ -9689,8 +9800,8 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
   };
 
   const fetchRegisters = () => {
-    const storeId = user.store_id || 1;
-    fetch(`/api/owner/stores/${storeId}/cash-registers`)
+    const establishmentId = user.establishment_id || 1;
+    fetch(`/api/owner/establishments/${establishmentId}/cash-registers`)
       .then(res => res.json())
       .then(setCashRegisters);
   };
@@ -9698,7 +9809,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
   useEffect(() => {
     fetchSession();
     fetchRegisters();
-  }, [user.store_id, selectedRegisterId]);
+  }, [user.establishment_id, selectedRegisterId]);
 
   const handleSelectRegister = async (registerId: number) => {
     const res = await fetch('/api/seller/select-register', {
@@ -9724,14 +9835,14 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
       return;
     }
 
-    const storeId = user.store_id || 1;
+    const establishmentId = user.establishment_id || 1;
     
     try {
       const res = await fetch('/api/seller/open-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          store_id: storeId,
+          establishment_id: establishmentId,
           seller_id: user.id,
           cash_register_id: registerId,
           opening_amount: parseFloat(amount)
@@ -10132,9 +10243,9 @@ const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
-const generateProformaPDF = async (proforma: any, store: any, user: any) => {
-  if (!store) {
-    console.error('Store info missing for PDF generation');
+const generateProformaPDF = async (proforma: any, establishment: any, user: any) => {
+  if (!establishment) {
+    console.error('Establishment info missing for PDF generation');
     return;
   }
   const doc = new jsPDF();
@@ -10170,7 +10281,7 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
   doc.rect(0, 0, 210, 5, 'F');
   
   // Top left: Logo
-  if (store.logo_url) {
+  if (establishment.logo_url) {
     try {
       const imgData = await new Promise<string>((resolve, reject) => {
         const img = new Image();
@@ -10188,7 +10299,7 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
           }
         };
         img.onerror = () => reject(new Error('Image load error'));
-        img.src = store.logo_url;
+        img.src = establishment.logo_url;
       });
       doc.addImage(imgData, 'PNG', 20, 15, 25, 25);
     } catch (e) {
@@ -10196,29 +10307,29 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
       doc.setFontSize(28);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(orange[0], orange[1], orange[2]);
-      doc.text(store.name.substring(0, 1).toUpperCase(), 25, 35);
+      doc.text(establishment.name.substring(0, 1).toUpperCase(), 25, 35);
     }
   } else {
     doc.setFontSize(28);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(orange[0], orange[1], orange[2]);
-    doc.text(store.name.substring(0, 1).toUpperCase(), 25, 35);
+    doc.text(establishment.name.substring(0, 1).toUpperCase(), 25, 35);
   }
 
-  // Top right: Store details
+  // Top right: Establishment details
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(black[0], black[1], black[2]);
-  doc.text(store.name.toUpperCase(), 190, 20, { align: 'right' });
+  doc.text(establishment.name.toUpperCase(), 190, 20, { align: 'right' });
   
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(zinc500[0], zinc500[1], zinc500[2]);
-  doc.text(`NIF: ${store.nif || '---'}`, 190, 26, { align: 'right' });
-  doc.text(`TEL: ${store.phone || '---'}`, 190, 31, { align: 'right' });
-  doc.text(`EMAIL: ${store.email || '---'}`, 190, 36, { align: 'right' });
+  doc.text(`NIF: ${establishment.nif || '---'}`, 190, 26, { align: 'right' });
+  doc.text(`TEL: ${establishment.phone || '---'}`, 190, 31, { align: 'right' });
+  doc.text(`EMAIL: ${establishment.email || '---'}`, 190, 36, { align: 'right' });
   
-  const splitAddress = doc.splitTextToSize(store.address || '---', 60);
+  const splitAddress = doc.splitTextToSize(establishment.address || '---', 60);
   doc.text(splitAddress, 190, 41, { align: 'right' });
 
   // Title Section
@@ -10319,7 +10430,7 @@ const generateProformaPDF = async (proforma: any, store: any, user: any) => {
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(black[0], black[1], black[2]);
-    doc.text(`${store.name.toUpperCase()} - PROFORMA Nº ${proforma.invoice_number || ''} (CONTINUAÇÃO)`, 20, 15);
+    doc.text(`${establishment.name.toUpperCase()} - PROFORMA Nº ${proforma.invoice_number || ''} (CONTINUAÇÃO)`, 20, 15);
     finalY = 30;
   }
 
@@ -10425,9 +10536,9 @@ export default function App() {
 
   useEffect(() => {
     if (user && user.role !== 'admin') {
-      const checkStatus = async () => {
+      const checkStatus = async (signal: AbortSignal) => {
         try {
-          const res = await fetch(`/api/user-status/${user.id}`);
+          const res = await fetch(`/api/user-status/${user.id}`, { signal });
           if (res.status === 403) {
             handleLogout();
           } else if (res.ok) {
@@ -10439,23 +10550,38 @@ export default function App() {
               // Only update if there's a real change to avoid unnecessary re-renders or race conditions
               // We check if data.fiscal_regime is present to avoid overwriting with undefined
               const newFiscalRegime = data.fiscal_regime || prev.fiscal_regime || 'geral';
+              const newBillingMode = data.billing_mode || prev.billing_mode || 'tradicional';
               
-              if (newFiscalRegime !== prev.fiscal_regime || data.status !== prev.status) {
-                const updated = { ...prev, fiscal_regime: newFiscalRegime, status: data.status };
+              if (newFiscalRegime !== prev.fiscal_regime || newBillingMode !== prev.billing_mode || data.status !== prev.status) {
+                const updated = { ...prev, fiscal_regime: newFiscalRegime, billing_mode: newBillingMode, status: data.status };
                 localStorage.setItem('user', JSON.stringify(updated));
                 return updated;
               }
               return prev;
             });
           }
-        } catch (e) {
-          console.error("Error checking status", e);
+        } catch (e: any) {
+          if (e.name === 'AbortError') return;
+          // Suppress common network errors during dev server restarts or offline state
+          const isNetworkError = 
+            e instanceof TypeError || 
+            e.message?.toLowerCase().includes('fetch') || 
+            e.message?.toLowerCase().includes('network') ||
+            e.message?.toLowerCase().includes('load failed');
+            
+          if (!isNetworkError) {
+            console.error("Error checking status", e);
+          }
         }
       };
       
-      checkStatus();
-      const interval = setInterval(checkStatus, 60000); // Check every minute
-      return () => clearInterval(interval);
+      const controller = new AbortController();
+      checkStatus(controller.signal);
+      const interval = setInterval(() => checkStatus(controller.signal), 60000); // Check every minute
+      return () => {
+        clearInterval(interval);
+        controller.abort();
+      };
     }
   }, [user?.id]); // Only re-run if the user ID changes (login/logout)
 
@@ -10476,8 +10602,8 @@ export default function App() {
             {user.role === 'owner' && (
               <>
                 <Route path="/owner" element={<OwnerOverview user={user} />} />
-                <Route path="/owner/stores" element={<MyStores user={user} />} />
-                <Route path="/owner/stores/:storeId" element={<StoreAdmin user={user} />} />
+                <Route path="/owner/establishments" element={<MyEstablishments user={user} />} />
+                <Route path="/owner/establishments/:establishmentId" element={<EstablishmentAdmin user={user} />} />
                 <Route path="/owner/partners" element={<OwnerPartners user={user} />} />
                 <Route path="/owner/purchases" element={<OwnerPurchases user={user} />} />
                 <Route path="/owner/services" element={<OwnerServices user={user} />} />
@@ -10505,12 +10631,12 @@ export default function App() {
             )}
             {user.role === 'manager' && (
               <>
-                <Route path="/manager" element={<StoreAdmin user={user} />} />
-                <Route path="/manager/products" element={<StoreAdmin user={user} />} />
-                <Route path="/manager/stock" element={<StoreAdmin user={user} />} />
-                <Route path="/manager/proformas" element={<StoreAdmin user={user} />} />
-                <Route path="/manager/reports" element={<StoreAdmin user={user} />} />
-                <Route path="/manager/settings" element={<StoreAdmin user={user} />} />
+                <Route path="/manager" element={<EstablishmentAdmin user={user} />} />
+                <Route path="/manager/products" element={<EstablishmentAdmin user={user} />} />
+                <Route path="/manager/stock" element={<EstablishmentAdmin user={user} />} />
+                <Route path="/manager/proformas" element={<EstablishmentAdmin user={user} />} />
+                <Route path="/manager/reports" element={<EstablishmentAdmin user={user} />} />
+                <Route path="/manager/settings" element={<EstablishmentAdmin user={user} />} />
                 <Route path="*" element={<Navigate to="/manager" replace />} />
               </>
             )}

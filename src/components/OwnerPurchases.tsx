@@ -25,7 +25,7 @@ import {
   History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Store as StoreType } from '../types';
+import { User, Establishment as EstablishmentType } from '../types';
 import { generatePurchasePDF, generatePurchaseNotePDF } from '../lib/purchaseDocumentGenerator';
 import { PurchaseDocument } from './PurchaseDocument';
 
@@ -74,10 +74,10 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
   const [purchases, setPurchases] = useState<any[]>([]);
   const [notes, setNotes] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
-  const [stores, setStores] = useState<any[]>([]);
+  const [establishments, setEstablishments] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [taxes, setTaxes] = useState<any[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState<string>('');
+  const [selectedEstablishmentId, setSelectedEstablishmentId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -97,7 +97,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
 
   // Forms
   const [purchaseForm, setPurchaseForm] = useState({
-    store_id: '',
+    establishment_id: '',
     supplier_id: '',
     invoice_number: '',
     due_date: '',
@@ -127,13 +127,13 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
   }, [user.id]);
 
   useEffect(() => {
-    if (selectedStoreId) {
+    if (selectedEstablishmentId) {
       fetchPurchases();
       fetchReturns();
       fetchProducts();
       fetchTaxes();
     }
-  }, [selectedStoreId, activeTab]);
+  }, [selectedEstablishmentId, activeTab]);
 
   const fetchTaxes = async () => {
     try {
@@ -149,17 +149,17 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
 
   const fetchInitialData = async () => {
     try {
-      const [storesRes, suppliersRes] = await Promise.all([
-        fetch(`/api/owner/stores/${user.id}`),
+      const [establishmentsRes, suppliersRes] = await Promise.all([
+        fetch(`/api/owner/establishments/${user.id}`),
         fetch(`/api/owner/suppliers/${user.id}`)
       ]);
-      const storesData = await storesRes.json();
+      const establishmentsData = await establishmentsRes.json();
       const suppliersData = await suppliersRes.json();
       
-      if (Array.isArray(storesData)) {
-        setStores(storesData);
-        if (storesData.length > 0 && !selectedStoreId) {
-          setSelectedStoreId(storesData[0].id.toString());
+      if (Array.isArray(establishmentsData)) {
+        setEstablishments(establishmentsData);
+        if (establishmentsData.length > 0 && !selectedEstablishmentId) {
+          setSelectedEstablishmentId(establishmentsData[0].id.toString());
         }
       }
       if (Array.isArray(suppliersData)) {
@@ -172,7 +172,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
 
   const fetchPurchases = async () => {
     try {
-      const res = await fetch(`/api/owner/purchases/${selectedStoreId}`);
+      const res = await fetch(`/api/owner/purchases/${selectedEstablishmentId}`);
       const data = await res.json();
       if (Array.isArray(data)) {
         setPurchases(data);
@@ -184,7 +184,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
 
   const fetchReturns = async () => {
     try {
-      const res = await fetch(`/api/owner/purchase-returns/${selectedStoreId}`);
+      const res = await fetch(`/api/owner/purchase-returns/${selectedEstablishmentId}`);
       const data = await res.json();
       if (Array.isArray(data)) {
         setNotes(data);
@@ -196,7 +196,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
 
   const fetchProducts = async () => {
     try {
-      const res = await fetch(`/api/owner/products/${selectedStoreId}`);
+      const res = await fetch(`/api/owner/products/${selectedEstablishmentId}`);
       const data = await res.json();
       if (Array.isArray(data)) {
         setProducts(data);
@@ -212,9 +212,9 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     if (purchaseForm.items.find(item => item.product_id === product.id)) return;
 
     // Get tax info
-    const storeTax = taxes.find(t => t.store_id.toString() === selectedStoreId && t.is_default === 1);
+    const establishmentTax = taxes.find(t => t.establishment_id.toString() === selectedEstablishmentId && t.is_default === 1);
     const productTax = product.tax_id ? taxes.find(t => t.id === product.tax_id) : null;
-    const finalTax = productTax || storeTax || { percentage: 14, tax_code: 'NOR' };
+    const finalTax = productTax || establishmentTax || { percentage: 14, tax_code: 'NOR' };
 
     setPurchaseForm({
       ...purchaseForm,
@@ -261,7 +261,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...purchaseForm,
-          store_id: selectedStoreId,
+          establishment_id: selectedEstablishmentId,
           total_amount,
           tax_amount,
           user_id: user.id,
@@ -357,7 +357,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          store_id: selectedStoreId,
+          establishment_id: selectedEstablishmentId,
           supplier_id: returnForm.supplier_id,
           purchase_id: returnForm.purchase_id,
           total_amount,
@@ -495,11 +495,11 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
 
       <div className="flex items-center gap-4">
         <select 
-          value={selectedStoreId}
-          onChange={e => setSelectedStoreId(e.target.value)}
+          value={selectedEstablishmentId}
+          onChange={e => setSelectedEstablishmentId(e.target.value)}
           className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all font-bold min-w-[200px]"
         >
-          {stores.map(s => (
+          {establishments.map(s => (
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}
         </select>
@@ -530,7 +530,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
               setIsReturnModalOpen(true);
               return;
             }
-            setPurchaseForm({ store_id: selectedStoreId, supplier_id: '', invoice_number: '', due_date: '', items: [], paid_amount: 0 });
+            setPurchaseForm({ establishment_id: selectedEstablishmentId, supplier_id: '', invoice_number: '', due_date: '', items: [], paid_amount: 0 });
             setIsDirectPurchase(activeTab === 'direct');
             setIsPurchaseModalOpen(true);
           }}
@@ -1359,7 +1359,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
           <PurchaseDocument 
             document={previewData.data}
             type={previewData.type}
-            store={stores.find(s => s.id.toString() === selectedStoreId) || {}}
+            establishment={establishments.find(s => s.id.toString() === selectedEstablishmentId) || {}}
             owner={user}
           />
         )}
