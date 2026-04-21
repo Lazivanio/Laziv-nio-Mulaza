@@ -18,7 +18,7 @@ import {
   Clock,
   Calendar
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { User, Establishment as EstablishmentType } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
@@ -86,9 +86,9 @@ export const OwnerPartners = ({ user }: { user: User }) => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const establishmentId = user.establishment_id || 1;
+      const establishmentId = user.establishment_id || (user.role === 'owner' ? 1 : null);
       const [clientsRes, suppliersRes, reportRes] = await Promise.all([
-        fetch(`/api/owner/clients/${establishmentId}`),
+        fetch(`/api/owner/clients/${establishmentId}?userId=${user.id}`),
         fetch(`/api/owner/suppliers/${user.id}`),
         fetch(`/api/owner/suppliers/${user.id}/report`)
       ]);

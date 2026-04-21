@@ -24,7 +24,7 @@ import {
   Lock,
   UploadCloud
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { User, Establishment } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
@@ -96,7 +96,8 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
   const [backups, setBackups] = useState<any[]>([]);
   const [backupSettings, setBackupSettings] = useState({
     backup_enabled: false,
-    backup_frequency: 'daily'
+    backup_frequency: 'daily',
+    financial_reminder_enabled: false
   });
   const [isGeneratingBackup, setIsGeneratingBackup] = useState(false);
 
@@ -187,8 +188,9 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
         const data = await res.json();
         setBackups(data.backups);
         setBackupSettings({
-          backup_enabled: data.settings.backup_enabled === 1,
-          backup_frequency: data.settings.backup_frequency
+          backup_enabled: data.settings?.backup_enabled === 1,
+          backup_frequency: data.settings?.backup_frequency || 'daily',
+          financial_reminder_enabled: data.settings?.financial_reminder_enabled === 1
         });
       } else if (activeTab === 'signatures') {
         const [keysRes, logsRes] = await Promise.all([
@@ -1227,6 +1229,25 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
                     <div className={cn(
                       "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
                       backupSettings.backup_enabled ? "right-1" : "left-1"
+                    )} />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-bold text-emerald-600">Lembrete Financeiro</label>
+                    <p className="text-[10px] text-zinc-500">Saldo suficiente para salários</p>
+                  </div>
+                  <button 
+                    onClick={() => setBackupSettings({...backupSettings, financial_reminder_enabled: !backupSettings.financial_reminder_enabled})}
+                    className={cn(
+                      "w-12 h-6 rounded-full transition-all relative",
+                      backupSettings.financial_reminder_enabled ? "bg-emerald-500" : "bg-zinc-200"
+                    )}
+                  >
+                    <div className={cn(
+                      "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                      backupSettings.financial_reminder_enabled ? "right-1" : "left-1"
                     )} />
                   </button>
                 </div>

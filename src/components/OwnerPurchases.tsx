@@ -24,7 +24,7 @@ import {
   Download,
   History
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { User, Establishment as EstablishmentType } from '../types';
 import { generatePurchasePDF, generatePurchaseNotePDF } from '../lib/purchaseDocumentGenerator';
 import { PurchaseDocument } from './PurchaseDocument';
@@ -773,6 +773,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Documento</th>
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Fornecedor</th>
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Tipo</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Status</th>
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Total</th>
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Data</th>
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider text-right">Ações</th>
@@ -809,6 +810,18 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                             item.type === 'credit' ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-blue-50 text-blue-600 border-blue-100"
                           )}>
                             {!isNote ? 'Compra' : item.type === 'credit' ? 'Crédito' : 'Débito'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={cn(
+                            "px-2 py-1 rounded-full text-[10px] font-black uppercase border",
+                            (item.status === 'liquidado' || (item.paid_amount !== undefined && item.paid_amount >= item.total_amount) || isNote) 
+                              ? "bg-emerald-50 text-emerald-600 border-emerald-100" 
+                              : "bg-amber-50 text-amber-600 border-amber-100"
+                          )}>
+                            {(item.status === 'liquidado' || (item.paid_amount !== undefined && item.paid_amount >= item.total_amount) || isNote) 
+                              ? 'Liquidado' 
+                              : 'Pendente'}
                           </span>
                         </td>
                         <td className="px-6 py-4">

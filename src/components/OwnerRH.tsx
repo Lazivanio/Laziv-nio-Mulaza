@@ -22,7 +22,7 @@ import {
   ArrowRightLeft,
   ShieldAlert
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { User, HRRole, HRSalary, HRSalaryPayment, HRAttendance, HRVacation, Establishment as EstablishmentType } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
@@ -76,9 +76,16 @@ const AVAILABLE_PERMISSIONS = [
   { id: 'stock_view', label: 'Ver Stock', category: 'Stock' },
   { id: 'stock_edit', label: 'Editar Stock', category: 'Stock' },
   { id: 'stock_movement', label: 'Movimentar Stock', category: 'Stock' },
+  { id: 'hr_manage', label: 'Gerir RH', category: 'Gestão' },
+  { id: 'finance_manage', label: 'Gerir Financeiro', category: 'Gestão' },
+  { id: 'services_manage', label: 'Gerir Serviços', category: 'Gestão' },
+  { id: 'warehouses_manage', label: 'Gerir Armazéns', category: 'Gestão' },
+  { id: 'documents_view', label: 'Ver Doc. Fiscais', category: 'Gestão' },
   { id: 'reports_view', label: 'Ver Relatórios', category: 'Gestão' },
   { id: 'clients_manage', label: 'Gerir Clientes', category: 'Gestão' },
   { id: 'suppliers_manage', label: 'Gerir Fornecedores', category: 'Gestão' },
+  { id: 'purchases_manage', label: 'Gerir Compras', category: 'Gestão' },
+  { id: 'settings_manage', label: 'Gerir Definições', category: 'Gestão' },
 ];
 
 export const OwnerRH = ({ user }: { user: User }) => {
@@ -425,7 +432,9 @@ export const OwnerRH = ({ user }: { user: User }) => {
                   onClick={() => {
                     setEditingEmployee(null);
                     setEmployeeForm({
-                      name: '', email: '', username: '', password: '', role: 'seller', establishment_id: '', role_id: '', custom_permissions: [], base_salary: '', status: 'active',
+                      name: '', email: '', username: '', password: '', role: 'seller', 
+                      establishment_id: establishments.length === 1 ? establishments[0].id.toString() : '', 
+                      role_id: '', custom_permissions: [], base_salary: '', status: 'active',
                       is_system_user: true
                     });
                     setIsEmployeeModalOpen(true);
@@ -765,7 +774,12 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 <h3 className="font-bold text-lg">Registo de Presenças</h3>
                 <button 
                   onClick={() => {
-                    setAttendanceForm({ user_id: '', establishment_id: '', entry_time: '', exit_time: '', status: 'present', date: new Date().toISOString().split('T')[0], notes: '' });
+                    setAttendanceForm({ 
+                      user_id: '', 
+                      establishment_id: establishments.length === 1 ? establishments[0].id.toString() : '', 
+                      entry_time: '', exit_time: '', status: 'present', 
+                      date: new Date().toISOString().split('T')[0], notes: '' 
+                    });
                     setIsAttendanceModalOpen(true);
                   }}
                   className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"

@@ -181,6 +181,14 @@ export interface License {
   end_date: string;
 }
 
+export interface ServiceFee {
+  id?: number;
+  service_id?: number;
+  name: string;
+  amount: number;
+  created_at?: string;
+}
+
 export interface Service {
   id: number;
   owner_id: number;
@@ -196,6 +204,7 @@ export interface Service {
   tax_code?: string;
   retention_enabled: number;
   retention_percentage: number;
+  fees?: ServiceFee[];
   created_at: string;
 }
 

@@ -13,7 +13,7 @@ import {
   MapPin,
   FileText
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { User } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');

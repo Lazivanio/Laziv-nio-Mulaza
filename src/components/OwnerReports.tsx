@@ -161,7 +161,7 @@ export const OwnerReports = ({ user }: { user: User }) => {
 
           <Card className="p-6 bg-white border-zinc-100 rounded-2xl shadow-sm">
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Estabelecimentos Ativos</p>
-            <h3 className="text-3xl font-black">{data.revenueByEstablishment.length}</h3>
+            <h3 className="text-3xl font-black">{(data.revenueByEstablishment || []).length}</h3>
             <p className="text-xs text-zinc-400 mt-4 font-medium">Contribuindo para os resultados</p>
           </Card>
         </div>
@@ -174,7 +174,7 @@ export const OwnerReports = ({ user }: { user: User }) => {
             </h4>
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data.salesByDay}>
+                <AreaChart data={data.salesByDay || []}>
                   <defs>
                     <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#f97316" stopOpacity={0.1}/>
@@ -269,7 +269,7 @@ export const OwnerReports = ({ user }: { user: User }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-50">
-                  {data.promotionsEfficiency.length > 0 ? data.promotionsEfficiency.map((p: any, i: number) => (
+                  {(data.promotionsEfficiency || []).length > 0 ? data.promotionsEfficiency.map((p: any, i: number) => (
                     <tr key={i} className="group hover:bg-zinc-50/50 transition-colors">
                       <td className="py-4 font-bold text-zinc-800">{p.name}</td>
                       <td className="py-4 text-center font-medium text-orange-500">{p.discount}%</td>

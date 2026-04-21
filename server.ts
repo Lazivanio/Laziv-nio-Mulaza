@@ -19,6 +19,26 @@ const db = new Database("database.db");
   return this.toString();
 };
 
+// Migrations
+db.exec(`
+  CREATE TABLE IF NOT EXISTS owner_settings (
+    owner_id INTEGER PRIMARY KEY,
+    backup_enabled INTEGER DEFAULT 0,
+    backup_frequency TEXT DEFAULT 'daily',
+    financial_reminder_enabled INTEGER DEFAULT 0,
+    FOREIGN KEY(owner_id) REFERENCES users(id)
+  );
+`);
+
+const ownerSettingsTable = db.prepare("PRAGMA table_info(owner_settings)").all();
+if (!ownerSettingsTable.some((col: any) => col.name === 'financial_reminder_enabled')) {
+  try {
+    db.prepare("ALTER TABLE owner_settings ADD COLUMN financial_reminder_enabled INTEGER DEFAULT 0").run();
+  } catch (e) {
+    console.error("Migration error (owner_settings):", e);
+  }
+}
+
 // Digital Signature Service
 const MASTER_KEY = (process.env.SIGNATURE_MASTER_KEY || "a-very-secret-master-key-32-chars").slice(0, 32).padEnd(32, '0');
 const IV_LENGTH = 16;
@@ -344,13 +364,6 @@ db.exec(`
     FOREIGN KEY(owner_id) REFERENCES users(id)
   );
 
-  CREATE TABLE IF NOT EXISTS owner_settings (
-    owner_id INTEGER PRIMARY KEY,
-    backup_enabled INTEGER DEFAULT 0,
-    backup_frequency TEXT DEFAULT 'daily', -- 'daily', 'weekly', 'monthly'
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
   CREATE TABLE IF NOT EXISTS warehouses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     establishment_id INTEGER,
@@ -495,6 +508,7 @@ db.exec(`
     adjustment_amount REAL DEFAULT 0,
     observations TEXT,
     items TEXT, -- JSON string
+    due_date TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(establishment_id) REFERENCES establishments(id),
     FOREIGN KEY(owner_id) REFERENCES users(id),
@@ -563,6 +577,15 @@ db.exec(`
     FOREIGN KEY(owner_id) REFERENCES users(id),
     FOREIGN KEY(establishment_id) REFERENCES establishments(id),
     FOREIGN KEY(tax_id) REFERENCES taxes(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS service_fees (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    service_id INTEGER,
+    name TEXT,
+    amount REAL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(service_id) REFERENCES services(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS hr_attendance (
@@ -1253,10 +1276,40 @@ try {
   if (!columnsPurchaseReturns.some(col => col.name === 'tax_amount')) {
     db.exec("ALTER TABLE purchase_returns ADD COLUMN tax_amount REAL DEFAULT 0");
   }
+
+  // Finance integration migrations
+  try {
+    const ciCols = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
+    if (!ciCols.some(col => col.name === 'status')) {
+      db.exec("ALTER TABLE credit_invoices ADD COLUMN status TEXT DEFAULT 'pending'");
+    }
+
+    const arCols = db.prepare("PRAGMA table_info(accounts_receivable)").all() as any[];
+    if (!arCols.some(col => col.name === 'invoice_id')) {
+      db.exec("ALTER TABLE accounts_receivable ADD COLUMN invoice_id INTEGER");
+    }
+
+    const apCols = db.prepare("PRAGMA table_info(accounts_payable)").all() as any[];
+    if (!apCols.some(col => col.name === 'purchase_id')) {
+      db.exec("ALTER TABLE accounts_payable ADD COLUMN purchase_id INTEGER");
+    }
+  } catch (e) {
+    console.error("Migration error (finance integration):", e);
+  }
 } catch (e) {
   console.error("Migration error (purchases/returns/transactions):", e);
 }
 
+
+try {
+  const columns = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
+  if (!columns.some(col => col.name === 'due_date')) {
+    db.exec("ALTER TABLE credit_invoices ADD COLUMN due_date TEXT");
+  }
+  if (!columns.some(col => col.name === 'service_designation')) {
+    db.exec("ALTER TABLE credit_invoices ADD COLUMN service_designation TEXT");
+  }
+} catch (e) {}
 
 try {
   const columns = db.prepare("PRAGMA table_info(clients)").all() as any[];
@@ -2601,14 +2654,41 @@ async function startServer() {
     res.json({ success: true });
   });
 
+
+
+  // Helper to get establishment IDs and effective owner ID based on user role
+  const getContextData = (userId: string | number) => {
+    const userResult = db.prepare("SELECT role, establishment_id FROM users WHERE id = ?").get(userId) as any;
+    if (!userResult) return { establishmentIds: [], ownerId: null };
+    
+    if (userResult.role === 'owner') {
+      const establishments = db.prepare("SELECT id FROM establishments WHERE owner_id = ?").all(userId) as any[];
+      return { 
+        establishmentIds: establishments.map(e => e.id), 
+        ownerId: Number(userId) 
+      };
+    } else if (userResult.role === 'manager' && userResult.establishment_id) {
+      const est = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(userResult.establishment_id) as any;
+      return { 
+        establishmentIds: [userResult.establishment_id], 
+        ownerId: est?.owner_id || null 
+      };
+    }
+    return { establishmentIds: [], ownerId: null };
+  };
+
   app.get("/api/owner/establishments/:ownerId", (req, res) => {
+    const { establishmentIds } = getContextData(req.params.ownerId);
+    if (establishmentIds.length === 0) return res.json([]);
+
+    const placeholders = establishmentIds.map(() => '?').join(',');
     const establishments = db.prepare(`
       SELECT e.*, 
         (SELECT count(*) FROM staff st WHERE st.establishment_id = e.id) as staff_count,
         (SELECT SUM(total_amount) FROM transactions t WHERE t.establishment_id = e.id AND date(t.timestamp) = date('now')) as today_sales
       FROM establishments e 
-      WHERE e.owner_id = ?
-    `).all(req.params.ownerId) as any[];
+      WHERE e.id IN (${placeholders})
+    `).all(...establishmentIds) as any[];
     
     res.json(establishments.map(e => ({
       ...e,
@@ -2671,7 +2751,9 @@ async function startServer() {
   // --- Fiscal Documents Endpoints ---
   app.get("/api/owner/generated-files/:ownerId", (req, res) => {
     try {
-      const files = db.prepare("SELECT id, owner_id, name, type, generated_by, created_at FROM generated_files WHERE owner_id = ? ORDER BY created_at DESC").all(req.params.ownerId) as any[];
+      const { ownerId } = getContextData(req.params.ownerId);
+      if (!ownerId) return res.json([]);
+      const files = db.prepare("SELECT id, owner_id, name, type, generated_by, created_at FROM generated_files WHERE owner_id = ? ORDER BY created_at DESC").all(ownerId) as any[];
       res.json(files);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -2681,13 +2763,17 @@ async function startServer() {
   // --- Financial Routes ---
   app.get("/api/owner/financial/transactions/:ownerId", (req, res) => {
     try {
-      const { ownerId } = req.params;
+      const { establishmentIds } = getContextData(req.params.ownerId);
+      if (establishmentIds.length === 0) return res.json([]);
       const { establishmentId } = req.query;
+      
       let transactions;
       if (establishmentId) {
-        transactions = db.prepare("SELECT * FROM financial_transactions WHERE owner_id = ? AND establishment_id = ? ORDER BY date DESC").all(ownerId, establishmentId);
+        if (!establishmentIds.includes(Number(establishmentId))) return res.json([]);
+        transactions = db.prepare("SELECT * FROM financial_transactions WHERE establishment_id = ? ORDER BY date DESC").all(establishmentId);
       } else {
-        transactions = db.prepare("SELECT * FROM financial_transactions WHERE owner_id = ? ORDER BY date DESC").all(ownerId);
+        const placeholders = establishmentIds.map(() => '?').join(',');
+        transactions = db.prepare(`SELECT * FROM financial_transactions WHERE establishment_id IN (${placeholders}) ORDER BY date DESC`).all(...establishmentIds);
       }
       res.json(transactions);
     } catch (e: any) {
@@ -2697,26 +2783,33 @@ async function startServer() {
 
   app.post("/api/owner/financial/transactions", (req, res) => {
     try {
-      const { establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id } = req.body;
+      const { establishment_id, owner_id: requestId, type, category, amount, payment_method, description, date, status, reference_id } = req.body;
+      const { ownerId } = getContextData(requestId);
+      if (!ownerId) throw new Error("Owner context not found");
+
       const result = db.prepare(`
         INSERT INTO financial_transactions (establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(establishment_id, owner_id, type, category, amount, payment_method, description, date, status || 'paid', reference_id);
+      `).run(establishment_id, ownerId, type, category, amount, payment_method, description, date, status || 'paid', reference_id);
       res.json({ id: result.lastInsertRowid });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
 
-  app.get("/api/owner/financial/receivable/:ownerId", (req, res) => {
+  app.get("/api/owner/financial/receivable/:requestId", (req, res) => {
     try {
-      const { ownerId } = req.params;
+      const { establishmentIds } = getContextData(req.params.requestId);
+      if (establishmentIds.length === 0) return res.json([]);
       const { establishmentId } = req.query;
+
       let receivables;
       if (establishmentId) {
-        receivables = db.prepare("SELECT * FROM accounts_receivable WHERE owner_id = ? AND establishment_id = ? ORDER BY due_date ASC").all(ownerId, establishmentId);
+        if (!establishmentIds.includes(Number(establishmentId))) return res.json([]);
+        receivables = db.prepare("SELECT * FROM accounts_receivable WHERE establishment_id = ? ORDER BY due_date ASC").all(establishmentId);
       } else {
-        receivables = db.prepare("SELECT * FROM accounts_receivable WHERE owner_id = ? ORDER BY due_date ASC").all(ownerId);
+        const placeholders = establishmentIds.map(() => '?').join(',');
+        receivables = db.prepare(`SELECT * FROM accounts_receivable WHERE establishment_id IN (${placeholders}) ORDER BY due_date ASC`).all(...establishmentIds);
       }
       res.json(receivables);
     } catch (e: any) {
@@ -2726,11 +2819,14 @@ async function startServer() {
 
   app.post("/api/owner/financial/receivable", (req, res) => {
     try {
-      const { establishment_id, owner_id, client_name, amount, due_date, description, status } = req.body;
+      const { establishment_id, owner_id: requestId, client_name, amount, due_date, description, status } = req.body;
+      const { ownerId } = getContextData(requestId);
+      if (!ownerId) throw new Error("Owner context not found");
+
       const result = db.prepare(`
         INSERT INTO accounts_receivable (establishment_id, owner_id, client_name, amount, due_date, description, status)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(establishment_id, owner_id, client_name, amount, due_date, description, status || 'pending');
+      `).run(establishment_id, ownerId, client_name, amount, due_date, description, status || 'pending');
       res.json({ id: result.lastInsertRowid });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -2767,13 +2863,17 @@ async function startServer() {
 
   app.get("/api/owner/financial/payable/:ownerId", (req, res) => {
     try {
-      const { ownerId } = req.params;
+      const { establishmentIds } = getContextData(req.params.ownerId);
+      if (establishmentIds.length === 0) return res.json([]);
       const { establishmentId } = req.query;
+
       let payables;
       if (establishmentId) {
-        payables = db.prepare("SELECT * FROM accounts_payable WHERE owner_id = ? AND establishment_id = ? ORDER BY due_date ASC").all(ownerId, establishmentId);
+        if (!establishmentIds.includes(Number(establishmentId))) return res.json([]);
+        payables = db.prepare("SELECT * FROM accounts_payable WHERE establishment_id = ? ORDER BY due_date ASC").all(establishmentId);
       } else {
-        payables = db.prepare("SELECT * FROM accounts_payable WHERE owner_id = ? ORDER BY due_date ASC").all(ownerId);
+        const placeholders = establishmentIds.map(() => '?').join(',');
+        payables = db.prepare(`SELECT * FROM accounts_payable WHERE establishment_id IN (${placeholders}) ORDER BY due_date ASC`).all(...establishmentIds);
       }
       res.json(payables);
     } catch (e: any) {
@@ -2783,11 +2883,14 @@ async function startServer() {
 
   app.post("/api/owner/financial/payable", (req, res) => {
     try {
-      const { establishment_id, owner_id, supplier_name, amount, due_date, description, status } = req.body;
+      const { establishment_id, owner_id: requestId, supplier_name, amount, due_date, description, status } = req.body;
+      const { ownerId } = getContextData(requestId);
+      if (!ownerId) throw new Error("Owner context not found");
+
       const result = db.prepare(`
         INSERT INTO accounts_payable (establishment_id, owner_id, supplier_name, amount, due_date, description, status)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(establishment_id, owner_id, supplier_name, amount, due_date, description, status || 'pending');
+      `).run(establishment_id, ownerId, supplier_name, amount, due_date, description, status || 'pending');
       res.json({ id: result.lastInsertRowid });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -2822,70 +2925,53 @@ async function startServer() {
     }
   });
 
-  app.get("/api/owner/financial/summary/:ownerId", (req, res) => {
+  app.get("/api/owner/financial/summary/:requestId", (req, res) => {
     try {
-      const { ownerId } = req.params;
+      const { requestId } = req.params;
+      const { establishmentIds, ownerId: resolvedOwnerId } = getContextData(requestId);
+      if (establishmentIds.length === 0 || !resolvedOwnerId) return res.json({ today: { income: 0, expense: 0, profit: 0 }, month: { income: 0, expense: 0, profit: 0 }, balances: { cash: 0, bank: 0 }, pending: { receivable: 0, payable: 0 } });
+
       const { establishmentId } = req.query;
       const today = new Date().toISOString().split('T')[0];
       const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
 
       let todaySummary, monthSummary, totals, pendingReceivable, pendingPayable;
 
-      if (establishmentId) {
-        todaySummary = db.prepare(`
-          SELECT 
-            SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
-            SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
-          FROM financial_transactions 
-          WHERE owner_id = ? AND establishment_id = ? AND date LIKE ?
-        `).get(ownerId, establishmentId, `${today}%`) as any;
-
-        monthSummary = db.prepare(`
-          SELECT 
-            SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
-            SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
-          FROM financial_transactions 
-          WHERE owner_id = ? AND establishment_id = ? AND date >= ?
-        `).get(ownerId, establishmentId, firstDayOfMonth) as any;
-
-        totals = db.prepare(`
-          SELECT 
-            SUM(CASE WHEN payment_method = 'cash' AND type = 'income' THEN amount WHEN payment_method = 'cash' AND type = 'expense' THEN -amount ELSE 0 END) as cash_balance,
-            SUM(CASE WHEN payment_method = 'transfer' AND type = 'income' THEN amount WHEN payment_method = 'transfer' AND type = 'expense' THEN -amount ELSE 0 END) as bank_balance
-          FROM financial_transactions 
-          WHERE owner_id = ? AND establishment_id = ?
-        `).get(ownerId, establishmentId) as any;
-
-        pendingReceivable = db.prepare("SELECT SUM(amount) as total FROM accounts_receivable WHERE owner_id = ? AND establishment_id = ? AND status != 'paid'").get(ownerId, establishmentId) as any;
-        pendingPayable = db.prepare("SELECT SUM(amount) as total FROM accounts_payable WHERE owner_id = ? AND establishment_id = ? AND status != 'paid'").get(ownerId, establishmentId) as any;
-      } else {
-        todaySummary = db.prepare(`
-          SELECT 
-            SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
-            SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
-          FROM financial_transactions 
-          WHERE owner_id = ? AND date LIKE ?
-        `).get(ownerId, `${today}%`) as any;
-
-        monthSummary = db.prepare(`
-          SELECT 
-            SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
-            SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
-          FROM financial_transactions 
-          WHERE owner_id = ? AND date >= ?
-        `).get(ownerId, firstDayOfMonth) as any;
-
-        totals = db.prepare(`
-          SELECT 
-            SUM(CASE WHEN payment_method = 'cash' AND type = 'income' THEN amount WHEN payment_method = 'cash' AND type = 'expense' THEN -amount ELSE 0 END) as cash_balance,
-            SUM(CASE WHEN payment_method = 'transfer' AND type = 'income' THEN amount WHEN payment_method = 'transfer' AND type = 'expense' THEN -amount ELSE 0 END) as bank_balance
-          FROM financial_transactions 
-          WHERE owner_id = ?
-        `).get(ownerId) as any;
-
-        pendingReceivable = db.prepare("SELECT SUM(amount) as total FROM accounts_receivable WHERE owner_id = ? AND status != 'paid'").get(ownerId) as any;
-        pendingPayable = db.prepare("SELECT SUM(amount) as total FROM accounts_payable WHERE owner_id = ? AND status != 'paid'").get(ownerId) as any;
+      // Determine which establishment IDs to filter by
+      const targetEstIds = establishmentId ? [Number(establishmentId)] : establishmentIds;
+      // Security check: ensure the requested establishmentId is within the user's scope
+      if (establishmentId && !establishmentIds.includes(Number(establishmentId))) {
+        return res.status(403).json({ error: "Access denied to this establishment" });
       }
+
+      const placeholders = targetEstIds.map(() => '?').join(',');
+
+      todaySummary = db.prepare(`
+        SELECT 
+          SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
+          SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
+        FROM financial_transactions 
+        WHERE establishment_id IN (${placeholders}) AND date LIKE ?
+      `).get(...targetEstIds, `${today}%`) as any;
+
+      monthSummary = db.prepare(`
+        SELECT 
+          SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
+          SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
+        FROM financial_transactions 
+        WHERE establishment_id IN (${placeholders}) AND date >= ?
+      `).get(...targetEstIds, firstDayOfMonth) as any;
+
+      totals = db.prepare(`
+        SELECT 
+          SUM(CASE WHEN payment_method = 'cash' AND type = 'income' THEN amount WHEN payment_method = 'cash' AND type = 'expense' THEN -amount ELSE 0 END) as cash_balance,
+          SUM(CASE WHEN payment_method = 'transfer' AND type = 'income' THEN amount WHEN payment_method = 'transfer' AND type = 'expense' THEN -amount ELSE 0 END) as bank_balance
+        FROM financial_transactions 
+        WHERE establishment_id IN (${placeholders})
+      `).get(...targetEstIds) as any;
+
+      pendingReceivable = db.prepare(`SELECT SUM(amount) as total FROM accounts_receivable WHERE establishment_id IN (${placeholders}) AND status != 'paid'`).get(...targetEstIds) as any;
+      pendingPayable = db.prepare(`SELECT SUM(amount) as total FROM accounts_payable WHERE establishment_id IN (${placeholders}) AND status != 'paid'`).get(...targetEstIds) as any;
 
       res.json({
         today: {
@@ -3430,6 +3516,8 @@ async function startServer() {
             client: i.client_name,
             total: i.total_amount,
             type: i.doc_type,
+            due_date: i.due_date,
+            service_designation: i.service_designation,
             billing_mode: i.billing_mode || 'tradicional',
             nif: i.client_nif || '999999999'
           })),
@@ -3439,6 +3527,7 @@ async function startServer() {
             client: s.client_name || 'Consumidor Final',
             total: s.total_amount,
             type: 'FR',
+            due_date: null,
             billing_mode: s.billing_mode || 'tradicional',
             nif: s.client_nif || '999999999'
           }))
@@ -3471,7 +3560,7 @@ async function startServer() {
           table.rows.push([
             new Date(d.date).toLocaleDateString(),
             d.number,
-            d.type,
+            d.type + (d.due_date && d.type === 'FT' ? ` (Venc: ${new Date(d.due_date).toLocaleDateString()})` : ''),
             d.client,
             d.total.toFixed(2),
             qrStatus
@@ -3564,19 +3653,49 @@ async function startServer() {
   app.get("/api/owner/establishment-details/:establishmentId", (req, res) => {
     const establishmentId = req.params.establishmentId;
     
-    const establishment = db.prepare("SELECT * FROM establishments WHERE id = ?").get(establishmentId);
+    const establishment = db.prepare("SELECT * FROM establishments WHERE id = ?").get(establishmentId) as any;
+    if (!establishment) return res.status(404).json({ error: "Estabelecimento não encontrado." });
+
+    const ownerId = establishment.owner_id;
     
+    // Unified sales calculation (PDV transactions + Admin Invoices)
     const stats = db.prepare(`
       SELECT 
-        COUNT(*) as total_transactions,
-        SUM(total_amount) as total_revenue,
-        COUNT(DISTINCT seller_id) as active_sellers
-      FROM transactions 
-      WHERE establishment_id = ? AND date(timestamp) = date('now')
-    `).get(establishmentId) as any;
+        (SELECT COUNT(*) FROM transactions WHERE establishment_id = ? AND date(timestamp) = date('now')) +
+        (SELECT COUNT(*) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR')) as total_transactions,
+        
+        COALESCE((SELECT SUM(total_amount) FROM transactions WHERE establishment_id = ? AND date(timestamp) = date('now')), 0) +
+        COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR')), 0) as total_revenue,
+        
+        (SELECT COUNT(DISTINCT seller_id) FROM transactions WHERE establishment_id = ? AND date(timestamp) = date('now')) as active_sellers
+    `).get(establishmentId, establishmentId, establishmentId, establishmentId, establishmentId) as any;
 
     const lowStock = db.prepare("SELECT count(*) as count FROM products WHERE establishment_id = ? AND stock <= min_stock").get(establishmentId) as any;
     const staffCount = db.prepare("SELECT count(*) as count FROM staff WHERE establishment_id = ?").get(establishmentId) as any;
+
+    // Financial health for reminder
+    const ownerSettings = db.prepare("SELECT financial_reminder_enabled FROM owner_settings WHERE owner_id = ?").get(ownerId) as any;
+    
+    // Get monthly financial summary for the reminder
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+
+    const financialSummary = db.prepare(`
+      SELECT 
+        SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
+        SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
+      FROM financial_transactions 
+      WHERE owner_id = ? AND date(date) >= ? AND date(date) <= ?
+    `).get(ownerId, firstDay, lastDay) as any;
+
+    const totalSalaries = db.prepare(`
+      SELECT SUM(salary) as total FROM staff WHERE establishment_id IN (SELECT id FROM establishments WHERE owner_id = ?)
+    `).get(ownerId) as any;
+
+    const monthlyIncome = (financialSummary?.income || 0);
+    const neededForSalaries = (totalSalaries?.total || 0);
+    const enoughForSalaries = monthlyIncome >= neededForSalaries;
 
     res.json({
       establishment,
@@ -3585,7 +3704,14 @@ async function startServer() {
         todayRevenue: stats?.total_revenue || 0,
         activeSellers: stats?.active_sellers || 0,
         lowStockCount: lowStock?.count || 0,
-        staffCount: staffCount?.count || 0
+        staffCount: staffCount?.count || 0,
+        financialReminder: {
+          enabled: ownerSettings?.financial_reminder_enabled === 1,
+          enoughForSalaries,
+          monthlyIncome,
+          neededForSalaries,
+          daysUntilMonthEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate()
+        }
       }
     });
   });
@@ -3684,19 +3810,38 @@ async function startServer() {
 
   // Services Routes
   app.get("/api/owner/services/:ownerId", (req, res) => {
+    const { establishmentIds } = getContextData(req.params.ownerId);
+    if (establishmentIds.length === 0) return res.json([]);
+    const placeholders = establishmentIds.map(() => '?').join(',');
+
     const services = db.prepare(`
       SELECT s.*, st.name as establishment_name, t.percentage as tax_percentage, t.tax_code
       FROM services s
       LEFT JOIN establishments st ON s.establishment_id = st.id
       LEFT JOIN taxes t ON s.tax_id = t.id
-      WHERE s.owner_id = ?
-    `).all(req.params.ownerId);
-    res.json(services);
+      WHERE s.establishment_id IN (${placeholders})
+    `).all(...establishmentIds) as any[];
+
+    // Fetch fees for each service
+    const servicesWithFees = services.map(s => {
+      const fees = db.prepare("SELECT * FROM service_fees WHERE service_id = ?").all(s.id);
+      return { ...s, fees };
+    });
+
+    res.json(servicesWithFees);
   });
 
   app.post("/api/owner/services", (req, res) => {
-    const { owner_id, establishment_id, name, code, description, price, availability_condition, show_in_pos, tax_id, retention_enabled, retention_percentage } = req.body;
+    const { owner_id, establishment_id, name, code, description, price, availability_condition, show_in_pos, tax_id, retention_enabled, retention_percentage, fees } = req.body;
     
+    // Check for unique code per establishment
+    if (code) {
+      const existing = db.prepare("SELECT id FROM services WHERE establishment_id = ? AND code = ?").get(establishment_id, code);
+      if (existing) {
+        return res.status(400).json({ error: "Já existe um serviço com este código neste estabelecimento." });
+      }
+    }
+
     // Se o regime for exclusão, forçar imposto ISENTO
     let finalTaxId = tax_id;
     const owner = db.prepare("SELECT fiscal_regime FROM users WHERE id = ?").get(owner_id) as any;
@@ -3705,16 +3850,43 @@ async function startServer() {
       if (isento) finalTaxId = isento.id;
     }
 
-    db.prepare(`
-      INSERT INTO services (owner_id, establishment_id, name, code, description, price, availability_condition, show_in_pos, tax_id, retention_enabled, retention_percentage) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(owner_id, establishment_id, name, code, description, price, availability_condition, show_in_pos, finalTaxId || null, retention_enabled || 0, retention_percentage || 0);
-    res.json({ success: true });
+    const transaction = db.transaction(() => {
+      const result = db.prepare(`
+        INSERT INTO services (owner_id, establishment_id, name, code, description, price, availability_condition, show_in_pos, tax_id, retention_enabled, retention_percentage) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(owner_id, establishment_id, name, code, description, price, availability_condition, show_in_pos, finalTaxId || null, retention_enabled || 0, retention_percentage || 0);
+
+      const serviceId = result.lastInsertRowid;
+
+      if (Array.isArray(fees)) {
+        const stmt = db.prepare("INSERT INTO service_fees (service_id, name, amount) VALUES (?, ?, ?)");
+        for (const fee of fees) {
+          stmt.run(serviceId, fee.name, fee.amount);
+        }
+      }
+
+      return serviceId;
+    });
+
+    try {
+      const id = transaction();
+      res.json({ success: true, id });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.put("/api/owner/services/:id", (req, res) => {
-    const { establishment_id, name, code, description, price, availability_condition, show_in_pos, tax_id, retention_enabled, retention_percentage } = req.body;
+    const { establishment_id, name, code, description, price, availability_condition, show_in_pos, tax_id, retention_enabled, retention_percentage, fees } = req.body;
     
+    // Check for unique code per establishment
+    if (code) {
+      const existing = db.prepare("SELECT id FROM services WHERE establishment_id = ? AND code = ? AND id != ?").get(establishment_id, code, req.params.id);
+      if (existing) {
+        return res.status(400).json({ error: "Já existe outro serviço com este código neste estabelecimento." });
+      }
+    }
+
     // Se o regime for exclusão, forçar imposto ISENTO
     let finalTaxId = tax_id;
     const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
@@ -3724,12 +3896,30 @@ async function startServer() {
       if (isento) finalTaxId = isento.id;
     }
 
-    db.prepare(`
-      UPDATE services 
-      SET establishment_id = ?, name = ?, code = ?, description = ?, price = ?, availability_condition = ?, show_in_pos = ?, tax_id = ?, retention_enabled = ?, retention_percentage = ?
-      WHERE id = ?
-    `).run(establishment_id, name, code, description, price, availability_condition, show_in_pos, finalTaxId || null, retention_enabled || 0, retention_percentage || 0, req.params.id);
-    res.json({ success: true });
+    const transaction = db.transaction(() => {
+      db.prepare(`
+        UPDATE services 
+        SET establishment_id = ?, name = ?, code = ?, description = ?, price = ?, availability_condition = ?, show_in_pos = ?, tax_id = ?, retention_enabled = ?, retention_percentage = ?
+        WHERE id = ?
+      `).run(establishment_id, name, code, description, price, availability_condition, show_in_pos, finalTaxId || null, retention_enabled || 0, retention_percentage || 0, req.params.id);
+
+      // Re-sync fees: delete all and re-insert
+      db.prepare("DELETE FROM service_fees WHERE service_id = ?").run(req.params.id);
+
+      if (Array.isArray(fees)) {
+        const stmt = db.prepare("INSERT INTO service_fees (service_id, name, amount) VALUES (?, ?, ?)");
+        for (const fee of fees) {
+          stmt.run(req.params.id, fee.name, fee.amount);
+        }
+      }
+    });
+
+    try {
+      transaction();
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.delete("/api/owner/services/:id", (req, res) => {
@@ -3738,11 +3928,7 @@ async function startServer() {
   });
 
   app.get("/api/owner/services-report/:ownerId", (req, res) => {
-    const ownerId = req.params.ownerId;
-    
-    // Get all establishments for this owner
-    const establishments = db.prepare("SELECT id FROM establishments WHERE owner_id = ?").all(ownerId) as { id: number }[];
-    const establishmentIds = establishments.map(s => s.id);
+    const { establishmentIds } = getContextData(req.params.ownerId);
     
     if (establishmentIds.length === 0) {
       return res.json([]);
@@ -3796,24 +3982,39 @@ async function startServer() {
   });
 
   app.get("/api/seller/services/:establishmentId", (req, res) => {
+    const showAll = req.query.all === 'true';
+    const whereClause = showAll ? "WHERE s.establishment_id = ?" : "WHERE s.establishment_id = ? AND s.show_in_pos = 1";
+    
     const services = db.prepare(`
       SELECT s.*, t.percentage as tax_percentage, t.tax_code
       FROM services s
       LEFT JOIN taxes t ON s.tax_id = t.id
-      WHERE s.establishment_id = ? AND s.show_in_pos = 1
-    `).all(req.params.establishmentId);
-    res.json(services);
+      ${whereClause}
+    `).all(req.params.establishmentId) as any[];
+
+    // Fetch fees for each service
+    const servicesWithFees = services.map(s => {
+      const fees = db.prepare("SELECT * FROM service_fees WHERE service_id = ?").all(s.id);
+      return { ...s, fees };
+    });
+
+    res.json(servicesWithFees);
   });
 
   // HR Routes
   app.get("/api/owner/hr/roles/:ownerId", (req, res) => {
-    const roles = db.prepare("SELECT * FROM hr_roles WHERE owner_id = ?").all(req.params.ownerId);
+    const { ownerId } = getContextData(req.params.ownerId);
+    if (!ownerId) return res.json([]);
+    const roles = db.prepare("SELECT * FROM hr_roles WHERE owner_id = ?").all(ownerId);
     res.json(roles);
   });
 
   app.post("/api/owner/hr/roles", (req, res) => {
-    const { owner_id, name, base_role, permissions } = req.body;
-    db.prepare("INSERT INTO hr_roles (owner_id, name, base_role, permissions) VALUES (?, ?, ?, ?)").run(owner_id, name, base_role || 'seller', JSON.stringify(permissions));
+    const { owner_id: requestId, name, base_role, permissions } = req.body;
+    const { ownerId } = getContextData(requestId);
+    if (!ownerId) return res.status(403).json({ error: "Owner context not found" });
+
+    db.prepare("INSERT INTO hr_roles (owner_id, name, base_role, permissions) VALUES (?, ?, ?, ?)").run(ownerId, name, base_role || 'seller', JSON.stringify(permissions));
     res.json({ success: true });
   });
 
@@ -3829,14 +4030,18 @@ async function startServer() {
   });
 
   app.get("/api/owner/hr/employees/:ownerId", (req, res) => {
+    const { establishmentIds } = getContextData(req.params.ownerId);
+    if (establishmentIds.length === 0) return res.json([]);
+    const placeholders = establishmentIds.map(() => '?').join(',');
+
     const employees = db.prepare(`
       SELECT u.*, r.name as role_name, s.base_salary, s.bonuses, s.discounts, st.name as establishment_name
       FROM users u
       LEFT JOIN hr_roles r ON u.role_id = r.id
       LEFT JOIN hr_salaries s ON u.id = s.user_id
       LEFT JOIN establishments st ON u.establishment_id = st.id
-      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (SELECT id FROM establishments WHERE owner_id = ?)) OR u.establishment_id IN (SELECT id FROM establishments WHERE owner_id = ?))
-    `).all(req.params.ownerId, req.params.ownerId);
+      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) OR u.establishment_id IN (${placeholders}))
+    `).all(...[...establishmentIds, ...establishmentIds]);
     res.json(employees);
   });
 
@@ -3918,25 +4123,33 @@ async function startServer() {
   });
 
   app.get("/api/owner/hr/salaries/:ownerId", (req, res) => {
+    const { establishmentIds } = getContextData(req.params.ownerId);
+    if (establishmentIds.length === 0) return res.json([]);
+    const placeholders = establishmentIds.map(() => '?').join(',');
+
     const salaries = db.prepare(`
       SELECT s.*, u.name as employee_name, r.name as role_name
       FROM hr_salaries s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN hr_roles r ON u.role_id = r.id
-      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (SELECT id FROM establishments WHERE owner_id = ?)) OR u.establishment_id IN (SELECT id FROM establishments WHERE owner_id = ?))
-    `).all(req.params.ownerId, req.params.ownerId);
+      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) OR u.establishment_id IN (${placeholders}))
+    `).all(...[...establishmentIds, ...establishmentIds]);
     res.json(salaries);
   });
 
   app.get("/api/owner/hr/salaries/payments/:ownerId", (req, res) => {
+    const { establishmentIds } = getContextData(req.params.ownerId);
+    if (establishmentIds.length === 0) return res.json([]);
+    const placeholders = establishmentIds.map(() => '?').join(',');
+
     const payments = db.prepare(`
       SELECT p.*, u.name as employee_name, s.base_salary
       FROM hr_salary_payments p
       JOIN hr_salaries s ON p.salary_id = s.id
       JOIN users u ON s.user_id = u.id
-      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (SELECT id FROM establishments WHERE owner_id = ?)) OR u.establishment_id IN (SELECT id FROM establishments WHERE owner_id = ?))
+      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) OR u.establishment_id IN (${placeholders}))
       ORDER BY p.timestamp DESC
-    `).all(req.params.ownerId, req.params.ownerId);
+    `).all(...[...establishmentIds, ...establishmentIds]);
     res.json(payments);
   });
 
@@ -3995,13 +4208,17 @@ async function startServer() {
   });
 
   app.get("/api/owner/hr/attendance/:ownerId", (req, res) => {
+    const { establishmentIds } = getContextData(req.params.ownerId);
+    if (establishmentIds.length === 0) return res.json([]);
+    const placeholders = establishmentIds.map(() => '?').join(',');
+
     const attendance = db.prepare(`
       SELECT a.*, u.name as employee_name, st.name as establishment_name
       FROM hr_attendance a
       JOIN users u ON a.user_id = u.id
       JOIN establishments st ON a.establishment_id = st.id
-      WHERE st.owner_id = ?
-    `).all(req.params.ownerId);
+      WHERE a.establishment_id IN (${placeholders})
+    `).all(...establishmentIds);
     res.json(attendance);
   });
 
@@ -4014,12 +4231,16 @@ async function startServer() {
   });
 
   app.get("/api/owner/hr/vacations/:ownerId", (req, res) => {
+    const { establishmentIds } = getContextData(req.params.ownerId);
+    if (establishmentIds.length === 0) return res.json([]);
+    const placeholders = establishmentIds.map(() => '?').join(',');
+
     const vacations = db.prepare(`
       SELECT v.*, u.name as employee_name
       FROM hr_vacations v
       JOIN users u ON v.user_id = u.id
-      WHERE u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (SELECT id FROM establishments WHERE owner_id = ?))
-    `).all(req.params.ownerId);
+      WHERE u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders}))
+    `).all(...establishmentIds);
     res.json(vacations);
   });
 
@@ -4093,23 +4314,21 @@ async function startServer() {
     let params: any[] = [establishmentId];
 
     if (establishmentId === 'all' && ownerId) {
-      whereClause = "establishment_id IN (SELECT id FROM establishments WHERE owner_id = ?)";
-      params = [ownerId];
+      const { establishmentIds } = getContextData(ownerId as string);
+      if (establishmentIds.length === 0) {
+        return res.json({ todaySales: 0, todayCount: 0, monthlySales: 0, lowStockCount: 0, staffCount: 0, topProducts: [], recentTransactions: [], salesByDay: [], salesByEstablishment: [], paymentMethods: [], totalExpenses: 0 });
+      }
+      const placeholders = establishmentIds.map(() => '?').join(',');
+      whereClause = `establishment_id IN (${placeholders})`;
+      params = [...establishmentIds];
     }
     
-    // Sales of the day
+    // Sales of the day (Transactions + Credit Invoices)
     const todaySales = db.prepare(`
-      SELECT SUM(total_amount) as total, COUNT(*) as count
-      FROM transactions 
-      WHERE ${whereClause} AND date(timestamp) = date('now')
-    `).get(...params) as any;
-
-    // Sales of the month
-    const monthlySales = db.prepare(`
-      SELECT SUM(total_amount) as total
-      FROM transactions 
-      WHERE ${whereClause} AND strftime('%Y-%m', timestamp) = strftime('%Y-%m', 'now')
-    `).get(...params) as any;
+      SELECT 
+        (SELECT COUNT(*) FROM transactions WHERE ${whereClause} AND date(timestamp) = date('now')) +
+        (SELECT COUNT(*) FROM credit_invoices WHERE ${whereClause} AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR')) as count
+    `).get(...[...params, ...params]) as any;
 
     // Low stock count (below 5)
     const lowStock = db.prepare(`
@@ -4125,16 +4344,33 @@ async function startServer() {
       WHERE ${whereClause}
     `).get(...params) as any;
 
-    // Top Products
-    const topProducts = db.prepare(`
-      SELECT p.name, SUM(CAST(json_extract(j.value, '$.quantity') AS INTEGER)) as total_qty
-      FROM transactions t, json_each(t.items) j
-      JOIN products p ON p.id = json_extract(j.value, '$.id')
-      WHERE t.${whereClause}
-      GROUP BY p.id
-      ORDER BY total_qty DESC
-      LIMIT 5
-    `).all(...params) as any[];
+    // Top Products - Unified JS processing for better JSON error handling
+    const productSales: Record<string, { id: any, name: string, quantity: number, revenue: number }> = {};
+    const processItems = (rows: any[]) => {
+      rows.forEach((t: any) => {
+        try {
+          const items = typeof t.items === 'string' ? JSON.parse(t.items) : t.items;
+          if (!Array.isArray(items)) return;
+          items.forEach((item: any) => {
+            const id = item.id || item.ProductCode;
+            if (!id) return;
+            if (!productSales[id]) {
+              productSales[id] = { id, name: item.name || item.ProductDescription, quantity: 0, revenue: 0 };
+            }
+            productSales[id].quantity += (Number(item.quantity) || 0);
+          });
+        } catch (e) {}
+      });
+    };
+
+    processItems(db.prepare(`SELECT items FROM transactions WHERE ${whereClause}`).all(...params));
+    // Also include credit invoices in top products for dashboard
+    processItems(db.prepare(`SELECT items FROM credit_invoices WHERE ${whereClause} AND doc_type IN ('FT', 'FR')`).all(...params));
+
+    const topProducts = Object.values(productSales)
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 5)
+      .map(p => ({ name: p.name, total_qty: p.quantity }));
 
     // Recent Transactions
     const recentTransactions = db.prepare(`
@@ -4190,11 +4426,25 @@ async function startServer() {
       WHERE ${whereClause} AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')
     `).get(...params) as any;
 
+    // Financial Health for Salaries (Employee Payment Reminder)
+    const salaries = db.prepare(`
+      SELECT SUM(base_salary) as total 
+      FROM hr_salaries 
+      WHERE user_id IN (SELECT user_id FROM staff WHERE ${whereClause})
+    `).get(...params) as any;
+
+    const ownerSettings = ownerId ? db.prepare("SELECT financial_reminder_enabled FROM owner_settings WHERE owner_id = ?").get(ownerId) as any : null;
+    
+    // Monthly stats for financial health
+    const monthlyIncome = financialMonth?.income || 0;
+    const totalSalaries = salaries?.total || 0;
+    const enoughForSalaries = monthlyIncome >= totalSalaries;
+
     res.json({
       todaySales: financialToday?.income || 0,
       todayCount: todaySales?.count || 0,
       todayExpense: financialToday?.expense || 0,
-      monthlySales: financialMonth?.income || 0,
+      monthlySales: monthlyIncome,
       monthlyExpense: financialMonth?.expense || 0,
       lowStockCount: lowStock?.count || 0,
       staffCount: staffCount?.count || 0,
@@ -4203,7 +4453,13 @@ async function startServer() {
       salesByDay,
       salesByEstablishment,
       paymentMethods,
-      totalExpenses: financialMonth?.expense || 0
+      totalExpenses: financialMonth?.expense || 0,
+      financialHealth: {
+        enabled: ownerSettings?.financial_reminder_enabled === 1,
+        totalSalaries: totalSalaries,
+        enoughForSalaries: enoughForSalaries,
+        monthlyIncome: monthlyIncome
+      }
     });
   });
 
@@ -4323,33 +4579,47 @@ async function startServer() {
   app.get("/api/owner/reports/:establishmentId", (req, res) => {
     const establishmentId = req.params.establishmentId;
     
-    // Sales by day (last 30 days)
+    // Sales by day (last 30 days) - Unified Transactions and Credit Invoices
     const salesByDay = db.prepare(`
-      SELECT date(timestamp) as date, SUM(total_amount) as revenue, COUNT(*) as sales
-      FROM transactions
-      WHERE establishment_id = ? AND timestamp >= date('now', '-30 days')
-      GROUP BY date(timestamp)
-      ORDER BY date ASC
-    `).all(establishmentId);
+      SELECT day as date, SUM(revenue) as revenue, SUM(count) as sales
+      FROM (
+        SELECT date(timestamp) as day, total_amount as revenue, 1 as count
+        FROM transactions
+        WHERE establishment_id = ? AND timestamp >= date('now', '-30 days')
+        UNION ALL
+        SELECT invoice_date as day, total_amount as revenue, 1 as count
+        FROM credit_invoices
+        WHERE establishment_id = ? AND invoice_date >= date('now', '-30 days') AND doc_type IN ('FT', 'FR')
+      )
+      GROUP BY day
+      ORDER BY day ASC
+    `).all(establishmentId, establishmentId);
 
-    // Best selling products
+    // Best selling products - Unified
     const transactions = db.prepare("SELECT items FROM transactions WHERE establishment_id = ?").all(establishmentId);
+    const invoices = db.prepare("SELECT items FROM credit_invoices WHERE establishment_id = ? AND doc_type IN ('FT', 'FR')").all(establishmentId);
+    
     const productSales: Record<string, { name: string, quantity: number, revenue: number }> = {};
     
-    transactions.forEach((t: any) => {
+    const processItems = (itemStr: string) => {
       try {
-        const items = JSON.parse(t.items);
+        const items = JSON.parse(itemStr);
         items.forEach((item: any) => {
-          if (!productSales[item.id]) {
-            productSales[item.id] = { name: item.name, quantity: 0, revenue: 0 };
+          const id = item.id || item.ProductCode; // Handle different item structures
+          if (!id) return;
+          if (!productSales[id]) {
+            productSales[id] = { name: item.name || item.ProductDescription, quantity: 0, revenue: 0 };
           }
-          productSales[item.id].quantity += item.quantity;
-          productSales[item.id].revenue += item.price * item.quantity;
+          productSales[id].quantity += (Number(item.quantity) || 0);
+          productSales[id].revenue += ((Number(item.price) || 0) * (Number(item.quantity) || 0));
         });
       } catch (e) {
         console.error("Error parsing items:", e);
       }
-    });
+    };
+
+    transactions.forEach((t: any) => processItems(t.items));
+    invoices.forEach((i: any) => processItems(i.items));
 
     const topProducts = Object.values(productSales)
       .sort((a, b) => b.quantity - a.quantity)
@@ -4358,28 +4628,39 @@ async function startServer() {
     // Sales by category
     const categorySales: Record<string, number> = {};
     const products = db.prepare("SELECT id, category FROM products WHERE establishment_id = ?").all(establishmentId);
-    const productToCategory: Record<number, string> = {};
-    products.forEach((p: any) => productToCategory[p.id] = p.category);
+    const productToCategory: Record<string, string> = {};
+    products.forEach((p: any) => productToCategory[String(p.id)] = p.category);
 
-    transactions.forEach((t: any) => {
+    const processCategoryItems = (itemStr: string) => {
       try {
-        const items = JSON.parse(t.items);
+        const items = JSON.parse(itemStr);
         items.forEach((item: any) => {
-          const cat = productToCategory[item.id] || 'Outros';
-          categorySales[cat] = (categorySales[cat] || 0) + (item.price * item.quantity);
+          const id = String(item.id || item.ProductCode);
+          const cat = productToCategory[id] || 'Outros';
+          categorySales[cat] = (categorySales[cat] || 0) + ((Number(item.price) || 0) * (Number(item.quantity) || 0));
         });
       } catch (e) {}
-    });
+    };
+
+    transactions.forEach((t: any) => processCategoryItems(t.items));
+    invoices.forEach((i: any) => processCategoryItems(i.items));
 
     const salesByCategory = Object.entries(categorySales).map(([name, value]) => ({ name, value }));
 
     // Revenue by payment method
     const paymentMethods = db.prepare(`
-      SELECT payment_method as name, SUM(total_amount) as value
-      FROM transactions
-      WHERE establishment_id = ?
-      GROUP BY payment_method
-    `).all(establishmentId);
+      SELECT name, SUM(value) as value
+      FROM (
+        SELECT payment_method as name, total_amount as value
+        FROM transactions
+        WHERE establishment_id = ?
+        UNION ALL
+        SELECT payment_method as name, total_amount as value
+        FROM credit_invoices
+        WHERE establishment_id = ? AND doc_type IN ('FT', 'FR')
+      )
+      GROUP BY name
+    `).all(establishmentId, establishmentId);
 
     res.json({
       salesByDay,
@@ -4390,11 +4671,7 @@ async function startServer() {
   });
 
   app.get("/api/owner/global-reports/:ownerId", (req, res) => {
-    const ownerId = req.params.ownerId;
-    
-    // Get all establishments for this owner
-    const establishments = db.prepare("SELECT id, name FROM establishments WHERE owner_id = ?").all(ownerId) as any[];
-    const establishmentIds = establishments.map(s => s.id);
+    const { establishmentIds } = getContextData(req.params.ownerId);
     
     if (establishmentIds.length === 0) {
       return res.json({ 
@@ -4409,24 +4686,29 @@ async function startServer() {
       });
     }
 
+    const establishments = db.prepare(`SELECT id, name FROM establishments WHERE id IN (${establishmentIds.map(() => '?').join(',')})`).all(...establishmentIds) as any[];
+    
     const placeholders = establishmentIds.map(() => '?').join(',');
 
-    // Total Revenue & Sales
+    // Unified Revenue & Sales for global stats
     const stats = db.prepare(`
-      SELECT SUM(total_amount) as totalRevenue, COUNT(*) as totalSales
-      FROM transactions
-      WHERE establishment_id IN (${placeholders})
-    `).get(...establishmentIds) as any;
+      SELECT SUM(revenue) as totalRevenue, SUM(count) as totalSales
+      FROM (
+        SELECT total_amount as revenue, 1 as count FROM transactions WHERE establishment_id IN (${placeholders})
+        UNION ALL
+        SELECT total_amount as revenue, 1 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR')
+      )
+    `).get(...[...establishmentIds, ...establishmentIds]) as any;
 
     // Revenue, Profit, and Comparison by Establishment
     const establishmentComparison = establishments.map(establishment => {
-      const revenue = db.prepare(`
-        SELECT SUM(total_amount) as total FROM transactions WHERE establishment_id = ?
-      `).get(establishment.id) as any;
-
-      const salesCount = db.prepare(`
-        SELECT COUNT(*) as count FROM transactions WHERE establishment_id = ?
-      `).get(establishment.id) as any;
+      const unifiedRevenue = db.prepare(`
+        SELECT SUM(revenue) as total, SUM(count) as count FROM (
+          SELECT total_amount as revenue, 1 as count FROM transactions WHERE establishment_id = ?
+          UNION ALL
+          SELECT total_amount as revenue, 1 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type IN ('FT', 'FR')
+        )
+      `).get(establishment.id, establishment.id) as any;
 
       const purchases = db.prepare(`
         SELECT SUM(total_amount) as total FROM purchases WHERE establishment_id = ?
@@ -4440,10 +4722,11 @@ async function startServer() {
         WHERE u.establishment_id = ?
       `).get(establishment.id) as any;
 
-      const totalRevenue = revenue?.total || 0;
+      const totalRevenue = unifiedRevenue?.total || 0;
       const totalExpenses = (purchases?.total || 0) + (salaries?.total || 0);
       const profit = totalRevenue - totalExpenses;
-      const ticketMedio = salesCount?.count > 0 ? totalRevenue / salesCount.count : 0;
+      const salesCount = unifiedRevenue?.count || 0;
+      const ticketMedio = salesCount > 0 ? totalRevenue / salesCount : 0;
 
       return {
         id: establishment.id,
@@ -4451,51 +4734,64 @@ async function startServer() {
         revenue: totalRevenue,
         expenses: totalExpenses,
         profit: profit,
-        salesCount: salesCount?.count || 0,
+        salesCount: salesCount,
         ticketMedio: ticketMedio,
         margin: totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0
       };
     });
 
-    // Sales by Day (last 30 days)
+    // Sales by Day (last 30 days) - Unified
     const salesByDay = db.prepare(`
-      SELECT date(timestamp) as date, SUM(total_amount) as revenue
-      FROM transactions
-      WHERE establishment_id IN (${placeholders}) AND timestamp >= date('now', '-30 days')
-      GROUP BY date(timestamp)
-      ORDER BY date ASC
-    `).all(...establishmentIds);
+      SELECT day as date, SUM(revenue) as revenue
+      FROM (
+        SELECT date(timestamp) as day, total_amount as revenue
+        FROM transactions
+        WHERE establishment_id IN (${placeholders}) AND timestamp >= date('now', '-30 days')
+        UNION ALL
+        SELECT invoice_date as day, total_amount as revenue
+        FROM credit_invoices
+        WHERE establishment_id IN (${placeholders}) AND invoice_date >= date('now', '-30 days') AND doc_type IN ('FT', 'FR')
+      )
+      GROUP BY day
+      ORDER BY day ASC
+    `).all(...[...establishmentIds, ...establishmentIds]);
 
-    // Top Products
-    const allTransactions = db.prepare(`
-      SELECT items FROM transactions WHERE establishment_id IN (${placeholders})
-    `).all(...establishmentIds);
-    
+    // Top Products - Unified
     const productSales: Record<string, { id: any, name: string, quantity: number, revenue: number }> = {};
-    allTransactions.forEach((t: any) => {
-      try {
-        const items = JSON.parse(t.items);
-        items.forEach((item: any) => {
-          if (!productSales[item.id]) {
-            productSales[item.id] = { id: item.id, name: item.name, quantity: 0, revenue: 0 };
-          }
-          productSales[item.id].quantity += item.quantity;
-          productSales[item.id].revenue += item.quantity * item.price;
-        });
-      } catch (e) {}
-    });
+    const processItems = (rows: any[]) => {
+      rows.forEach((t: any) => {
+        try {
+          const items = JSON.parse(t.items);
+          items.forEach((item: any) => {
+            const id = item.id || item.ProductCode;
+            if (!id) return;
+            if (!productSales[id]) {
+              productSales[id] = { id, name: item.name || item.ProductDescription, quantity: 0, revenue: 0 };
+            }
+            productSales[id].quantity += (Number(item.quantity) || 0);
+            productSales[id].revenue += (Number(item.quantity) || 0) * (Number(item.price) || 0);
+          });
+        } catch (e) {}
+      });
+    };
+
+    processItems(db.prepare(`SELECT items FROM transactions WHERE establishment_id IN (${placeholders})`).all(...establishmentIds));
+    processItems(db.prepare(`SELECT items FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR')`).all(...establishmentIds));
 
     const topProducts = Object.values(productSales)
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 10);
 
-    // Payment Methods (Sales by Channel)
+    // Payment Methods (Sales by Channel) - Unified
     const paymentMethods = db.prepare(`
-      SELECT payment_method as name, SUM(total_amount) as value
-      FROM transactions
-      WHERE establishment_id IN (${placeholders})
-      GROUP BY payment_method
-    `).all(...establishmentIds);
+      SELECT name, SUM(value) as value
+      FROM (
+        SELECT payment_method as name, total_amount as value FROM transactions WHERE establishment_id IN (${placeholders})
+        UNION ALL
+        SELECT payment_method as name, total_amount as value FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR')
+      )
+      GROUP BY name
+    `).all(...[...establishmentIds, ...establishmentIds]);
 
     // Promotions Efficiency
     const promotions = db.prepare(`
@@ -4562,14 +4858,35 @@ async function startServer() {
 
   // Client Routes
   app.get("/api/owner/clients/:establishmentId", (req, res) => {
+    const { userId } = req.query;
+    const establishmentId = req.params.establishmentId;
+
+    if (userId) {
+      const { establishmentIds } = getContextData(userId as string);
+      if (establishmentId !== 'all' && !establishmentIds.includes(Number(establishmentId))) {
+        return res.status(403).json({ error: "Acesso negado para este estabelecimento." });
+      }
+    }
+
+    let whereClause = "c.establishment_id = ?";
+    let params: any[] = [establishmentId];
+
+    if (establishmentId === 'all') {
+      const { establishmentIds } = getContextData(userId as string);
+      if (establishmentIds.length === 0) return res.json([]);
+      const placeholders = establishmentIds.map(() => '?').join(',');
+      whereClause = `c.establishment_id IN (${placeholders})`;
+      params = [...establishmentIds];
+    }
+
     const clients = db.prepare(`
       SELECT c.*,
         (SELECT COUNT(*) FROM transactions t WHERE t.client_nif = c.nif) as total_purchases,
         (SELECT SUM(total_amount) FROM transactions t WHERE t.client_nif = c.nif) as total_spent
       FROM clients c 
-      WHERE c.establishment_id = ? 
+      WHERE ${whereClause}
       ORDER BY name ASC
-    `).all(req.params.establishmentId);
+    `).all(...params);
     res.json(clients);
   });
 
@@ -4592,7 +4909,8 @@ async function startServer() {
 
   // Supplier Routes
   app.get("/api/owner/suppliers/:ownerId", (req, res) => {
-    const suppliers = db.prepare("SELECT * FROM suppliers WHERE owner_id = ? ORDER BY name ASC").all(req.params.ownerId);
+    const { ownerId: effectiveOwnerId } = getContextData(req.params.ownerId);
+    const suppliers = db.prepare("SELECT * FROM suppliers WHERE owner_id = ? ORDER BY name ASC").all(effectiveOwnerId);
     res.json(suppliers);
   });
 
@@ -4602,6 +4920,7 @@ async function startServer() {
       country, city, address, responsible_person, 
       payment_method, payment_term, observations, status 
     } = req.body;
+    const { ownerId: effectiveOwnerId } = getContextData(owner_id);
     db.prepare(`
       INSERT INTO suppliers (
         owner_id, name, company_name, nif, phone, email, 
@@ -4609,7 +4928,7 @@ async function startServer() {
         payment_method, payment_term, observations, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      owner_id, name, company_name, nif, phone, email, 
+      effectiveOwnerId, name, company_name, nif, phone, email, 
       country, city, address, responsible_person, 
       payment_method, payment_term, observations, status || 'active'
     );
@@ -4661,6 +4980,7 @@ async function startServer() {
   });
 
   app.get("/api/owner/suppliers/:ownerId/report", (req, res) => {
+    const { ownerId: effectiveOwnerId } = getContextData(req.params.ownerId);
     const report = db.prepare(`
       SELECT s.id, s.name, s.nif,
         COUNT(p.id) as total_purchases,
@@ -4672,7 +4992,7 @@ async function startServer() {
       WHERE s.owner_id = ?
       GROUP BY s.id
       ORDER BY total_spent DESC
-    `).all(req.params.ownerId);
+    `).all(effectiveOwnerId);
     res.json(report);
   });
 
@@ -4703,6 +5023,22 @@ async function startServer() {
       `).run(establishment_id, supplier_id, total_amount, tax_amount, (paid_amount || 0), status, finalInvoiceNumber, JSON.stringify(items), due_date, delivery_status, is_direct ? 1 : 0, is_stock_updated ? 1 : 0, is_closed ? 1 : 0);
       
       const purchaseId = purchaseResult.lastInsertRowid;
+
+      // New Finance Integration: Orders -> Payables
+      if (paid_amount < total_amount) {
+        try {
+          const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
+          const supplier = db.prepare("SELECT name FROM suppliers WHERE id = ?").get(supplier_id) as any;
+          if (establishment && supplier) {
+            db.prepare(`
+              INSERT INTO accounts_payable (establishment_id, owner_id, supplier_name, amount, due_date, description, status, purchase_id)
+              VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+            `).run(establishment_id, establishment.owner_id, supplier.name, (total_amount - (paid_amount || 0)), due_date, `Compra/Encomenda - ${finalInvoiceNumber}`, purchaseId);
+          }
+        } catch (e) {
+          console.error("Error creating payable for purchase:", e);
+        }
+      }
 
       if (paid_amount > 0) {
         db.prepare(`
@@ -4771,6 +5107,12 @@ async function startServer() {
             END
         WHERE id = ?
       `).run(amount, amount, purchase_id);
+
+      // New Finance Integration: Update Accounts Payable status if liquidated
+      const updatedPurchase = db.prepare("SELECT paid_amount, total_amount FROM purchases WHERE id = ?").get(purchase_id) as any;
+      if (updatedPurchase && updatedPurchase.paid_amount >= updatedPurchase.total_amount) {
+        db.prepare("UPDATE accounts_payable SET status = 'paid' WHERE purchase_id = ?").run(purchase_id);
+      }
 
       // Record in financial_transactions
       try {
@@ -5437,63 +5779,95 @@ async function startServer() {
             doc_type, series, invoice_number, invoice_date, 
             currency, total_amount, tax_amount, items, seller_id,
             payment_method, parent_invoice_id, reason, note_category,
-            adjustment_amount, observations,
+            adjustment_amount, observations, due_date, service_designation,
             hash, signature, prev_signature, key_version_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           establishment_id, client_nif, client_name, address, country, 
           doc_type, finalSeries, finalNumber, invoice_date, 
           currency, total_amount, tax_amount, JSON.stringify(items), seller_id || null,
           payment_method || 'cash', parent_invoice_id || null, reason || null, 
-          note_category || null, adjustment_amount || 0, observations || null,
+          note_category || null, adjustment_amount || 0, observations || null, req.body.due_date || null, req.body.service_designation || null,
           signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.key_version_id
         );
 
         const invoiceId = result.lastInsertRowid;
 
-        // Record in financial_transactions
-        try {
-          const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
-          if (establishment) {
-            const finType = doc_type === 'NC' ? 'expense' : 'income';
-            const finCategory = doc_type === 'NC' ? 'Nota de Crédito (Venda)' : 'Venda Faturada';
-            db.prepare(`
-              INSERT INTO financial_transactions (
-                establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paid', ?)
-            `).run(
-              establishment_id, establishment.owner_id, finType, finCategory, total_amount, payment_method || 'cash',
-              `${finCategory} - Documento ${finalNumber}`, new Date().toISOString(), invoiceId
-            );
+        // New Finance Integration: FT -> Receivables
+        if (doc_type === 'FT') {
+          try {
+            const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
+            if (establishment) {
+              db.prepare(`
+                INSERT INTO accounts_receivable (establishment_id, owner_id, client_name, amount, due_date, description, status, invoice_id)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+              `).run(establishment_id, establishment.owner_id, client_name, total_amount, req.body.due_date, `Fatura Crédito - ${finalNumber}`, invoiceId);
+            }
+          } catch (e) {
+            console.error("Error creating receivable for FT:", e);
           }
-        } catch (finError) {
-          console.error("Error recording financial transaction for credit invoice:", finError);
         }
 
-        // Update stock for products
-        for (const item of items) {
-          if (item.type === 'product' && item.quantity > 0) {
-            if (doc_type === 'NC') {
-              // Nota de Crédito
-              if (note_category === 'return') {
-                // Return to stock
-                db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(item.quantity, item.product_id || item.id);
+        // New Finance Integration: RC -> Liquidate FT
+        if (doc_type === 'RC' && parent_invoice_id) {
+          try {
+            db.prepare("UPDATE credit_invoices SET status = 'paid' WHERE id = ?").run(parent_invoice_id);
+            db.prepare("UPDATE accounts_receivable SET status = 'paid' WHERE invoice_id = ?").run(parent_invoice_id);
+          } catch (e) {
+            console.error("Error liquidating FT with RC:", e);
+          }
+        }
+
+        // Record in financial_transactions - SKIP FOR PROFORMAS (PP) AND CREDIT INVOICES (FT)
+        // FT will only count as income once it is paid (RC created)
+        if (doc_type !== 'PP' && doc_type !== 'FT') {
+          try {
+            const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
+            if (establishment) {
+              const finType = doc_type === 'NC' ? 'expense' : 'income';
+              const finCategory = doc_type === 'NC' ? 'Nota de Crédito (Venda)' : 
+                                  doc_type === 'RC' ? 'Recibo de Pagamento (FT)' : 'Venda Faturada';
+              db.prepare(`
+                INSERT INTO financial_transactions (
+                  establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paid', ?)
+              `).run(
+                establishment_id, establishment.owner_id, finType, finCategory, total_amount, payment_method || 'cash',
+                `${finCategory} - Documento ${finalNumber}${parent_invoice_id ? ' (Ref: ' + parent_invoice_id + ')' : ''}`, 
+                new Date().toISOString(), invoiceId
+              );
+            }
+          } catch (finError) {
+            console.error("Error recording financial transaction for credit invoice:", finError);
+          }
+        }
+
+        // Update stock for products - SKIP FOR PROFORMAS (PP)
+        if (doc_type !== 'PP') {
+          for (const item of items) {
+            if (item.type === 'product' && item.quantity > 0) {
+              if (doc_type === 'NC') {
+                // Nota de Crédito
+                if (note_category === 'return') {
+                  // Return to stock
+                  db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(item.quantity, item.product_id || item.id);
+                  
+                  // Record stock movement
+                  db.prepare(`
+                    INSERT INTO stock_movements (establishment_id, product_id, type, quantity, reason)
+                    VALUES (?, ?, 'in', ?, ?)
+                  `).run(establishment_id, item.product_id || item.id, item.quantity, `Nota de Crédito (Devolução) - Fatura: ${finalNumber}`);
+                }
+              } else if (doc_type !== 'RC') {
+                // FT, FR, ND - Stock goes OUT (RC is just a payment for an existing FT, so stock was already reduced)
+                db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.product_id || item.id);
                 
                 // Record stock movement
                 db.prepare(`
                   INSERT INTO stock_movements (establishment_id, product_id, type, quantity, reason)
-                  VALUES (?, ?, 'in', ?, ?)
-                `).run(establishment_id, item.product_id || item.id, item.quantity, `Nota de Crédito (Devolução) - Fatura: ${finalNumber}`);
+                  VALUES (?, ?, 'out', ?, ?)
+                `).run(establishment_id, item.product_id || item.id, item.quantity, `${doc_type === 'ND' ? 'Nota de Débito' : 'Fatura'} - Nº: ${finalNumber}`);
               }
-            } else {
-              // FT, FR, ND - Stock goes OUT
-              db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.product_id || item.id);
-              
-              // Record stock movement
-              db.prepare(`
-                INSERT INTO stock_movements (establishment_id, product_id, type, quantity, reason)
-                VALUES (?, ?, 'out', ?, ?)
-              `).run(establishment_id, item.product_id || item.id, item.quantity, `${doc_type === 'ND' ? 'Nota de Débito' : 'Fatura'} - Nº: ${finalNumber}`);
             }
           }
         }
@@ -5516,7 +5890,36 @@ async function startServer() {
 
   app.get("/api/owner/credit-invoices/:establishmentId", (req, res) => {
     try {
-      const invoices = db.prepare("SELECT * FROM credit_invoices WHERE establishment_id = ? ORDER BY created_at DESC").all(req.params.establishmentId) as any[];
+      const invoices = db.prepare(`
+        SELECT 
+          t1.id, t1.establishment_id, t1.owner_id, t1.seller_id, t1.parent_invoice_id, 
+          t1.client_name, t1.client_nif, t1.address, t1.country, t1.doc_type, 
+          t1.series, t1.invoice_number, t1.invoice_date, t1.currency, t1.total_amount, 
+          t1.tax_amount, t1.payment_method, t1.reason, t1.note_category, 
+          t1.adjustment_amount, t1.observations, t1.items, t1.due_date, t1.created_at,
+          t1.status,
+          t2.invoice_number as parent_invoice_number,
+          0 as is_pos
+        FROM credit_invoices t1
+        LEFT JOIN credit_invoices t2 ON t1.parent_invoice_id = t2.id
+        WHERE t1.establishment_id = ? 
+        
+        UNION ALL
+
+        SELECT 
+          id, establishment_id, NULL as owner_id, seller_id, NULL as parent_invoice_id,
+          '🛒 PDV - ' || client_name as client_name, client_nif, '' as address, 'Angola' as country, 'FR' as doc_type,
+          '' as series, invoice_number, timestamp as invoice_date, 'AOA' as currency, total_amount,
+          tax_amount, payment_method, '' as reason, '' as note_category,
+          0 as adjustment_amount, '' as observations, items, NULL as due_date, timestamp as created_at,
+          'liquidado' as status,
+          NULL as parent_invoice_number,
+          1 as is_pos
+        FROM transactions
+        WHERE establishment_id = ?
+
+        ORDER BY created_at DESC
+      `).all(req.params.establishmentId, req.params.establishmentId) as any[];
       res.json(invoices.map(inv => ({
         ...inv,
         items: inv.items ? (typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items) : []
@@ -5528,13 +5931,15 @@ async function startServer() {
 
   // --- Invoice Series ---
   app.get("/api/owner/invoice-series/:ownerId", (req, res) => {
-    const ownerId = req.params.ownerId;
+    const { establishmentIds } = getContextData(req.params.ownerId);
+    if (establishmentIds.length === 0) return res.json([]);
+    const placeholders = establishmentIds.map(() => '?').join(',');
     const series = db.prepare(`
       SELECT s.*, st.name as establishment_name 
       FROM invoice_series s
       JOIN establishments st ON s.establishment_id = st.id
-      WHERE st.owner_id = ?
-    `).all(ownerId);
+      WHERE s.establishment_id IN (${placeholders})
+    `).all(...establishmentIds);
     res.json(series);
   });
 
@@ -5582,13 +5987,15 @@ async function startServer() {
   });
 
   app.get("/api/owner/taxes/:ownerId", (req, res) => {
-    const ownerId = req.params.ownerId;
+    const { establishmentIds } = getContextData(req.params.ownerId);
+    if (establishmentIds.length === 0) return res.json([]);
+    const placeholders = establishmentIds.map(() => '?').join(',');
     const taxes = db.prepare(`
       SELECT t.*, st.name as establishment_name 
       FROM taxes t
       JOIN establishments st ON t.establishment_id = st.id
-      WHERE st.owner_id = ?
-    `).all(ownerId);
+      WHERE t.establishment_id IN (${placeholders})
+    `).all(...establishmentIds);
     res.json(taxes);
   });
 
@@ -5679,19 +6086,20 @@ async function startServer() {
   app.get("/api/owner/backups/:ownerId", (req, res) => {
     const ownerId = req.params.ownerId;
     const backups = db.prepare("SELECT * FROM backups WHERE owner_id = ? ORDER BY created_at DESC").all(ownerId);
-    const settings = db.prepare("SELECT * FROM owner_settings WHERE owner_id = ?").get(ownerId) || { backup_enabled: 0, backup_frequency: 'daily' };
+    const settings = db.prepare("SELECT * FROM owner_settings WHERE owner_id = ?").get(ownerId) || { backup_enabled: 0, backup_frequency: 'daily', financial_reminder_enabled: 0 };
     res.json({ backups, settings });
   });
 
   app.post("/api/owner/backups/settings", (req, res) => {
-    const { owner_id, backup_enabled, backup_frequency } = req.body;
+    const { owner_id, backup_enabled, backup_frequency, financial_reminder_enabled } = req.body;
     db.prepare(`
-      INSERT INTO owner_settings (owner_id, backup_enabled, backup_frequency)
-      VALUES (?, ?, ?)
+      INSERT INTO owner_settings (owner_id, backup_enabled, backup_frequency, financial_reminder_enabled)
+      VALUES (?, ?, ?, ?)
       ON CONFLICT(owner_id) DO UPDATE SET
         backup_enabled = excluded.backup_enabled,
-        backup_frequency = excluded.backup_frequency
-    `).run(owner_id, backup_enabled ? 1 : 0, backup_frequency);
+        backup_frequency = excluded.backup_frequency,
+        financial_reminder_enabled = excluded.financial_reminder_enabled
+    `).run(owner_id, backup_enabled ? 1 : 0, backup_frequency, financial_reminder_enabled ? 1 : 0);
     res.json({ success: true });
   });
 
@@ -5715,13 +6123,16 @@ async function startServer() {
 
   // --- Warehouses ---
   app.get("/api/owner/warehouses/:ownerId", (req, res) => {
-    const ownerId = req.params.ownerId;
+    const { establishmentIds } = getContextData(req.params.ownerId);
+    if (establishmentIds.length === 0) return res.json([]);
+    const placeholders = establishmentIds.map(() => '?').join(',');
+
     const warehouses = db.prepare(`
       SELECT w.*, st.name as establishment_name 
       FROM warehouses w
       JOIN establishments st ON w.establishment_id = st.id
-      WHERE st.owner_id = ?
-    `).all(ownerId);
+      WHERE w.establishment_id IN (${placeholders})
+    `).all(...establishmentIds);
     res.json(warehouses);
   });
 
@@ -5761,11 +6172,17 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+    try {
+      console.log("Initializing Vite dev server...");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      console.log("Vite dev server initialized.");
+    } catch (viteError) {
+      console.error("Failed to initialize Vite server:", viteError);
+    }
   } else {
     app.use(express.static(path.join(__dirname, "dist")));
     app.get("*", (req, res) => {
@@ -5778,4 +6195,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("FATAL: Failed to start server:", err);
+  process.exit(1);
+});

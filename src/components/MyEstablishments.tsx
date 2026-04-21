@@ -99,6 +99,8 @@ export const MyEstablishments = ({ user }: { user: User }) => {
       .then(setProformas);
   };
 
+  const baseRoute = user.role === 'manager' ? '/manager' : '/owner';
+
   useEffect(fetchEstablishments, [user.id]);
 
   useEffect(() => {
@@ -257,17 +259,19 @@ export const MyEstablishments = ({ user }: { user: User }) => {
           <h2 className="text-2xl font-bold tracking-tight">Meus Estabelecimentos</h2>
           <p className="text-zinc-500">Gerencie e configure suas unidades de negócio.</p>
         </div>
-        <button 
-          onClick={() => {
-            setEditingEstablishment(null);
-            setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', establishment_code: '', status: 'active', bank_accounts: [] });
-            setIsModalOpen(true);
-          }}
-          className="w-full md:w-auto bg-black text-white px-6 py-3 rounded-xl flex items-center justify-center gap-2 font-bold hover:bg-zinc-800 transition-all active:scale-95 shadow-lg shadow-black/10"
-        >
-          <Plus size={20} />
-          Novo Estabelecimento
-        </button>
+        {user.role === 'owner' && (
+          <button 
+            onClick={() => {
+              setEditingEstablishment(null);
+              setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', establishment_code: '', status: 'active', bank_accounts: [] });
+              setIsModalOpen(true);
+            }}
+            className="w-full md:w-auto bg-black text-white px-6 py-3 rounded-xl flex items-center justify-center gap-2 font-bold hover:bg-zinc-800 transition-all active:scale-95 shadow-lg shadow-black/10"
+          >
+            <Plus size={20} />
+            Novo Estabelecimento
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -300,14 +304,16 @@ export const MyEstablishments = ({ user }: { user: User }) => {
                   >
                     <Wallet size={18} />
                   </button>
-                  <button 
-                    onClick={() => handleEdit(establishment)}
-                    className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
-                  >
-                    <Edit2 size={18} />
-                  </button>
+                  {(user.role === 'owner' || user.role === 'manager') && (
+                    <button 
+                      onClick={() => handleEdit(establishment)}
+                      className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
+                    >
+                      <Edit2 size={18} />
+                    </button>
+                  )}
                   <Link 
-                    to={`/owner/establishments/${establishment.id}`}
+                    to={`${baseRoute}/establishments/${establishment.id}`}
                     className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
                   >
                     <Settings2 size={18} />
@@ -347,7 +353,7 @@ export const MyEstablishments = ({ user }: { user: User }) => {
               </div>
             </div>
             <Link 
-              to={`/owner/establishments/${establishment.id}`}
+              to={`${baseRoute}/establishments/${establishment.id}`}
               className="block w-full py-4 bg-zinc-50 text-center text-sm font-black text-zinc-600 hover:bg-black hover:text-white transition-all border-t border-zinc-100 flex items-center justify-center gap-2"
             >
               <Settings2 size={16} />
@@ -493,7 +499,7 @@ export const MyEstablishments = ({ user }: { user: User }) => {
               
               <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                 {formData.bank_accounts.map((account, index) => (
-                  <div key={index} className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3 relative">
+                  <div key={`form-bank-${index}`} className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3 relative">
                     <button 
                       type="button"
                       onClick={() => removeBankAccount(index)}
@@ -573,7 +579,7 @@ export const MyEstablishments = ({ user }: { user: User }) => {
               const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id;
 
               return (
-                <div key={register.id} className="p-6 border border-zinc-100 rounded-2xl space-y-4 hover:border-orange-200 transition-all group">
+                <div key={`open-reg-${register.id}`} className="p-6 border border-zinc-100 rounded-2xl space-y-4 hover:border-orange-200 transition-all group">
                   <div className="flex items-center justify-between">
                     <div className={cn(
                       "w-12 h-12 rounded-xl flex items-center justify-center",

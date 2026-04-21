@@ -1,5 +1,5 @@
 import React, { useState, useEffect, FormEvent } from 'react';
-import { User, Establishment } from '../types';
+import { User, Establishment, Service, ServiceFee } from '../types';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -21,25 +21,6 @@ import {
   Calendar,
   Filter
 } from 'lucide-react';
-
-interface Service {
-  id: number;
-  owner_id: number;
-  establishment_id: number;
-  establishment_name?: string;
-  name: string;
-  code: string;
-  description: string;
-  price: number;
-  availability_condition: 'always' | 'product_purchased';
-  show_in_pos: number;
-  tax_id?: number;
-  tax_percentage?: number;
-  tax_code?: string;
-  retention_enabled: number;
-  retention_percentage: number;
-  created_at: string;
-}
 
 const Card = ({ children, className = "" }: { children: React.ReactNode, className?: string }) => (
   <div className={`bg-white border border-zinc-100 shadow-sm rounded-2xl overflow-hidden ${className}`}>
@@ -88,7 +69,8 @@ export const OwnerServices = ({ user }: { user: User }) => {
     show_in_pos: 1,
     tax_id: '',
     retention_enabled: 0,
-    retention_percentage: ''
+    retention_percentage: '',
+    fees: [] as { name: string, amount: number }[]
   });
 
   useEffect(() => {
@@ -166,9 +148,13 @@ export const OwnerServices = ({ user }: { user: User }) => {
           show_in_pos: 1,
           tax_id: '',
           retention_enabled: 0,
-          retention_percentage: ''
+          retention_percentage: '',
+          fees: []
         });
         fetchData();
+      } else {
+        const body = await res.json();
+        alert(body.error || 'Erro ao guardar serviço.');
       }
     } catch (error) {
       console.error('Error saving service:', error);
@@ -187,7 +173,8 @@ export const OwnerServices = ({ user }: { user: User }) => {
       show_in_pos: service.show_in_pos,
       tax_id: service.tax_id?.toString() || '',
       retention_enabled: service.retention_enabled || 0,
-      retention_percentage: service.retention_percentage?.toString() || ''
+      retention_percentage: service.retention_percentage?.toString() || '',
+      fees: service.fees?.map(f => ({ name: f.name, amount: f.amount })) || []
     });
     setIsModalOpen(true);
   };
@@ -259,7 +246,10 @@ export const OwnerServices = ({ user }: { user: User }) => {
                   price: '',
                   availability_condition: 'always',
                   show_in_pos: 1,
-                  tax_id: ''
+                  tax_id: '',
+                  retention_enabled: 0,
+                  retention_percentage: '',
+                  fees: []
                 });
                 setIsModalOpen(true);
               }}
@@ -307,30 +297,41 @@ export const OwnerServices = ({ user }: { user: User }) => {
                       </div>
                     </div>
 
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] font-black bg-zinc-100 text-zinc-500 px-2 py-0.5 rounded uppercase tracking-wider">
+                        {service.code}
+                      </span>
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider ${
+                        service.show_in_pos ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                      }`}>
+                        {service.show_in_pos ? 'No PDV' : 'Oculto'}
+                      </span>
+                      {service.tax_code && (
                         <span className="text-[10px] font-black bg-zinc-100 text-zinc-500 px-2 py-0.5 rounded uppercase tracking-wider">
-                          {service.code}
+                          {service.tax_code} ({service.tax_percentage}%)
                         </span>
-                        <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider ${
-                          service.show_in_pos ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
-                        }`}>
-                          {service.show_in_pos ? 'No PDV' : 'Oculto'}
+                      )}
+                      {service.retention_enabled === 1 && (
+                        <span className="text-[10px] font-black bg-orange-50 text-orange-600 px-2 py-0.5 rounded uppercase tracking-wider">
+                          Retenção ({service.retention_percentage}%)
                         </span>
-                        {service.tax_code && (
-                          <span className="text-[10px] font-black bg-zinc-100 text-zinc-500 px-2 py-0.5 rounded uppercase tracking-wider">
-                            {service.tax_code} ({service.tax_percentage}%)
-                          </span>
-                        )}
-                        {service.retention_enabled === 1 && (
-                          <span className="text-[10px] font-black bg-orange-50 text-orange-600 px-2 py-0.5 rounded uppercase tracking-wider">
-                            Retenção ({service.retention_percentage}%)
-                          </span>
-                        )}
-                      </div>
-                      <h4 className="text-lg font-black text-zinc-900 leading-tight">{service.name}</h4>
-                      <p className="text-sm text-zinc-500 line-clamp-2 mt-2">{service.description}</p>
+                      )}
                     </div>
+                    <h4 className="text-lg font-black text-zinc-900 leading-tight">{service.name}</h4>
+                    <p className="text-sm text-zinc-500 line-clamp-2 mt-2">{service.description}</p>
+                    
+                    {service.fees && service.fees.length > 0 && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {service.fees.map((fee, idx) => (
+                          <div key={idx} className="bg-zinc-50 border border-zinc-100 rounded-lg px-2 py-1 flex items-center gap-2">
+                             <span className="text-[10px] font-bold text-zinc-600">{fee.name}</span>
+                             <span className="text-[10px] font-black text-orange-600">+Kz {fee.amount.toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
                     <div className="pt-4 border-t border-zinc-100 flex items-center justify-between">
                       <div>
@@ -645,6 +646,58 @@ export const OwnerServices = ({ user }: { user: User }) => {
                   Nota: Empresas no Regime de Exclusão estão isentas de retenção na fonte.
                 </p>
               )}
+            </div>
+
+            <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100 space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black text-zinc-900 uppercase tracking-widest">Taxas do Serviço</h4>
+                <button 
+                  type="button"
+                  onClick={() => setFormData({ ...formData, fees: [...formData.fees, { name: '', amount: 0 }] })}
+                  className="flex items-center gap-1 text-[10px] font-black text-orange-600 hover:text-orange-700 uppercase"
+                >
+                  <Plus size={12} /> Adicionar Taxa
+                </button>
+              </div>
+              
+              <div className="space-y-2">
+                {formData.fees.map((fee, idx) => (
+                  <div key={idx} className="flex gap-2 items-center">
+                    <input 
+                      type="text" required
+                      value={fee.name}
+                      onChange={e => {
+                        const newFees = [...formData.fees];
+                        newFees[idx].name = e.target.value;
+                        setFormData({ ...formData, fees: newFees });
+                      }}
+                      placeholder="Ex: Urgência"
+                      className="flex-1 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-[10px] outline-none focus:ring-1 focus:ring-orange-500 font-bold tracking-tight"
+                    />
+                    <input 
+                      type="number" required min="0"
+                      value={fee.amount || ''}
+                      onChange={e => {
+                        const newFees = [...formData.fees];
+                        newFees[idx].amount = Number(e.target.value);
+                        setFormData({ ...formData, fees: newFees });
+                      }}
+                      placeholder="Valor"
+                      className="w-24 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-[10px] outline-none focus:ring-1 focus:ring-orange-500 font-bold"
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => setFormData({ ...formData, fees: formData.fees.filter((_, i) => i !== idx) })}
+                      className="p-1 text-zinc-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+                {formData.fees.length === 0 && (
+                  <p className="text-[10px] text-zinc-400 font-bold text-center py-2">Nenhuma taxa configurada.</p>
+                )}
+              </div>
             </div>
           </div>
 

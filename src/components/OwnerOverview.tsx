@@ -18,8 +18,10 @@ import {
   CreditCard,
   PieChart as PieChartIcon,
   ShieldAlert,
-  Calendar
+  Calendar,
+  CheckCircle2
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   AreaChart, 
   Area, 
@@ -94,7 +96,8 @@ export const OwnerOverview = ({ user }: { user: User }) => {
     salesByDay: [],
     salesByEstablishment: [],
     paymentMethods: [],
-    totalExpenses: 0
+    totalExpenses: 0,
+    financialHealth: { enabled: false, enoughForSalaries: false, totalSalaries: 0, monthlyIncome: 0 }
   });
   const [establishments, setEstablishments] = useState<EstablishmentType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,7 +133,9 @@ export const OwnerOverview = ({ user }: { user: User }) => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Visão Geral do Negócio</h2>
-          <p className="text-zinc-500">Resumo de desempenho de todos os seus estabelecimentos.</p>
+          <p className="text-zinc-500">
+            {user.role === 'owner' ? 'Resumo de desempenho de todos os seus estabelecimentos.' : 'Resumo de desempenho do seu estabelecimento gerido.'}
+          </p>
         </div>
         <div className="text-left md:text-right">
           <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Estado Global</p>
@@ -140,6 +145,42 @@ export const OwnerOverview = ({ user }: { user: User }) => {
           </div>
         </div>
       </div>
+
+      {stats.financialHealth?.enabled && (
+        <AnimatePresence>
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={cn(
+              "p-4 rounded-2xl border flex items-center justify-between gap-4",
+              stats.financialHealth.enoughForSalaries 
+                ? "bg-emerald-50 border-emerald-100 text-emerald-800" 
+                : "bg-amber-50 border-amber-100 text-amber-800"
+            )}
+          >
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "p-2 rounded-xl",
+                stats.financialHealth.enoughForSalaries ? "bg-emerald-100" : "bg-amber-100"
+              )}>
+                {stats.financialHealth.enoughForSalaries ? <CheckCircle2 className="text-emerald-600" size={20} /> : <AlertCircle className="text-amber-600" size={20} />}
+              </div>
+              <div>
+                <p className="text-sm font-bold">Lembrete Financeiro</p>
+                <p className="text-xs opacity-90">
+                  {stats.financialHealth.enoughForSalaries 
+                    ? `Parabéns! O saldo acumulado este mês (Kz ${stats.financialHealth.monthlyIncome.toLocaleString()}) é suficiente para cobrir os salários dos funcionários (Kz ${stats.financialHealth.totalSalaries.toLocaleString()}).`
+                    : `Atenção: O saldo acumulado até agora (Kz ${stats.financialHealth.monthlyIncome.toLocaleString()}) ainda não é suficiente para cobrir os salários (Kz ${stats.financialHealth.totalSalaries.toLocaleString()}).`
+                  }
+                </p>
+              </div>
+            </div>
+            <Link to="/owner/rh" className="text-xs font-black uppercase tracking-widest flex items-center gap-1 hover:underline">
+              Ir para RH <ChevronRight size={14} />
+            </Link>
+          </motion.div>
+        </AnimatePresence>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 

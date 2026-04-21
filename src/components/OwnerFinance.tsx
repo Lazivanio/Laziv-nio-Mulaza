@@ -20,7 +20,7 @@ import {
   Download,
   FileText
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { User, Establishment, FinancialTransaction, AccountReceivable, AccountPayable } from '../types';
 
 interface OwnerFinanceProps {
@@ -176,108 +176,122 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
         {/* Main Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard 
-            title="Entradas Hoje" 
+            title="Entradas (Hoje)" 
             value={formatCurrency(summary.today.income)} 
             icon={ArrowUpCircle} 
             color="text-emerald-600" 
             bgColor="bg-emerald-50"
           />
           <StatCard 
-            title="Saídas Hoje" 
+            title="Saídas (Hoje)" 
             value={formatCurrency(summary.today.expense)} 
             icon={ArrowDownCircle} 
             color="text-rose-600" 
             bgColor="bg-rose-50"
           />
           <StatCard 
-            title="Lucro do Dia" 
+            title="Lucro Líquido" 
             value={formatCurrency(summary.today.profit)} 
             icon={TrendingUp} 
             color={summary.today.profit >= 0 ? "text-blue-600" : "text-rose-600"} 
             bgColor="bg-blue-50"
           />
-          <StatCard 
-            title="Lucro do Mês" 
-            value={formatCurrency(summary.month.profit)} 
-            icon={PieChartIcon} 
-            color={summary.month.profit >= 0 ? "text-indigo-600" : "text-rose-600"} 
-            bgColor="bg-indigo-50"
-          />
+          <div className="bg-white p-4 rounded-xl border border-zinc-200 flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">Margem de Lucro</span>
+              <PieChartIcon size={16} className="text-indigo-500" />
+            </div>
+            <div>
+              <div className="text-xl font-black text-zinc-900">
+                {summary.month.income > 0 ? ((summary.month.profit / summary.month.income) * 100).toFixed(1) : 0}%
+              </div>
+              <p className="text-[10px] text-zinc-500 font-medium">Global do Mês</p>
+            </div>
+          </div>
         </div>
 
         {/* Balances & Pending */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <Wallet className="w-5 h-5 text-gray-500" />
-              Saldos Atuais
-            </h3>
+          <div className="bg-white p-6 rounded-xl border border-zinc-200 shadow-sm">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+                <Wallet className="w-5 h-5 text-indigo-500" />
+                Resumo de Saldos
+              </h3>
+              <span className="px-2 py-1 bg-zinc-100 text-[10px] font-bold rounded-lg text-zinc-500 uppercase tracking-tighter">Tempo Real</span>
+            </div>
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-white rounded-md shadow-sm">
+              <div className="group flex items-center justify-between p-4 bg-zinc-50 hover:bg-zinc-100/80 rounded-xl transition-all cursor-pointer">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-white rounded-xl shadow-sm group-hover:scale-110 transition-transform">
                     <DollarSign className="w-5 h-5 text-emerald-600" />
                   </div>
                   <div>
-                    <p className="text-sm text-gray-500">Total em Caixa</p>
-                    <p className="text-xl font-bold text-gray-900">{formatCurrency(summary.balances.cash)}</p>
+                    <p className="text-xs text-zinc-500 font-bold uppercase tracking-tight">Total em Caixa</p>
+                    <p className="text-xl font-black text-zinc-900 tracking-tight">{formatCurrency(summary.balances.cash)}</p>
                   </div>
                 </div>
-                <ChevronRight className="w-5 h-5 text-gray-300" />
+                <ChevronRight className="w-5 h-5 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
               </div>
-              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-white rounded-md shadow-sm">
+              <div className="group flex items-center justify-between p-4 bg-zinc-50 hover:bg-zinc-100/80 rounded-xl transition-all cursor-pointer">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-white rounded-xl shadow-sm group-hover:scale-110 transition-transform">
                     <Building2 className="w-5 h-5 text-blue-600" />
                   </div>
                   <div>
-                    <p className="text-sm text-gray-500">Total em Banco</p>
-                    <p className="text-xl font-bold text-gray-900">{formatCurrency(summary.balances.bank)}</p>
+                    <p className="text-xs text-zinc-500 font-bold uppercase tracking-tight">Total em Banco</p>
+                    <p className="text-xl font-black text-zinc-900 tracking-tight">{formatCurrency(summary.balances.bank)}</p>
                   </div>
                 </div>
-                <ChevronRight className="w-5 h-5 text-gray-300" />
+                <ChevronRight className="w-5 h-5 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
               </div>
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <Clock className="w-5 h-5 text-gray-500" />
-              Pendentes
-            </h3>
+          <div className="bg-white p-6 rounded-xl border border-zinc-200 shadow-sm">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+                <Clock className="w-5 h-5 text-orange-500" />
+                Compromissos Financeiros
+              </h3>
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></div>
+                <span className="text-[10px] font-bold text-zinc-400">Pendente</span>
+              </div>
+            </div>
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-white rounded-md shadow-sm">
+              <div className="flex items-center justify-between p-4 bg-orange-50/50 border border-orange-100 rounded-xl">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-white rounded-xl shadow-sm">
                     <ArrowUpCircle className="w-5 h-5 text-orange-600" />
                   </div>
                   <div>
-                    <p className="text-sm text-gray-500">Total por Receber</p>
-                    <p className="text-xl font-bold text-gray-900">{formatCurrency(summary.pending.receivable)}</p>
+                    <p className="text-xs text-zinc-500 font-bold uppercase tracking-tight">A Receber</p>
+                    <p className="text-xl font-black text-orange-700 tracking-tight">{formatCurrency(summary.pending.receivable)}</p>
                   </div>
                 </div>
                 <button 
                   onClick={() => setActiveTab('receivable')}
-                  className="text-orange-600 text-sm font-medium hover:underline"
+                  className="px-3 py-1 bg-orange-100 text-orange-700 text-[10px] font-black rounded-lg hover:bg-orange-200 transition-all uppercase"
                 >
-                  Ver Detalhes
+                  Ver Lista
                 </button>
               </div>
-              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-white rounded-md shadow-sm">
+              <div className="flex items-center justify-between p-4 bg-rose-50/50 border border-rose-100 rounded-xl">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-white rounded-xl shadow-sm">
                     <ArrowDownCircle className="w-5 h-5 text-rose-600" />
                   </div>
                   <div>
-                    <p className="text-sm text-gray-500">Total por Pagar</p>
-                    <p className="text-xl font-bold text-gray-900">{formatCurrency(summary.pending.payable)}</p>
+                    <p className="text-xs text-zinc-500 font-bold uppercase tracking-tight">A Pagar</p>
+                    <p className="text-xl font-black text-rose-700 tracking-tight">{formatCurrency(summary.pending.payable)}</p>
                   </div>
                 </div>
                 <button 
                   onClick={() => setActiveTab('payable')}
-                  className="text-rose-600 text-sm font-medium hover:underline"
+                  className="px-3 py-1 bg-rose-100 text-rose-700 text-[10px] font-black rounded-lg hover:bg-rose-200 transition-all uppercase"
                 >
-                  Ver Detalhes
+                  Ver Lista
                 </button>
               </div>
             </div>
@@ -440,21 +454,14 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
                       r.status === 'overdue' ? 'bg-rose-100 text-rose-700' : 
                       'bg-orange-100 text-orange-700'
                     }`}>
-                      {r.status === 'paid' ? 'Pago' : r.status === 'overdue' ? 'Atrasado' : 'Pendente'}
+                      {r.status === 'paid' ? 'Liquidado' : r.status === 'overdue' ? 'Atrasado' : 'Pendente'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-sm font-bold text-right text-gray-900">
                     {formatCurrency(r.amount)}
                   </td>
                   <td className="px-6 py-4">
-                    {r.status !== 'paid' && (
-                      <button 
-                        onClick={() => handleStatusUpdate('receivable', r.id, 'paid')}
-                        className="text-xs font-medium text-emerald-600 hover:text-emerald-700"
-                      >
-                        Marcar como Pago
-                      </button>
-                    )}
+                    {/* Manual liquidation removed as per user request */}
                   </td>
                 </tr>
               ))}
@@ -517,21 +524,14 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
                       p.status === 'overdue' ? 'bg-rose-100 text-rose-700' : 
                       'bg-orange-100 text-orange-700'
                     }`}>
-                      {p.status === 'paid' ? 'Pago' : p.status === 'overdue' ? 'Atrasado' : 'Pendente'}
+                      {p.status === 'paid' ? 'Liquidado' : p.status === 'overdue' ? 'Atrasado' : 'Pendente'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-sm font-bold text-right text-gray-900">
                     {formatCurrency(p.amount)}
                   </td>
                   <td className="px-6 py-4">
-                    {p.status !== 'paid' && (
-                      <button 
-                        onClick={() => handleStatusUpdate('payable', p.id, 'paid')}
-                        className="text-xs font-medium text-emerald-600 hover:text-emerald-700"
-                      >
-                        Marcar como Pago
-                      </button>
-                    )}
+                    {/* Manual liquidation removed as per user request */}
                   </td>
                 </tr>
               ))}
