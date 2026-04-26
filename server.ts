@@ -30,13 +30,59 @@ db.exec(`
   );
 `);
 
-const ownerSettingsTable = db.prepare("PRAGMA table_info(owner_settings)").all();
-if (!ownerSettingsTable.some((col: any) => col.name === 'financial_reminder_enabled')) {
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS cancellation_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL,
+    doc_type TEXT DEFAULT 'NC', -- 'NC' or 'ND'
+    type TEXT NOT NULL, -- 'cancel', 'reduce', 'return', 'correction', etc.
+    reason TEXT,
+    items_json TEXT, -- If specific items are being returned
+    amount DECIMAL(10, 2),
+    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+    requested_by INTEGER NOT NULL,
+    requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    processed_by INTEGER,
+    processed_at DATETIME,
+    establishment_id INTEGER,
+    FOREIGN KEY(invoice_id) REFERENCES transactions(id),
+    FOREIGN KEY(requested_by) REFERENCES users(id)
+  )
+`).run();
+
+// Migration for existing table
+try {
+  db.prepare("ALTER TABLE cancellation_requests ADD COLUMN doc_type TEXT DEFAULT 'NC'").run();
+} catch (e) {}
+
+// Migrations
+const usersTable = db.prepare("PRAGMA table_info(users)").all();
+if (!usersTable.some((col: any) => col.name === 'bi_number')) {
   try {
-    db.prepare("ALTER TABLE owner_settings ADD COLUMN financial_reminder_enabled INTEGER DEFAULT 0").run();
+    db.prepare("ALTER TABLE users ADD COLUMN bi_number TEXT").run();
+    console.log("Migration: Added bi_number column to users table");
   } catch (e) {
-    console.error("Migration error (owner_settings):", e);
+    console.error("Migration error (users.bi_number):", e);
   }
+}
+if (!usersTable.some((col: any) => col.name === 'address')) {
+  try {
+    db.prepare("ALTER TABLE users ADD COLUMN address TEXT").run();
+  } catch (e) {}
+}
+
+const hrAttendanceTable = db.prepare("PRAGMA table_info(hr_attendance)").all();
+if (!hrAttendanceTable.some((col: any) => col.name === 'type')) {
+  try {
+    db.prepare("ALTER TABLE hr_attendance ADD COLUMN type TEXT DEFAULT 'manual'").run();
+  } catch (e) {}
+}
+
+const transactionsTable = db.prepare("PRAGMA table_info(transactions)").all();
+if (!transactionsTable.some((col: any) => col.name === 'cancellation_id')) {
+  try {
+    db.prepare("ALTER TABLE transactions ADD COLUMN cancellation_id INTEGER").run();
+  } catch (e) {}
 }
 
 // Digital Signature Service
@@ -1743,6 +1789,22 @@ async function startServer() {
         }
       }
 
+      // Record presence (system type)
+      if (user.role !== 'admin' && user.role !== 'owner') {
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0];
+        const timeStr = now.toISOString();
+        
+        try {
+          db.prepare(`
+            INSERT INTO hr_attendance (user_id, establishment_id, entry_time, date, type, status)
+            VALUES (?, ?, ?, ?, 'system', 'present')
+          `).run(user.id, establishmentId || null, timeStr, dateStr);
+        } catch (e) {
+          console.error("Error recording attendance on login:", e);
+        }
+      }
+
       res.json({ 
         id: user.id, 
         email: user.email, 
@@ -1759,6 +1821,30 @@ async function startServer() {
       });
     } else {
       res.status(401).json({ error: "Credenciais inválidas" });
+    }
+  });
+
+  app.post("/api/attendance/logout", (req, res) => {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: "UserId is required" });
+
+    try {
+      const now = new Date().toISOString();
+      // Update the last system attendance record for this user that doesn't have an exit_time
+      // Use subquery for compatibility as ORDER BY/LIMIT in UPDATE is not standard in all SQLite builds
+      db.prepare(`
+        UPDATE hr_attendance 
+        SET exit_time = ? 
+        WHERE id = (
+          SELECT id FROM hr_attendance 
+          WHERE user_id = ? AND type = 'system' AND exit_time IS NULL 
+          ORDER BY id DESC LIMIT 1
+        )
+      `).run(now, userId);
+      res.json({ success: true });
+    } catch (e) {
+      console.error("Error updated attendance on logout:", e);
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 
@@ -1849,56 +1935,49 @@ async function startServer() {
     next();
   };
 
-  app.get("/api/user-status/:id", (req, res) => {
-    const user = db.prepare("SELECT id, role, status FROM users WHERE id = ?").get(req.params.id) as any;
-    if (!user) return res.status(404).json({ error: "User not found" });
+  app.get("/api/user-status/:userId", (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = db.prepare("SELECT id, role, status, name FROM users WHERE id = ?").get(userId) as any;
+      if (!user) return res.status(404).json({ error: "Utilizador não encontrado" });
 
-    let ownerId = user.id;
-    if (user.role === 'seller') {
-      const staff = db.prepare("SELECT establishment_id FROM staff WHERE user_id = ?").get(user.id) as any;
-      if (staff) {
-        const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(staff.establishment_id) as any;
-        if (establishment) ownerId = establishment.owner_id;
-      } else {
-        return res.status(403).json({ error: "Vendedor removido" });
+      const { ownerId } = getContextData(userId);
+      let owner = null;
+      let activeLicense = null;
+
+      if (ownerId) {
+        owner = db.prepare("SELECT status, fiscal_regime, billing_mode FROM users WHERE id = ?").get(ownerId) as any;
+        if (owner && owner.status === 'suspended') {
+          return res.status(403).json({ error: "A sua conta/acesso está suspensa. Contacte o administrador." });
+        }
+
+        // License check for owner
+        activeLicense = db.prepare(`
+          SELECT id FROM licenses 
+          WHERE user_id = ? AND status = 'active' AND date(expiry_date) >= date('now')
+          LIMIT 1
+        `).get(ownerId);
+
+        if (!activeLicense) {
+          const establishmentCount = db.prepare("SELECT count(*) as count FROM establishments WHERE owner_id = ?").get(ownerId) as any;
+          if (establishmentCount.count > 0) {
+            return res.status(403).json({ error: "Licença expirada para o estabelecimento associado." });
+          }
+        }
       }
+
+      res.json({ 
+        id: user.id, 
+        role: user.role, 
+        status: user.status, 
+        fiscal_regime: owner?.fiscal_regime || 'geral',
+        billing_mode: owner?.billing_mode || 'tradicional',
+        hasActiveLicense: !!activeLicense 
+      });
+    } catch (e: any) {
+      console.error("Error in user-status:", e);
+      res.status(500).json({ error: "Erro interno ao verificar estado." });
     }
-
-    const owner = db.prepare("SELECT status, fiscal_regime, billing_mode FROM users WHERE id = ?").get(ownerId) as any;
-    if (owner && owner.status === 'suspended') {
-      return res.status(403).json({ error: "Acesso suspenso" });
-    }
-
-    const responseData = {
-      id: user.id,
-      role: user.role,
-      status: user.status,
-      fiscal_regime: owner?.fiscal_regime || 'geral',
-      billing_mode: owner?.billing_mode || 'tradicional'
-    };
-
-    // License check
-    const activeLicense = db.prepare(`
-      SELECT id FROM licenses 
-      WHERE user_id = ? AND status = 'active' AND date(expiry_date) >= date('now')
-      LIMIT 1
-    `).get(ownerId);
-
-    if (!activeLicense) {
-      const establishmentCount = db.prepare("SELECT count(*) as count FROM establishments WHERE owner_id = ?").get(ownerId) as any;
-      if (establishmentCount.count > 0) {
-        return res.status(403).json({ error: "Licença expirada" });
-      }
-    }
-
-    res.json({ 
-      id: user.id, 
-      role: user.role, 
-      status: user.status, 
-      fiscal_regime: owner?.fiscal_regime || 'geral',
-      billing_mode: owner?.billing_mode || 'tradicional',
-      hasActiveLicense: !!activeLicense 
-    });
   });
 
   app.use("/api/owner", checkSuspended);
@@ -3491,6 +3570,128 @@ async function startServer() {
         XLSX.utils.book_append_sheet(wb, ws, "Produtos");
         buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
+      } else if (export_type === 'hr_attendance') {
+        const { establishmentIds, ownerId } = getContextData(owner_id);
+        const records = db.prepare(`
+          SELECT a.*, u.name as employee_name, st.name as establishment_name
+          FROM hr_attendance a
+          JOIN users u ON a.user_id = u.id
+          LEFT JOIN establishments st ON a.establishment_id = st.id
+          WHERE a.user_id IN (
+            SELECT id FROM users WHERE id = ? OR establishment_id IN (${establishmentIds.length > 0 ? establishmentIds.map(() => '?').join(',') : 'NULL'})
+            UNION
+            SELECT user_id FROM staff WHERE establishment_id IN (${establishmentIds.length > 0 ? establishmentIds.map(() => '?').join(',') : 'NULL'})
+          )
+        `).all(ownerId, ...establishmentIds, ...establishmentIds) as any[];
+
+        const data = records.map(r => ({
+          'Data': r.date,
+          'Funcionário': r.employee_name,
+          'Estabelecimento': r.establishment_name || 'N/A',
+          'Tipo': r.type === 'system' ? 'Acesso ao Sistema' : 'Manual',
+          'Entrada': r.type === 'system' ? new Date(r.entry_time).toLocaleTimeString() : r.entry_time,
+          'Saída': r.exit_time ? (r.type === 'system' ? new Date(r.exit_time).toLocaleTimeString() : r.exit_time) : 'Pendente',
+          'Estado': r.status,
+          'Notas': r.notes || ''
+        }));
+
+        fileName = `Relatorio_Presenca_RH_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Presenças");
+        buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+      } else if (export_type === 'hr_salaries') {
+        const { establishmentIds, ownerId } = getContextData(owner_id);
+        const payments = db.prepare(`
+          SELECT p.*, s.base_salary, u.name as employee_name
+          FROM hr_salary_payments p
+          JOIN hr_salaries s ON p.salary_id = s.id
+          JOIN users u ON s.user_id = u.id
+          WHERE u.id IN (
+            SELECT id FROM users WHERE id = ? OR establishment_id IN (${establishmentIds.length > 0 ? establishmentIds.map(() => '?').join(',') : 'NULL'})
+            UNION
+            SELECT user_id FROM staff WHERE establishment_id IN (${establishmentIds.length > 0 ? establishmentIds.map(() => '?').join(',') : 'NULL'})
+          )
+        `).all(ownerId, ...establishmentIds, ...establishmentIds) as any[];
+
+        const data = payments.map(p => ({
+          'Funcionário': p.employee_name,
+          'Data Pagamento': new Date(p.timestamp).toLocaleString('pt-AO'),
+          'Mês Referência': p.month || 'N/A',
+          'Salário Base': p.base_salary,
+          'Valor Pago': p.amount,
+          'Bónus': p.bonus || 0,
+          'Tipo': p.type,
+          'Descrição': p.description || ''
+        }));
+
+        fileName = `Relatorio_Salarios_RH_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Salários");
+        buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+      } else if (export_type === 'hr_employees') {
+        const { establishmentIds, ownerId } = getContextData(owner_id);
+        const employees = db.prepare(`
+          SELECT u.*, st.name as establishment_name, s.base_salary
+          FROM users u
+          LEFT JOIN establishments st ON u.establishment_id = st.id
+          LEFT JOIN hr_salaries s ON u.id = s.user_id
+          WHERE u.role IN ('seller', 'manager', 'none') AND (
+            u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${establishmentIds.length > 0 ? establishmentIds.map(() => '?').join(',') : 'NULL'}))
+            OR u.establishment_id IN (${establishmentIds.length > 0 ? establishmentIds.map(() => '?').join(',') : 'NULL'})
+          )
+        `).all(...establishmentIds, ...establishmentIds) as any[];
+
+        const data = employees.map(e => ({
+          'Nome': e.name,
+          'Cargo': e.role,
+          'Email': e.email || 'N/A',
+          'Telefone': e.phone || 'N/A',
+          'BI': e.bi_number || 'N/A',
+          'Morada': e.address || 'N/A',
+          'Estabelecimento': e.establishment_name || 'N/A',
+          'Salário Base': e.base_salary || 0,
+          'Estado': e.status,
+          'Data Registo': e.created_at
+        }));
+
+        fileName = `Relatorio_Funcionarios_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Funcionários");
+        buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+      } else if (export_type === 'hr_vacations') {
+        const { establishmentIds, ownerId } = getContextData(owner_id);
+        const vacations = db.prepare(`
+          SELECT v.*, u.name as employee_name
+          FROM hr_vacations v
+          JOIN users u ON v.user_id = u.id
+          WHERE u.id IN (
+            SELECT id FROM users WHERE id = ? OR establishment_id IN (${establishmentIds.length > 0 ? establishmentIds.map(() => '?').join(',') : 'NULL'})
+            UNION
+            SELECT user_id FROM staff WHERE establishment_id IN (${establishmentIds.length > 0 ? establishmentIds.map(() => '?').join(',') : 'NULL'})
+          )
+        `).all(ownerId, ...establishmentIds, ...establishmentIds) as any[];
+
+        const data = vacations.map(v => ({
+          'Funcionário': v.employee_name,
+          'Data Início': v.start_date,
+          'Data Fim': v.end_date,
+          'Tipo': v.type,
+          'Estado': v.status,
+          'Notas': v.notes || ''
+        }));
+
+        fileName = `Relatorio_Ferias_RH_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Férias");
+        buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
       } else if (export_type === 'invoices') {
         type = "PDF";
         fileName = `Faturas_${establishment?.name || 'Geral'}_${new Date().toISOString().replace(/[:.]/g, '-')}.pdf`;
@@ -3662,13 +3863,14 @@ async function startServer() {
     const stats = db.prepare(`
       SELECT 
         (SELECT COUNT(*) FROM transactions WHERE establishment_id = ? AND date(timestamp) = date('now')) +
-        (SELECT COUNT(*) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR')) as total_transactions,
+        (SELECT COUNT(*) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR', 'NC', 'ND')) as total_transactions,
         
         COALESCE((SELECT SUM(total_amount) FROM transactions WHERE establishment_id = ? AND date(timestamp) = date('now')), 0) +
-        COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR')), 0) as total_revenue,
+        COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR', 'ND')), 0) -
+        COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type = 'NC'), 0) as total_revenue,
         
         (SELECT COUNT(DISTINCT seller_id) FROM transactions WHERE establishment_id = ? AND date(timestamp) = date('now')) as active_sellers
-    `).get(establishmentId, establishmentId, establishmentId, establishmentId, establishmentId) as any;
+    `).get(establishmentId, establishmentId, establishmentId, establishmentId, establishmentId, establishmentId) as any;
 
     const lowStock = db.prepare("SELECT count(*) as count FROM products WHERE establishment_id = ? AND stock <= min_stock").get(establishmentId) as any;
     const staffCount = db.prepare("SELECT count(*) as count FROM staff WHERE establishment_id = ?").get(establishmentId) as any;
@@ -4040,13 +4242,13 @@ async function startServer() {
       LEFT JOIN hr_roles r ON u.role_id = r.id
       LEFT JOIN hr_salaries s ON u.id = s.user_id
       LEFT JOIN establishments st ON u.establishment_id = st.id
-      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) OR u.establishment_id IN (${placeholders}))
+      WHERE u.role IN ('seller', 'manager', 'none') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) OR u.establishment_id IN (${placeholders}))
     `).all(...[...establishmentIds, ...establishmentIds]);
     res.json(employees);
   });
 
   app.post("/api/owner/hr/employees", (req, res) => {
-    const { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, cash_register_id } = req.body;
+    const { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, cash_register_id, bi_number, address } = req.body;
     try {
       db.transaction(() => {
         let finalRole = bodyRole || 'seller';
@@ -4055,8 +4257,8 @@ async function startServer() {
           if (hrRole) finalRole = hrRole.base_role;
         }
 
-        const result = db.prepare("INSERT INTO users (name, email, username, password, role, establishment_id, role_id, custom_permissions, status, cash_register_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-          name, email, username, password, finalRole, establishment_id, role_id, JSON.stringify(custom_permissions), 'active', cash_register_id
+        const result = db.prepare("INSERT INTO users (name, email, username, password, role, establishment_id, role_id, custom_permissions, status, cash_register_id, bi_number, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+          name, email, username, password, finalRole, establishment_id, role_id, JSON.stringify(custom_permissions), 'active', cash_register_id, bi_number, address
         );
         const userId = result.lastInsertRowid;
         const salary = Number(base_salary) || 0;
@@ -4072,28 +4274,61 @@ async function startServer() {
   });
 
   app.put("/api/owner/hr/employees/:id", (req, res) => {
-    const { name, email, username, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, status, cash_register_id } = req.body;
+    const { name, email, username, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, status, cash_register_id, bi_number, address } = req.body;
     try {
       db.transaction(() => {
         let finalRole = bodyRole || 'seller';
-        if (role_id) {
+        if (role_id && role_id !== '') {
           const hrRole = db.prepare("SELECT base_role FROM hr_roles WHERE id = ?").get(role_id) as any;
           if (hrRole) finalRole = hrRole.base_role;
         }
 
-        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, establishment_id = ?, role_id = ?, custom_permissions = ?, status = ?, cash_register_id = ? WHERE id = ?").run(
-          name, email, username, finalRole, establishment_id, role_id, JSON.stringify(custom_permissions), status, cash_register_id, req.params.id
+        const estId = (establishment_id === '' || establishment_id === undefined) ? null : Number(establishment_id);
+        const rId = (role_id === '' || role_id === undefined) ? null : Number(role_id);
+        const crId = (cash_register_id === '' || cash_register_id === undefined) ? null : Number(cash_register_id);
+
+        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, establishment_id = ?, role_id = ?, custom_permissions = ?, status = ?, cash_register_id = ?, bi_number = ?, address = ? WHERE id = ?").run(
+          name, email || null, username || null, finalRole, estId, rId, JSON.stringify(custom_permissions), status, crId, bi_number || null, address || null, req.params.id
         );
         const salary = Number(base_salary) || 0;
         db.prepare("INSERT OR REPLACE INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(req.params.id, salary);
-        if (establishment_id) {
-          db.prepare("INSERT OR REPLACE INTO staff (establishment_id, user_id, salary) VALUES (?, ?, ?)").run(establishment_id, req.params.id, salary);
+        if (estId) {
+          db.prepare("INSERT OR REPLACE INTO staff (establishment_id, user_id, salary) VALUES (?, ?, ?)").run(estId, req.params.id, salary);
         }
       })();
       res.json({ success: true });
     } catch (error: any) {
+      console.error("Error updating employee:", error);
       res.status(500).json({ error: error.message });
     }
+  });
+
+  // Cancellation Requests
+  app.post("/api/sales/request-cancellation", (req, res) => {
+    const { invoice_id, doc_type, type, reason, amount, requested_by, establishment_id, items } = req.body;
+    try {
+      db.prepare("INSERT INTO cancellation_requests (invoice_id, doc_type, type, reason, amount, requested_by, establishment_id, items_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+        invoice_id, doc_type || 'NC', type, reason, amount, requested_by, establishment_id, JSON.stringify(items || [])
+      );
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/owner/cancellation-requests/:ownerId", (req, res) => {
+    const { establishmentIds } = getContextData(req.params.ownerId);
+    if (establishmentIds.length === 0) return res.json([]);
+    const placeholders = establishmentIds.map(() => '?').join(',');
+
+    const requests = db.prepare(`
+      SELECT cr.*, u.name as requested_by_name, t.invoice_number
+      FROM cancellation_requests cr
+      JOIN users u ON cr.requested_by = u.id
+      JOIN transactions t ON cr.invoice_id = t.id
+      WHERE cr.establishment_id IN (${placeholders}) AND cr.status = 'pending'
+    `).all(...establishmentIds);
+    res.json(requests);
   });
 
   app.delete("/api/owner/hr/employees/:id", (req, res) => {
@@ -4132,7 +4367,7 @@ async function startServer() {
       FROM hr_salaries s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN hr_roles r ON u.role_id = r.id
-      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) OR u.establishment_id IN (${placeholders}))
+      WHERE u.role IN ('seller', 'manager', 'none') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) OR u.establishment_id IN (${placeholders}))
     `).all(...[...establishmentIds, ...establishmentIds]);
     res.json(salaries);
   });
@@ -4147,7 +4382,7 @@ async function startServer() {
       FROM hr_salary_payments p
       JOIN hr_salaries s ON p.salary_id = s.id
       JOIN users u ON s.user_id = u.id
-      WHERE u.role IN ('seller', 'manager') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) OR u.establishment_id IN (${placeholders}))
+      WHERE u.role IN ('seller', 'manager', 'none') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) OR u.establishment_id IN (${placeholders}))
       ORDER BY p.timestamp DESC
     `).all(...[...establishmentIds, ...establishmentIds]);
     res.json(payments);
@@ -4208,23 +4443,28 @@ async function startServer() {
   });
 
   app.get("/api/owner/hr/attendance/:ownerId", (req, res) => {
-    const { establishmentIds } = getContextData(req.params.ownerId);
-    if (establishmentIds.length === 0) return res.json([]);
-    const placeholders = establishmentIds.map(() => '?').join(',');
-
+    const { establishmentIds, ownerId } = getContextData(req.params.ownerId);
+    
+    // We want all attendance for users belonging to these establishments
+    // OR attendance where the user_id is the owner themselves or their staff
     const attendance = db.prepare(`
       SELECT a.*, u.name as employee_name, st.name as establishment_name
       FROM hr_attendance a
       JOIN users u ON a.user_id = u.id
-      JOIN establishments st ON a.establishment_id = st.id
-      WHERE a.establishment_id IN (${placeholders})
-    `).all(...establishmentIds);
+      LEFT JOIN establishments st ON a.establishment_id = st.id
+      WHERE a.user_id IN (
+        SELECT id FROM users WHERE id = ? OR establishment_id IN (${establishmentIds.length > 0 ? establishmentIds.map(() => '?').join(',') : 'NULL'})
+        UNION
+        SELECT user_id FROM staff WHERE establishment_id IN (${establishmentIds.length > 0 ? establishmentIds.map(() => '?').join(',') : 'NULL'})
+      )
+      ORDER BY a.date DESC, a.entry_time DESC
+    `).all(ownerId, ...establishmentIds, ...establishmentIds);
     res.json(attendance);
   });
 
   app.post("/api/owner/hr/attendance", (req, res) => {
     const { user_id, establishment_id, entry_time, exit_time, status, date, notes } = req.body;
-    db.prepare("INSERT INTO hr_attendance (user_id, establishment_id, entry_time, exit_time, status, date, notes) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    db.prepare("INSERT INTO hr_attendance (user_id, establishment_id, entry_time, exit_time, status, date, notes, type) VALUES (?, ?, ?, ?, ?, ?, ?, 'manual')").run(
       user_id, establishment_id, entry_time, exit_time, status, date, notes
     );
     res.json({ success: true });
@@ -4589,11 +4829,15 @@ async function startServer() {
         UNION ALL
         SELECT invoice_date as day, total_amount as revenue, 1 as count
         FROM credit_invoices
-        WHERE establishment_id = ? AND invoice_date >= date('now', '-30 days') AND doc_type IN ('FT', 'FR')
+        WHERE establishment_id = ? AND invoice_date >= date('now', '-30 days') AND doc_type IN ('FT', 'FR', 'ND')
+        UNION ALL
+        SELECT invoice_date as day, -total_amount as revenue, 1 as count
+        FROM credit_invoices
+        WHERE establishment_id = ? AND invoice_date >= date('now', '-30 days') AND doc_type = 'NC'
       )
       GROUP BY day
       ORDER BY day ASC
-    `).all(establishmentId, establishmentId);
+    `).all(establishmentId, establishmentId, establishmentId);
 
     // Best selling products - Unified
     const transactions = db.prepare("SELECT items FROM transactions WHERE establishment_id = ?").all(establishmentId);
@@ -5792,6 +6036,11 @@ async function startServer() {
         );
 
         const invoiceId = result.lastInsertRowid;
+
+        // Mark cancellation request as approved if applicable
+        if ((doc_type === 'NC' || doc_type === 'ND') && parent_invoice_id) {
+          db.prepare("UPDATE cancellation_requests SET status = 'approved', processed_at = CURRENT_TIMESTAMP WHERE invoice_id = ? AND doc_type = ?").run(parent_invoice_id, doc_type);
+        }
 
         // New Finance Integration: FT -> Receivables
         if (doc_type === 'FT') {

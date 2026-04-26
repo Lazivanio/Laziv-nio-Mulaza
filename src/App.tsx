@@ -1,4 +1,4 @@
-import { useState, useEffect, ReactNode, FormEvent, useRef } from 'react';
+import React, { useState, useEffect, ReactNode, FormEvent, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable';
@@ -85,6 +85,8 @@ import {
   Receipt,
   Warehouse,
   ClipboardList,
+  Loader2,
+  RefreshCcw,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
@@ -3146,6 +3148,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
   const [isPromoModalOpen, setIsPromoModalOpen] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [creditInvoices, setCreditInvoices] = useState<any[]>([]);
+  const [cancellationRequests, setCancellationRequests] = useState<any[]>([]);
   const [isCreditInvoiceModalOpen, setIsCreditInvoiceModalOpen] = useState(false);
   const [isInvoiceTypeModalOpen, setIsInvoiceTypeModalOpen] = useState(false);
   const [invoiceModalMode, setInvoiceModalMode] = useState<'invoice' | 'note'>('invoice');
@@ -3370,6 +3373,9 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     fetch(`/api/seller/services/${establishmentId}?all=true`)
       .then(res => res.json())
       .then(setServices).catch(() => {});
+    fetch(`/api/owner/cancellation-requests/${user.id}`)
+      .then(res => res.json())
+      .then(setCancellationRequests).catch(() => {});
   };
 
   useEffect(fetchData, [establishmentId]);
@@ -3818,7 +3824,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
           quantity: 1,
           tax: product.tax_percentage !== undefined && product.tax_percentage !== null 
             ? product.tax_percentage 
-            : (taxes.find(t => t.is_default === 1)?.percentage || (establishment?.fiscal_regime === 'simplificado' ? 7 : (establishment?.fiscal_regime === 'exclusao' ? 0 : 14))),
+            : (taxes.find(t => t.is_default === 1)?.percentage ?? (user?.fiscal_regime === 'simplificado' ? 7 : (user?.fiscal_regime === 'exclusao' ? 0 : 14))),
           type: 'product'
         }]
       });
@@ -3845,7 +3851,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
           quantity: 1,
           tax: service.tax_percentage !== undefined && service.tax_percentage !== null 
             ? service.tax_percentage 
-            : (taxes.find(t => t.is_default === 1)?.percentage || (establishment?.fiscal_regime === 'simplificado' ? 7 : (establishment?.fiscal_regime === 'exclusao' ? 0 : 14))),
+            : (taxes.find(t => t.is_default === 1)?.percentage ?? (user?.fiscal_regime === 'simplificado' ? 7 : (user?.fiscal_regime === 'exclusao' ? 0 : 14))),
           type: 'service'
         }]
       });
@@ -3883,12 +3889,11 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     if (creditInvoiceForm.items.length === 0 && !creditInvoiceForm.adjustment_amount) return;
 
     const items_total = creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
-    const items_tax = creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * (item.tax / 100)), 0);
+    const items_tax = creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * ((item.tax ?? (user?.fiscal_regime === 'exclusao' ? 0 : 14)) / 100)), 0);
     
-    // For ND, we might have an adjustment amount without items
-    const total_amount = items_total + (creditInvoiceForm.adjustment_amount || 0);
-    const tax_amount = items_tax; // Assuming adjustment_amount is tax-exempt or tax is already included? 
-    // Usually, adjustments are financial. Let's stick to items tax for now.
+    // For ND/NC, the total reflected in finance must be the gross total (items + tax + adjustments)
+    const total_amount = items_total + items_tax + (creditInvoiceForm.adjustment_amount || 0);
+    const tax_amount = items_tax;
 
     try {
       const res = await fetch('/api/owner/credit-invoices', {
@@ -5162,7 +5167,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                                         name: 'NOVO ITEM MANUAL', 
                                         price: 0, 
                                         quantity: 1, 
-                                        tax: establishment?.fiscal_regime === 'simplificado' ? 7 : (establishment?.fiscal_regime === 'exclusao' ? 0 : 14),
+                                        tax: user?.fiscal_regime === 'simplificado' ? 7 : (user?.fiscal_regime === 'exclusao' ? 0 : 14),
                                         type: 'product'
                                       }]
                                     });
@@ -5188,8 +5193,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-zinc-100">
-                                {creditInvoiceForm.items.map((item) => (
-                                  <tr key={`ci-item-${item.type}-${item.product_id}`} className="text-xs">
+                                {creditInvoiceForm.items.map((item, index) => (
+                                  <tr key={`ci-item-${item.type}-${item.product_id}-${index}`} className="text-xs">
                                     <td className="py-1.5 font-mono text-[9px]">
                                       <span className={cn(
                                         "px-1 py-0.5 rounded text-[7px] font-black uppercase mr-1",
@@ -5438,8 +5443,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                             </div>
                           )}
                           <div className="flex justify-between text-[10px] font-bold text-zinc-500 uppercase">
-                            <span>IVA ({creditInvoiceForm.items?.[0]?.tax || 14}%)</span>
-                            <span>Kz {creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * ((item.tax || 14) / 100)), 0).toLocaleString()}</span>
+                            <span>IVA ({creditInvoiceForm.items?.[0]?.tax ?? (user?.fiscal_regime === 'exclusao' ? 0 : 14)}%)</span>
+                            <span>Kz {creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * ((item.tax ?? (user?.fiscal_regime === 'exclusao' ? 0 : 14)) / 100)), 0).toLocaleString()}</span>
                           </div>
                           <div className="flex justify-between text-lg font-black pt-2">
                             <span>{creditInvoiceForm.doc_type === 'NC' ? 'VALOR NOTA' : 'TOTAL'}</span>
@@ -5448,7 +5453,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                               creditInvoiceForm.doc_type === 'RC' ? "text-emerald-500" : "text-blue-500"
                             )}>
                               Kz {(
-                                (creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * (1 + (item.tax || 14) / 100)), 0)) + 
+                                (creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * (1 + (item.tax ?? (user?.fiscal_regime === 'exclusao' ? 0 : 14)) / 100)), 0)) + 
                                 creditInvoiceForm.adjustment_amount
                               ).toLocaleString()}
                             </span>
@@ -5466,7 +5471,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                                 <span className="text-emerald-500">
                                   Kz {(() => {
                                     const original = creditInvoices.find(i => i.id.toString() === creditInvoiceForm.parent_invoice_id)?.total_amount || 0;
-                                    const noteValue = (creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0) * (1 + (creditInvoiceForm.items[0]?.tax || 14) / 100)) + 
+                                    const noteValue = (creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0) * (1 + (creditInvoiceForm.items[0]?.tax ?? (user?.fiscal_regime === 'exclusao' ? 0 : 14)) / 100)) + 
                                                      creditInvoiceForm.adjustment_amount;
                                     return (creditInvoiceForm.doc_type === 'NC' ? original - noteValue : original + noteValue).toLocaleString();
                                   })()}
@@ -5554,6 +5559,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                   <table className="w-full text-left border-collapse">
                     <thead className="sticky top-0 bg-white z-10">
                       <tr className="border-b border-zinc-100">
+                        <th className="p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest text-center">Req.</th>
                         <th className="p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Documento</th>
                         <th className="p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Natureza</th>
                         <th className="p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
@@ -5568,136 +5574,187 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                         .filter(inv => invoiceTypeFilter === 'ALL' || inv.doc_type === invoiceTypeFilter)
                         .length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="p-16 text-center text-zinc-400 font-black uppercase tracking-widest text-[10px] italic">
+                          <td colSpan={9} className="p-16 text-center text-zinc-400 font-black uppercase tracking-widest text-[10px] italic">
                              Nenhum documento encontrado para este filtro.
                           </td>
                         </tr>
                       ) : (
                         creditInvoices
                           .filter(inv => invoiceTypeFilter === 'ALL' || inv.doc_type === invoiceTypeFilter)
-                          .map((inv) => (
-                          <tr key={`${inv.is_pos ? 'pos' : 'ci'}-${inv.id}`} className="border-b border-zinc-50 hover:bg-zinc-50/80 transition-all group">
-                            <td className="p-4">
-                              <span className="font-mono font-bold text-zinc-900 text-sm block">{inv.invoice_number}</span>
-                              <span className="text-[10px] text-zinc-400 uppercase font-black italic">{inv.series}</span>
-                            </td>
-                            <td className="p-4">
-                              <span className={cn(
-                                "px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border",
-                                inv.doc_type === 'FT' ? "bg-blue-50 text-blue-600 border-blue-100" : 
-                                inv.doc_type === 'FR' ? "bg-emerald-50 text-emerald-600 border-emerald-100" :
-                                inv.doc_type === 'PP' ? "bg-zinc-100 text-zinc-600 border-zinc-200" :
-                                inv.doc_type === 'RC' ? "bg-purple-50 text-purple-600 border-purple-100" :
-                                inv.doc_type === 'NC' ? "bg-orange-50 text-orange-600 border-orange-100" :
-                                "bg-indigo-50 text-indigo-600 border-indigo-100"
-                              )}>
-                                {inv.is_pos ? '🛒 PDV - ' : ''}
-                                {inv.doc_type === 'FT' ? 'Fat. Crédito' : 
-                                 inv.doc_type === 'FR' ? 'Fat. Recibo' :
-                                 inv.doc_type === 'PP' ? 'Proforma' :
-                                 inv.doc_type === 'RC' ? 'Recibo (RC)' :
-                                 inv.doc_type === 'NC' ? 'Nota Crédito' :
-                                 'Nota Débito'}
-                              </span>
-                            </td>
-                            <td className="p-4">
-                              <p className="font-bold text-zinc-900 leading-tight uppercase text-xs">{inv.client_name}</p>
-                              <p className="text-[10px] text-zinc-500">NIF: {inv.client_nif}</p>
-                            </td>
-                            <td className="p-4 text-xs text-zinc-600">
-                              <div>{new Date(inv.invoice_date).toLocaleDateString('pt-AO')}</div>
-                              {inv.due_date && inv.doc_type === 'FT' && (
-                                <div className="text-[10px] font-black text-rose-500 uppercase tracking-widest mt-0.5">Vence: {new Date(inv.due_date).toLocaleDateString('pt-AO')}</div>
-                              )}
-                            </td>
-                            <td className="p-4 font-black text-zinc-900 text-sm">
-                              Kz {inv.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="p-4">
-                              <span className={cn(
-                                "px-2 py-1 rounded-full text-[10px] font-black uppercase border",
-                                (inv.status === 'liquidado' || inv.status === 'paid' || inv.doc_type === 'FR' || inv.doc_type === 'RC' || inv.is_pos)
-                                  ? "bg-emerald-50 text-emerald-600 border-emerald-100" 
-                                  : "bg-amber-50 text-amber-600 border-amber-100"
-                              )}>
-                                {(inv.status === 'liquidado' || inv.status === 'paid' || inv.doc_type === 'FR' || inv.doc_type === 'RC' || inv.is_pos) 
-                                  ? 'Liquidado' 
-                                  : 'Pendente'}
-                              </span>
-                            </td>
-                            <td className="p-4 text-right">
-                              <div className="flex justify-end gap-2">
-                                {(inv.doc_type === 'FT' || inv.doc_type === 'FR' || inv.doc_type === 'PP') && (
-                                  <button 
-                                    onClick={() => {
-                                      const formatted = { ...inv };
-                                      if (typeof formatted.items === 'string') {
-                                        try {
-                                          formatted.items = JSON.parse(formatted.items);
-                                        } catch (e) {}
-                                      }
-                                      setCreditInvoiceForm({
-                                        client_nif: formatted.client_nif,
-                                        client_name: formatted.client_name,
-                                        address: formatted.address || '',
-                                        country: formatted.country || 'Angola',
-                                        doc_type: 'NC',
-                                        series: new Date().getFullYear().toString(),
-                                        invoice_number: '',
-                                        invoice_date: new Date().toISOString().split('T')[0],
-                                        currency: formatted.currency || 'AOA',
-                                        items: (formatted.items || []).map((it: any) => ({ ...it, quantity: 0, max_quantity: it.quantity })),
-                                        parent_invoice_id: inv.id.toString(),
-                                        reason: '',
-                                        note_category: 'return',
-                                        adjustment_amount: 0,
-                                        observations: '',
-                                        due_date: new Date().toISOString().split('T')[0],
-                                        service_designation: ''
-                                      });
-                                      setInvoiceModalMode('note');
-                                      setIsInvoiceTypeModalOpen(true);
-                                    }}
-                                    className="p-2 hover:bg-orange-50 rounded-xl transition-all text-orange-600 border border-transparent hover:border-orange-100"
-                                    title="Criar Nota Retificativa"
-                                  >
-                                    <FileText size={16} />
-                                  </button>
-                                )}
-                                <button 
-                                  onClick={() => {
-                                    const formatted = { ...inv };
-                                    if (typeof formatted.items === 'string') {
-                                      try {
-                                        formatted.items = JSON.parse(formatted.items);
-                                      } catch (e) {}
-                                    }
-                                    setSelectedCreditInvoice(formatted);
-                                  }}
-                                  className="p-2 hover:bg-zinc-100 rounded-xl transition-all text-zinc-600 border border-transparent hover:border-zinc-200"
-                                  title="Visualizar"
-                                >
-                                  <Eye size={16} />
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    const formatted = { ...inv };
-                                    if (typeof formatted.items === 'string') {
-                                      try {
-                                        formatted.items = JSON.parse(formatted.items);
-                                      } catch (e) {}
-                                    }
-                                    setSelectedCreditInvoice(formatted);
-                                  }}
-                                  className="p-2 hover:bg-zinc-100 rounded-xl transition-all text-zinc-600 border border-transparent hover:border-zinc-200"
-                                  title="Imprimir"
-                                >
-                                  <Printer size={16} />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
+                          .map((inv) => {
+                            const request = cancellationRequests.find(r => r.invoice_id === inv.id);
+                            return (
+                              <tr key={`${inv.is_pos ? 'pos' : 'ci'}-${inv.id}`} className="border-b border-zinc-50 hover:bg-zinc-50/80 transition-all group">
+                                <td className="p-4 text-center">
+                                  {request ? (
+                                    <div className="flex justify-center">
+                                      <span className="w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(244,63,94,0.6)]" title={`Solicitação Pendente: ${request.type}`} />
+                                    </div>
+                                  ) : '-'}
+                                </td>
+                                <td className="p-4">
+                                  <span className="font-mono font-bold text-zinc-900 text-sm block">{inv.invoice_number}</span>
+                                  <span className="text-[10px] text-zinc-400 uppercase font-black italic">{inv.series}</span>
+                                </td>
+                                <td className="p-4">
+                                  <span className={cn(
+                                    "px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border",
+                                    inv.doc_type === 'FT' ? "bg-blue-50 text-blue-600 border-blue-100" : 
+                                    inv.doc_type === 'FR' ? "bg-emerald-50 text-emerald-600 border-emerald-100" :
+                                    inv.doc_type === 'PP' ? "bg-zinc-100 text-zinc-600 border-zinc-200" :
+                                    inv.doc_type === 'RC' ? "bg-purple-50 text-purple-600 border-purple-100" :
+                                    inv.doc_type === 'NC' ? "bg-orange-50 text-orange-600 border-orange-100" :
+                                    "bg-indigo-50 text-indigo-600 border-indigo-100"
+                                  )}>
+                                    {inv.is_pos ? '🛒 PDV - ' : ''}
+                                    {inv.doc_type === 'FT' ? 'Fat. Crédito' : 
+                                     inv.doc_type === 'FR' ? 'Fat. Recibo' :
+                                     inv.doc_type === 'PP' ? 'Proforma' :
+                                     inv.doc_type === 'RC' ? 'Recibo (RC)' :
+                                     inv.doc_type === 'NC' ? 'Nota Crédito' :
+                                     'Nota Débito'}
+                                  </span>
+                                </td>
+                                <td className="p-4">
+                                  <p className="font-bold text-zinc-900 leading-tight uppercase text-xs">{inv.client_name}</p>
+                                  <p className="text-[10px] text-zinc-500">NIF: {inv.client_nif}</p>
+                                </td>
+                                <td className="p-4 text-xs text-zinc-600">
+                                  <div>{new Date(inv.invoice_date).toLocaleDateString('pt-AO')}</div>
+                                  {inv.due_date && inv.doc_type === 'FT' && (
+                                    <div className="text-[10px] font-black text-rose-500 uppercase tracking-widest mt-0.5">Vence: {new Date(inv.due_date).toLocaleDateString('pt-AO')}</div>
+                                  )}
+                                </td>
+                                <td className="p-4 font-black text-zinc-900 text-sm">
+                                  Kz {inv.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="p-4">
+                                  <span className={cn(
+                                    "px-2 py-1 rounded-full text-[10px] font-black uppercase border",
+                                    (inv.status === 'liquidado' || inv.status === 'paid' || inv.doc_type === 'FR' || inv.doc_type === 'RC' || inv.is_pos)
+                                      ? "bg-emerald-50 text-emerald-600 border-emerald-100" 
+                                      : "bg-amber-50 text-amber-600 border-amber-100"
+                                  )}>
+                                    {(inv.status === 'liquidado' || inv.status === 'paid' || inv.doc_type === 'FR' || inv.doc_type === 'RC' || inv.is_pos) 
+                                      ? 'Liquidado' 
+                                      : 'Pendente'}
+                                  </span>
+                                </td>
+                                <td className="p-4 text-right">
+                                  <div className="flex justify-end gap-2">
+                                    {(inv.doc_type === 'FT' || inv.doc_type === 'FR' || inv.doc_type === 'PP') && (
+                                      <button 
+                                        onClick={() => {
+                                          const formatted = { ...inv };
+                                          if (typeof formatted.items === 'string') {
+                                            try {
+                                              formatted.items = JSON.parse(formatted.items);
+                                            } catch (e) {}
+                                          }
+                                          const request = cancellationRequests.find(r => r.invoice_id === inv.id);
+                                          const originalItems = Array.isArray(formatted.items) ? formatted.items : [];
+                                          
+                                          setCreditInvoiceForm({
+                                            client_nif: formatted.client_nif,
+                                            client_name: formatted.client_name,
+                                            address: formatted.address || '',
+                                            country: formatted.country || 'Angola',
+                                            doc_type: request?.doc_type || 'NC',
+                                            series: new Date().getFullYear().toString(),
+                                            invoice_number: '',
+                                            invoice_date: new Date().toISOString().split('T')[0],
+                                            currency: formatted.currency || 'AOA',
+                                            items: (() => {
+                                              if (request) {
+                                                if (request.type === 'cancel') {
+                                                  // Total cancellation: pre-fill all items with original quantities
+                                                  return originalItems.map((it: any) => ({ ...it, quantity: it.quantity, max_quantity: it.quantity }));
+                                                }
+                                                if (request.items_json) {
+                                                  try {
+                                                    const requestedItems = JSON.parse(request.items_json);
+                                                    if (Array.isArray(requestedItems) && requestedItems.length > 0) {
+                                                      return originalItems.map((it: any) => {
+                                                        const reqIt = requestedItems.find((ri: any) => ri.product_id === it.product_id && ri.type === it.type);
+                                                        return {
+                                                          ...it,
+                                                          quantity: reqIt ? reqIt.quantity : 0,
+                                                          max_quantity: it.quantity
+                                                        };
+                                                      });
+                                                    }
+                                                  } catch (e) {}
+                                                }
+                                              }
+                                              return originalItems.map((it: any) => ({ ...it, quantity: 0, max_quantity: it.quantity }));
+                                            })(),
+                                            parent_invoice_id: inv.id.toString(),
+                                            reason: request ? `${request.doc_type}: ${request.type.toUpperCase()} - ${request.reason}` : '',
+                                            note_category: request?.doc_type === 'ND' ? 'price_correction' : (request?.type === 'cancel' ? 'correction' : 'return'),
+                                            adjustment_amount: request?.type === 'cancel' ? formatted.total_amount : (request ? request.amount : 0),
+                                            observations: request ? `Solicitado por ${request.requested_by_name}` : '',
+                                            due_date: new Date().toISOString().split('T')[0],
+                                            service_designation: ''
+                                          });
+
+                                          if (request) {
+                                            // If there's a request, go directly to the note creation form
+                                            setIsCreditInvoiceModalOpen(true);
+                                          } else {
+                                            // Otherwise, show the type selection modal
+                                            setInvoiceModalMode('note');
+                                            setIsInvoiceTypeModalOpen(true);
+                                          }
+                                        }}
+                                        className={cn(
+                                          "p-2 rounded-xl transition-all border",
+                                          cancellationRequests.find(r => r.invoice_id === inv.id)
+                                            ? cn(
+                                                "shadow-[0_0_10px_rgba(0,0,0,0.05)] border-zinc-100",
+                                                request?.doc_type === 'ND' ? "bg-blue-50 text-blue-600" : "bg-rose-50 text-rose-600"
+                                              )
+                                            : "hover:bg-orange-50 text-orange-600 border-transparent hover:border-orange-100"
+                                        )}
+                                        title={cancellationRequests.find(r => r.invoice_id === inv.id) ? `Processar Solicitação (${request?.doc_type})` : "Criar Nota Retificativa"}
+                                      >
+                                        <FileText size={16} />
+                                      </button>
+                                    )}
+                                    <button 
+                                      onClick={() => {
+                                        const formatted = { ...inv };
+                                        if (typeof formatted.items === 'string') {
+                                          try {
+                                            formatted.items = JSON.parse(formatted.items);
+                                          } catch (e) {}
+                                        }
+                                        setSelectedCreditInvoice(formatted);
+                                      }}
+                                      className="p-2 hover:bg-zinc-100 rounded-xl transition-all text-zinc-600 border border-transparent hover:border-zinc-200"
+                                      title="Visualizar"
+                                    >
+                                      <Eye size={16} />
+                                    </button>
+                                    <button 
+                                      onClick={() => {
+                                        const formatted = { ...inv };
+                                        if (typeof formatted.items === 'string') {
+                                          try {
+                                            formatted.items = JSON.parse(formatted.items);
+                                          } catch (e) {}
+                                        }
+                                        setSelectedCreditInvoice(formatted);
+                                      }}
+                                      className="p-2 hover:bg-zinc-100 rounded-xl transition-all text-zinc-600 border border-transparent hover:border-zinc-200"
+                                      title="Imprimir"
+                                    >
+                                      <Printer size={16} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
                       )}
                     </tbody>
                   </table>
@@ -7484,7 +7541,7 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
                 <span>Kz {subtotal.toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase tracking-widest">
-                <span>IVA ({invoice.items?.[0]?.tax ?? (establishment.fiscal_regime === 'simplificado' ? 7 : 14)}%)</span>
+                <span>IVA ({invoice.items?.[0]?.tax ?? (establishment.fiscal_regime === 'simplificado' ? 7 : (establishment.fiscal_regime === 'exclusao' ? 0 : 14))}%)</span>
                 <span>Kz {taxTotal.toLocaleString()}</span>
               </div>
               {invoice.adjustment_amount !== 0 && (
@@ -7983,7 +8040,7 @@ const Invoice = ({ sale, establishment, user }: { sale: any, establishment: any,
             </div>
           )}
           <div className="flex justify-between">
-            <span>IVA ({sale.items?.[0]?.tax_percentage ?? 14}%)</span>
+            <span>IVA ({sale.items?.[0]?.tax_percentage ?? (user?.fiscal_regime === 'exclusao' ? 0 : 14)}%)</span>
             <span>Kz {sale.tax_amount.toLocaleString()}</span>
           </div>
           {user.fiscal_regime === 'exclusao' && (
@@ -8196,11 +8253,21 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
 
     try {
       const res = await fetch(url);
-      const data = await res.json();
-      setHasActiveSession(!!data);
-      return !!data;
+      if (!res.ok) {
+        setHasActiveSession(false);
+        return false;
+      }
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await res.json();
+        setHasActiveSession(!!data);
+        return !!data;
+      } else {
+        setHasActiveSession(false);
+        return false;
+      }
     } catch (error) {
-      console.error("Error checking session:", error);
+      // Silently handle session check errors to avoid console noise if server is briefly unavailable
       setHasActiveSession(false);
       return false;
     }
@@ -8506,18 +8573,28 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         url += `?cash_register_id=${user.cash_register_id}`;
       }
       const res = await fetch(url);
-      const data = await res.json();
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       
-      if (data && data.status === 'open') {
-        setHasActiveSession(true);
-        setIsPaymentModalOpen(true);
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await res.json();
+        
+        if (data && data.status === 'open') {
+          setHasActiveSession(true);
+          setIsPaymentModalOpen(true);
+        } else {
+          setHasActiveSession(false);
+          alert('O caixa deve estar aberto para realizar vendas. Por favor, abra o caixa no Dashboard.');
+        }
       } else {
-        setHasActiveSession(false);
-        alert('O caixa deve estar aberto para realizar vendas. Por favor, abra o caixa no Dashboard.');
+        throw new Error("Received non-JSON response from server");
       }
-    } catch (error) {
-      console.error('Error checking session:', error);
-      alert('Erro ao verificar sessão do caixa. Verifique sua conexão.');
+    } catch (error: any) {
+      const isParseError = error instanceof SyntaxError || error.message?.includes('Unexpected token') || error.message?.includes('valid JSON');
+      if (!isParseError) {
+        console.error('Error checking session:', error);
+        alert('Erro ao verificar sessão do caixa. Verifique sua conexão.');
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -9096,7 +9173,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 </div>
               )}
               <div className="flex justify-between text-xs text-zinc-500">
-                <span>Imposto ({defaultTax ? `${defaultTax.percentage}%` : '14%'})</span>
+                <span>Imposto ({defaultTax ? `${defaultTax.percentage}%` : (user?.fiscal_regime === 'exclusao' ? '0%' : '14%')})</span>
                 <span className="font-bold text-zinc-700">Kz {(tax || 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-xl font-black pt-3 border-t border-zinc-200 text-zinc-900">
@@ -9724,6 +9801,11 @@ const SellerHistory = ({ user }: { user: User }) => {
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [establishmentInfo, setEstablishmentInfo] = useState<any>(null);
+  
+  // New state for cancellation requests
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [requestForm, setRequestForm] = useState({ doc_type: 'NC', type: 'cancel', reason: '', amount: '' });
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
 
   useEffect(() => {
     fetch(`/api/seller/sales/${user.id}`).then(res => res.json()).then(setSales);
@@ -9746,6 +9828,53 @@ const SellerHistory = ({ user }: { user: User }) => {
     }
     setSelectedSale(formattedSale);
     setIsInvoiceModalOpen(true);
+  };
+
+  const openRequestModal = (sale: any) => {
+    let formattedSale = { ...sale };
+    if (typeof formattedSale.items === 'string') {
+      try {
+        formattedSale.items = JSON.parse(formattedSale.items);
+      } catch (e) {}
+    }
+    setSelectedSale(formattedSale);
+    setIsRequestModalOpen(true);
+  };
+
+  const handleRequestNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSale) return;
+    
+    setIsSubmittingRequest(true);
+    try {
+      const res = await fetch('/api/sales/request-cancellation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoice_id: selectedSale.id,
+          doc_type: requestForm.doc_type,
+          type: requestForm.type,
+          reason: requestForm.reason,
+          amount: requestForm.type === 'cancel' ? selectedSale.total_amount : Number(requestForm.amount),
+          requested_by: user.id,
+          establishment_id: user.establishment_id,
+          items: selectedSale.items
+        })
+      });
+      if (res.ok) {
+        alert('Solicitação enviada com sucesso!');
+        setIsRequestModalOpen(false);
+        setRequestForm({ doc_type: 'NC', type: 'cancel', reason: '', amount: '' });
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Erro ao enviar solicitação.');
+      }
+    } catch (error) {
+      console.error(error);
+      alert('Erro ao enviar solicitação.');
+    } finally {
+      setIsSubmittingRequest(false);
+    }
   };
 
   return (
@@ -9796,12 +9925,21 @@ const SellerHistory = ({ user }: { user: User }) => {
                   </td>
                   <td className="px-6 py-4 text-right font-black text-sm">Kz {(sale.total_amount || 0).toLocaleString()}</td>
                   <td className="px-6 py-4 text-right">
-                    <button 
-                      onClick={() => openInvoice(sale)}
-                      className="p-2 text-zinc-400 hover:text-orange-500 transition-colors"
-                    >
-                      <Printer size={18} />
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <button 
+                        onClick={() => openRequestModal(sale)}
+                        className="p-2 text-zinc-400 hover:text-rose-500 transition-colors"
+                        title="Solicitar Nota de Crédito"
+                      >
+                        <RefreshCcw size={18} />
+                      </button>
+                      <button 
+                        onClick={() => openInvoice(sale)}
+                        className="p-2 text-zinc-400 hover:text-orange-500 transition-colors"
+                      >
+                        <Printer size={18} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -9826,6 +9964,122 @@ const SellerHistory = ({ user }: { user: User }) => {
         ) : (
           <Invoice sale={selectedSale} establishment={establishmentInfo} user={user} />
         )}
+      </Modal>
+
+      <Modal
+        isOpen={isRequestModalOpen}
+        onClose={() => setIsRequestModalOpen(false)}
+        title="Solicitar Nota Retificativa"
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handleRequestNote} className="space-y-4">
+          <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 flex items-start gap-3">
+            <AlertCircle size={20} className="text-orange-600 mt-0.5" />
+            <div className="text-xs text-orange-800 leading-relaxed">
+              Esta solicitação será enviada ao administrador para aprovação e criação da nota correspondente (Crédito ou Débito).
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setRequestForm({ ...requestForm, doc_type: 'NC' })}
+                className={cn(
+                  "py-3 rounded-xl border font-bold text-sm transition-all",
+                  requestForm.doc_type === 'NC' 
+                    ? "bg-rose-50 border-rose-200 text-rose-600 shadow-sm" 
+                    : "bg-zinc-50 border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                )}
+              >
+                Nota de Crédito
+              </button>
+              <button
+                type="button"
+                onClick={() => setRequestForm({ ...requestForm, doc_type: 'ND' })}
+                className={cn(
+                  "py-3 rounded-xl border font-bold text-sm transition-all",
+                  requestForm.doc_type === 'ND' 
+                    ? "bg-blue-50 border-blue-200 text-blue-600 shadow-sm" 
+                    : "bg-zinc-50 border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                )}
+              >
+                Nota de Débito
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">Motivo da Solicitação</label>
+              <select 
+                value={requestForm.type}
+                onChange={e => setRequestForm({ ...requestForm, type: e.target.value })}
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-black"
+                required
+              >
+                {requestForm.doc_type === 'NC' ? (
+                  <>
+                    <option value="cancel">Anular uma venda (Fatura errada)</option>
+                    <option value="reduce">Reduzir valor faturado (Desconto posterior)</option>
+                    <option value="return">Devolver dinheiro/stock (Devolução de itens)</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="correction">Correção de preço (Aumentar valor)</option>
+                    <option value="extra">Faturação suplementar</option>
+                    <option value="other">Outros motivos de débito</option>
+                  </>
+                )}
+              </select>
+            </div>
+
+            {requestForm.type !== 'cancel' && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="space-y-4"
+              >
+                <div>
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">Valor da Correção (Kz)</label>
+                  <input 
+                    type="number"
+                    value={requestForm.amount}
+                    onChange={e => setRequestForm({ ...requestForm, amount: e.target.value })}
+                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-black font-bold"
+                    placeholder="0.00"
+                    required
+                  />
+                  <p className="text-[10px] text-zinc-400 mt-1">Valor a ser creditado ao cliente.</p>
+                </div>
+              </motion.div>
+            )}
+
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">Observações ou Motivo</label>
+              <textarea 
+                value={requestForm.reason}
+                onChange={e => setRequestForm({ ...requestForm, reason: e.target.value })}
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-black min-h-[100px]"
+                placeholder="Explique detalhadamente o motivo deste pedido..."
+                required
+              />
+            </div>
+          </div>
+
+          <button 
+            type="submit"
+            disabled={isSubmittingRequest}
+            className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-zinc-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {isSubmittingRequest ? (
+              <Loader2 className="animate-spin" size={20} />
+            ) : (
+              <>
+                <RefreshCcw size={20} />
+                Enviar Solicitação
+              </>
+            )}
+          </button>
+        </form>
       </Modal>
     </div>
   );
@@ -9859,8 +10113,14 @@ const SellerDashboard = ({ user }: { user: User }) => {
     }
 
     fetch(url)
-      .then(res => res.json())
-      .then(data => setHasActiveSession(!!data));
+      .then(res => {
+        if (!res.ok) return null;
+        const ct = res.headers.get("content-type");
+        if (ct && ct.includes("application/json")) return res.json();
+        return null;
+      })
+      .then(data => setHasActiveSession(!!data))
+      .catch(() => setHasActiveSession(false));
   }, [user.id, user.cash_register_id]);
 
   return (
@@ -9986,8 +10246,14 @@ const SellerCashMovements = ({ user }: { user: User }) => {
     const establishmentId = user.establishment_id || 1;
     fetchMovements();
     fetch(`/api/seller/active-session/${establishmentId}`)
-      .then(res => res.json())
-      .then(data => setHasActiveSession(!!data));
+      .then(res => {
+        if (!res.ok) return null;
+        const ct = res.headers.get("content-type");
+        if (ct && ct.includes("application/json")) return res.json();
+        return null;
+      })
+      .then(data => setHasActiveSession(!!data))
+      .catch(() => setHasActiveSession(false));
   }, [user.id]);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -10184,12 +10450,27 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
 
     try {
       const res = await fetch(url);
-      const data = await res.json();
-      setSession(data);
-      setLoading(false);
-      return data;
-    } catch (error) {
-      console.error("Error fetching session:", error);
+      if (!res.ok) {
+        setSession(null);
+        setLoading(false);
+        return null;
+      }
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await res.json();
+        setSession(data);
+        setLoading(false);
+        return data;
+      } else {
+        setSession(null);
+        setLoading(false);
+        return null;
+      }
+    } catch (error: any) {
+      const isParseError = error instanceof SyntaxError || error.message?.includes('Unexpected token') || error.message?.includes('valid JSON');
+      if (!isParseError) {
+        console.error("Error fetching session:", error);
+      }
       setLoading(false);
       return null;
     }
@@ -10925,7 +11206,16 @@ export default function App() {
     localStorage.setItem('user', JSON.stringify(userData));
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (user && user.role !== 'admin' && user.role !== 'owner') {
+      try {
+        fetch('/api/attendance/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.id })
+        });
+      } catch (e) {}
+    }
     setUser(null);
     localStorage.removeItem('user');
   };
@@ -10937,24 +11227,28 @@ export default function App() {
           const res = await fetch(`/api/user-status/${user.id}`, { signal });
           if (res.status === 403) {
             handleLogout();
-          } else if (res.ok) {
-            const data = await res.json();
-            // Only update if there's a real change to avoid unnecessary re-renders or race conditions
-            setUser(prev => {
-              if (!prev || prev.id !== data.id) return prev;
-              
-              // Only update if there's a real change to avoid unnecessary re-renders or race conditions
-              // We check if data.fiscal_regime is present to avoid overwriting with undefined
-              const newFiscalRegime = data.fiscal_regime || prev.fiscal_regime || 'geral';
-              const newBillingMode = data.billing_mode || prev.billing_mode || 'tradicional';
-              
-              if (newFiscalRegime !== prev.fiscal_regime || newBillingMode !== prev.billing_mode || data.status !== prev.status) {
-                const updated = { ...prev, fiscal_regime: newFiscalRegime, billing_mode: newBillingMode, status: data.status };
-                localStorage.setItem('user', JSON.stringify(updated));
-                return updated;
-              }
-              return prev;
-            });
+            return;
+          }
+          
+          if (res.ok) {
+            const contentType = res.headers.get("content-type");
+            if (contentType && contentType.includes("application/json")) {
+              const data = await res.json();
+              setUser(prev => {
+                if (!prev || prev.id !== data.id) return prev;
+                const newFiscalRegime = data.fiscal_regime || prev.fiscal_regime || 'geral';
+                const newBillingMode = data.billing_mode || prev.billing_mode || 'tradicional';
+                if (newFiscalRegime !== prev.fiscal_regime || newBillingMode !== prev.billing_mode || data.status !== prev.status) {
+                  const updated = { ...prev, fiscal_regime: newFiscalRegime, billing_mode: newBillingMode, status: data.status };
+                  localStorage.setItem('user', JSON.stringify(updated));
+                  return updated;
+                }
+                return prev;
+              });
+            } else {
+              const text = await res.text();
+              console.warn("User status check returned non-JSON response:", text.substring(0, 100));
+            }
           }
         } catch (e: any) {
           if (e.name === 'AbortError') return;
@@ -10966,7 +11260,7 @@ export default function App() {
             e.message?.toLowerCase().includes('load failed');
             
           if (!isNetworkError) {
-            console.error("Error checking status", e);
+            console.error("Error checking user status:", e);
           }
         }
       };

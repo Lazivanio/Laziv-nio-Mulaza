@@ -20,7 +20,8 @@ import {
   UserX,
   Filter,
   ArrowRightLeft,
-  ShieldAlert
+  ShieldAlert,
+  Monitor,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, HRRole, HRSalary, HRSalaryPayment, HRAttendance, HRVacation, Establishment as EstablishmentType } from '../types';
@@ -115,7 +116,9 @@ export const OwnerRH = ({ user }: { user: User }) => {
   // Forms
   const [employeeForm, setEmployeeForm] = useState({
     name: '', email: '', username: '', password: '', role: 'seller' as any, establishment_id: '', role_id: '', custom_permissions: [] as string[], base_salary: '', status: 'active' as 'active' | 'suspended',
-    is_system_user: true
+    is_system_user: true,
+    bi_number: '',
+    address: ''
   });
   const [roleForm, setRoleForm] = useState({ 
     name: '', 
@@ -181,6 +184,8 @@ export const OwnerRH = ({ user }: { user: User }) => {
         password: employeeForm.is_system_user ? employeeForm.password : null,
         custom_permissions: employeeForm.is_system_user ? employeeForm.custom_permissions : [],
         base_salary: Number(employeeForm.base_salary) || 0,
+        bi_number: employeeForm.bi_number,
+        address: employeeForm.address,
         owner_id: user.id
       };
 
@@ -435,7 +440,9 @@ export const OwnerRH = ({ user }: { user: User }) => {
                       name: '', email: '', username: '', password: '', role: 'seller', 
                       establishment_id: establishments.length === 1 ? establishments[0].id.toString() : '', 
                       role_id: '', custom_permissions: [], base_salary: '', status: 'active',
-                      is_system_user: true
+                      is_system_user: true,
+                      bi_number: '',
+                      address: ''
                     });
                     setIsEmployeeModalOpen(true);
                   }}
@@ -525,7 +532,9 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                     custom_permissions: emp.custom_permissions ? (typeof emp.custom_permissions === 'string' ? JSON.parse(emp.custom_permissions) : emp.custom_permissions) : rolePerms,
                                     base_salary: (emp as any).base_salary?.toString() || '',
                                     status: emp.status || 'active',
-                                    is_system_user: !!(emp.email || emp.username)
+                                    is_system_user: !!(emp.email || emp.username),
+                                    bi_number: (emp as any).bi_number || '',
+                                    address: (emp as any).address || ''
                                   });
                                   setIsEmployeeModalOpen(true);
                                 }}
@@ -795,6 +804,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                     <thead>
                       <tr className="bg-zinc-50 border-b border-zinc-100">
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Data</th>
+                        <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Tipo</th>
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Funcionário</th>
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Estabelecimento</th>
                         <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Horário</th>
@@ -808,13 +818,35 @@ export const OwnerRH = ({ user }: { user: User }) => {
                             <p className="text-sm font-bold text-zinc-900">{new Date(att.date).toLocaleDateString()}</p>
                           </td>
                           <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-2 py-0.5 rounded text-[9px] font-bold uppercase",
+                              att.type === 'system' ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"
+                            )}>
+                              {att.type === 'system' ? 'Acesso' : 'Manual'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
                             <p className="text-sm font-bold text-zinc-900">{att.employee_name}</p>
                           </td>
                           <td className="px-6 py-4">
                             <p className="text-xs text-zinc-500">{att.establishment_name}</p>
                           </td>
                           <td className="px-6 py-4">
-                            <p className="text-xs text-zinc-900 font-bold">{att.entry_time} - {att.exit_time || '--:--'}</p>
+                            <div className="flex flex-col">
+                              <div className="text-xs font-bold text-zinc-900">
+                                {att.type === 'system' ? (
+                                  <>
+                                    {new Date(att.entry_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    {' - '}
+                                    {att.exit_time ? new Date(att.exit_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (
+                                      <span className="text-emerald-600">Ativa</span>
+                                    )}
+                                  </>
+                                ) : (
+                                  `${att.entry_time} - ${att.exit_time || '--:--'}`
+                                )}
+                              </div>
+                            </div>
                           </td>
                           <td className="px-6 py-4">
                             <span className={cn(
@@ -968,6 +1000,26 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 type="text" 
                 value={employeeForm.name}
                 onChange={e => setEmployeeForm({...employeeForm, name: e.target.value})}
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-500 uppercase">Nº do BI</label>
+              <input 
+                type="text" 
+                value={employeeForm.bi_number}
+                onChange={e => setEmployeeForm({...employeeForm, bi_number: e.target.value})}
+                placeholder="000000000AA000"
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-xs font-bold text-zinc-500 uppercase">Morada</label>
+              <input 
+                type="text" 
+                value={employeeForm.address}
+                onChange={e => setEmployeeForm({...employeeForm, address: e.target.value})}
+                placeholder="Rua, Bairro, Cidade"
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
               />
             </div>

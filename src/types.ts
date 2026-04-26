@@ -94,6 +94,7 @@ export interface HRAttendance {
   status: 'present' | 'late' | 'absent' | 'half_day';
   date: string;
   notes?: string;
+  type?: 'manual' | 'system';
   employee_name?: string;
   establishment_name?: string;
 }

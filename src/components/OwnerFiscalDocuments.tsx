@@ -15,7 +15,9 @@ import {
   RefreshCcw,
   CheckCircle,
   XCircle,
-  Clock
+  Clock,
+  Users,
+  DollarSign
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { User, Establishment as EstablishmentType } from '../types';
@@ -319,6 +321,47 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
             />
           </div>
         </div>
+
+        {/* HR Reports */}
+        <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm lg:col-span-2">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 bg-purple-100 text-purple-600 rounded-lg">
+              <Users size={20} />
+            </div>
+            <h2 className="text-lg font-bold">Relatórios de Recursos Humanos (RH)</h2>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <ExportCard 
+              title="Lista de Funcionários" 
+              icon={<Users size={24} />} 
+              color="purple" 
+              onClick={() => handleExport('hr_employees')}
+              disabled={generating}
+            />
+            <ExportCard 
+              title="Presenças (Entradas/Saídas)" 
+              icon={<Clock size={24} />} 
+              color="blue" 
+              onClick={() => handleExport('hr_attendance')}
+              disabled={generating}
+            />
+            <ExportCard 
+              title="Pagamentos de Salários" 
+              icon={<DollarSign size={24} />} 
+              color="emerald" 
+              onClick={() => handleExport('hr_salaries')}
+              disabled={generating}
+            />
+            <ExportCard 
+              title="Férias Atribuídas" 
+              icon={<Calendar size={24} />} 
+              color="orange" 
+              onClick={() => handleExport('hr_vacations')}
+              disabled={generating}
+            />
+          </div>
+        </div>
       </div>
 
       {/* History Table */}
@@ -420,7 +463,10 @@ const ExportCard = ({ title, icon, color, onClick, disabled }: { title: string, 
     emerald: 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border-emerald-100',
     amber: 'bg-amber-50 text-amber-600 hover:bg-amber-100 border-amber-100',
     indigo: 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border-indigo-100',
-    violet: 'bg-violet-50 text-violet-600 hover:bg-violet-100 border-violet-100'
+    violet: 'bg-violet-50 text-violet-600 hover:bg-violet-100 border-violet-100',
+    purple: 'bg-purple-50 text-purple-600 hover:bg-purple-100 border-purple-100',
+    blue: 'bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-100',
+    orange: 'bg-orange-50 text-orange-600 hover:bg-orange-100 border-orange-100'
   };
 
   return (
