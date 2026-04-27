@@ -136,68 +136,81 @@ const DigitalSignatureService = {
     return db.prepare("SELECT * FROM company_keys WHERE owner_id = ? AND is_active = 1").get(ownerId) as any;
   },
 
-  getPrevSignature(ownerId: number, establishmentId: number) {
-    // Check transactions
+  getPrevSignature(establishmentId: number, docType: string) {
+    // Check transactions (POS is typically FR)
     const lastTrans = db.prepare(`
-      SELECT signature FROM transactions 
-      WHERE establishment_id = ? AND signature IS NOT NULL 
+      SELECT signature, invoice_number FROM transactions 
+      WHERE establishment_id = ? AND signature IS NOT NULL AND invoice_number LIKE ?
       ORDER BY timestamp DESC, id DESC LIMIT 1
-    `).get(establishmentId) as { signature: string };
+    `).get(establishmentId, `${docType}%`) as { signature: string };
 
     // Check credit invoices
     const lastCI = db.prepare(`
       SELECT signature FROM credit_invoices 
-      WHERE establishment_id = ? AND signature IS NOT NULL 
+      WHERE establishment_id = ? AND signature IS NOT NULL AND doc_type = ?
       ORDER BY created_at DESC, id DESC LIMIT 1
-    `).get(establishmentId) as { signature: string };
+    `).get(establishmentId, docType) as { signature: string };
 
-    // Return the most recent one (this is a bit simplified, ideally we'd have a global sequence)
-    // For now, let's just return the last one found in either.
-    return lastTrans?.signature || lastCI?.signature || "0";
+    // Check proforma invoices
+    const lastPI = db.prepare(`
+      SELECT signature FROM proforma_invoices 
+      WHERE establishment_id = ? AND signature IS NOT NULL AND invoice_number LIKE ?
+      ORDER BY created_at DESC, id DESC LIMIT 1
+    `).get(establishmentId, `${docType}%`) as { signature: string };
+
+    return lastTrans?.signature || lastCI?.signature || lastPI?.signature || "";
   },
 
   signDocument(ownerId: number, establishmentId: number, data: any) {
-    let activeKey = this.getActiveKey(ownerId);
-    if (!activeKey) {
-      // Fallback: try to generate keys if missing
-      try {
-        console.log(`No active key found for owner ${ownerId} during signing. Attempting to generate...`);
-        this.generateCompanyKeys(ownerId, ownerId);
-        activeKey = this.getActiveKey(ownerId);
-      } catch (e) {
-        console.error(`Failed to generate fallback keys for owner ${ownerId}:`, e);
+    const docType = data.doc_type || (data.invoice_number ? data.invoice_number.split(' ')[0] : 'FR');
+    const prevSignature = this.getPrevSignature(establishmentId, docType);
+    
+    // Data to sign/hash: invoice_number, doc_type, date, client_name
+    const dataString = `${data.invoice_number};${docType};${data.date};${data.client_name || 'Consumidor Final'}`;
+
+    if (!prevSignature) {
+      // First invoice of this type: Use Private Key
+      let activeKey = this.getActiveKey(ownerId);
+      if (!activeKey) {
+        try {
+          this.generateCompanyKeys(ownerId, ownerId);
+          activeKey = this.getActiveKey(ownerId);
+        } catch (e) {}
       }
+
+      if (!activeKey) {
+        throw new Error("Nenhuma chave ativa encontrada para gerar o primeiro hash deste tipo de documento.");
+      }
+
+      const privateKey = this.decryptPrivateKey(activeKey.private_key_encrypted);
+      const sign = crypto.createSign('SHA256');
+      sign.update(dataString);
+      sign.end();
+      const signature = sign.sign(privateKey, 'hex');
+
+      // For the first signature, the hash is the SHA256 of the data, and the signature is the RSA output
+      const hash = crypto.createHash('sha256').update(dataString).digest('hex');
+
+      return {
+        hash,
+        signature,
+        prev_signature: "0",
+        key_version_id: activeKey.id
+      };
+    } else {
+      // Subsequent invoices: Encrypt with previous hash (without private key)
+      // We use the previous signature as the 'key' to generate the next one
+      // The user says "encripta con o hash anterior", we'll use HMAC to simulate this securely
+      const newSignature = crypto.createHmac('sha256', prevSignature).update(dataString).digest('hex');
+      const hash = crypto.createHash('sha256').update(dataString + prevSignature).digest('hex');
+
+      return {
+        hash,
+        signature: newSignature,
+        prev_signature: prevSignature,
+        key_version_id: null // No RSA key used for this step
+      };
     }
-
-    if (!activeKey) {
-      throw new Error("Nenhuma chave ativa encontrada para esta empresa.");
-    }
-
-    const privateKey = this.decryptPrivateKey(activeKey.private_key_encrypted);
-    const prevSignature = this.getPrevSignature(ownerId, establishmentId);
-    
-    // Data to hash: invoice_number, total, date, items, prev_signature
-    const dataToHash = JSON.stringify({
-      invoice_number: data.invoice_number,
-      total: data.total_amount,
-      date: data.date,
-      items: data.items,
-      prev_signature: prevSignature
-    });
-
-    const hash = crypto.createHash('sha256').update(dataToHash).digest('hex');
-    
-    const sign = crypto.createSign('SHA256');
-    sign.update(hash);
-    sign.end();
-    const signature = sign.sign(privateKey, 'hex');
-
-    return {
-      hash,
-      signature,
-      prev_signature: prevSignature,
-      key_version_id: activeKey.id
-    };
   }
 };
 
@@ -1566,6 +1579,8 @@ async function startServer() {
       // Digital Signature
       const signatureData = DigitalSignatureService.signDocument(establishment.owner_id, establishment_id, {
         invoice_number,
+        doc_type: 'FR',
+        client_name: client_name || 'Consumidor Final',
         total_amount,
         date: new Date().toISOString(),
         items: JSON.stringify(items)
@@ -4570,12 +4585,14 @@ async function startServer() {
       params = [...establishmentIds];
     }
     
-    // Sales of the day (Transactions + Credit Invoices)
+    // Sales of the day (Transactions - Credit Invoices for NC)
     const todaySales = db.prepare(`
       SELECT 
-        (SELECT COUNT(*) FROM transactions WHERE ${whereClause} AND date(timestamp) = date('now')) +
-        (SELECT COUNT(*) FROM credit_invoices WHERE ${whereClause} AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR')) as count
+        (SELECT COUNT(*) FROM transactions WHERE ${whereClause} AND date(timestamp) = date('now')) -
+        (SELECT COUNT(*) FROM credit_invoices WHERE ${whereClause} AND date(invoice_date) = date('now') AND doc_type = 'NC') as count
     `).get(...[...params, ...params]) as any;
+
+    const todayCount = Math.max(0, todaySales?.count || 0);
 
     // Low stock count (below 5)
     const lowStock = db.prepare(`
@@ -4629,32 +4646,57 @@ async function startServer() {
       LIMIT 5
     `).all(...params) as any[];
 
-    // Sales by Day (Last 7 days)
+    // Sales by Day (Last 7 days) - Including Credit Notes as negative revenue
     const salesByDay = db.prepare(`
-      SELECT date(timestamp) as day, SUM(total_amount) as total
-      FROM transactions
-      WHERE ${whereClause} AND timestamp >= date('now', '-7 days')
+      SELECT day, SUM(total) as total FROM (
+        SELECT date(timestamp) as day, SUM(total_amount) as total
+        FROM transactions
+        WHERE ${whereClause} AND timestamp >= date('now', '-7 days')
+        GROUP BY day
+        UNION ALL
+        SELECT date(invoice_date) as day, SUM(-total_amount) as total
+        FROM credit_invoices
+        WHERE ${whereClause} AND invoice_date >= date('now', '-7 days') AND doc_type = 'NC'
+        GROUP BY day
+      )
       GROUP BY day
       ORDER BY day ASC
-    `).all(...params) as any[];
+    `).all(...[...params, ...params]) as any[];
 
-    // Sales by Establishment
+    // Sales by Establishment - Including Credit Notes
     const salesByEstablishment = db.prepare(`
-      SELECT s.name, SUM(t.total_amount) as total
-      FROM transactions t
-      JOIN establishments s ON t.establishment_id = s.id
-      WHERE s.owner_id = ?
-      GROUP BY s.id
+      SELECT name, SUM(total) as total FROM (
+        SELECT s.name, SUM(t.total_amount) as total
+        FROM transactions t
+        JOIN establishments s ON t.establishment_id = s.id
+        WHERE s.owner_id = ?
+        GROUP BY s.id
+        UNION ALL
+        SELECT s.name, SUM(-ci.total_amount) as total
+        FROM credit_invoices ci
+        JOIN establishments s ON ci.establishment_id = s.id
+        WHERE s.owner_id = ? AND ci.doc_type = 'NC'
+        GROUP BY s.id
+      )
+      GROUP BY name
       ORDER BY total DESC
-    `).all(ownerId) as any[];
+    `).all(ownerId, ownerId) as any[];
 
-    // Payment Methods Distribution
+    // Payment Methods Distribution - Including Credit Notes
     const paymentMethods = db.prepare(`
-      SELECT payment_method as name, SUM(total_amount) as value
-      FROM transactions
-      WHERE ${whereClause}
-      GROUP BY payment_method
-    `).all(...params) as any[];
+      SELECT name, SUM(value) as value FROM (
+        SELECT payment_method as name, SUM(total_amount) as value
+        FROM transactions
+        WHERE ${whereClause}
+        GROUP BY payment_method
+        UNION ALL
+        SELECT payment_method as name, SUM(-total_amount) as value
+        FROM credit_invoices
+        WHERE ${whereClause} AND doc_type = 'NC'
+        GROUP BY payment_method
+      )
+      GROUP BY name
+    `).all(...[...params, ...params]) as any[];
 
     // Financial Summary (Real values)
     const financialToday = db.prepare(`
@@ -4689,7 +4731,7 @@ async function startServer() {
 
     res.json({
       todaySales: financialToday?.income || 0,
-      todayCount: todaySales?.count || 0,
+      todayCount: todayCount,
       todayExpense: financialToday?.expense || 0,
       monthlySales: monthlyIncome,
       monthlyExpense: financialMonth?.expense || 0,
@@ -4948,8 +4990,10 @@ async function startServer() {
         SELECT total_amount as revenue, 1 as count FROM transactions WHERE establishment_id IN (${placeholders})
         UNION ALL
         SELECT total_amount as revenue, 1 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR')
+        UNION ALL
+        SELECT -total_amount as revenue, 0 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'
       )
-    `).get(...[...establishmentIds, ...establishmentIds]) as any;
+    `).get(...[...establishmentIds, ...establishmentIds, ...establishmentIds]) as any;
 
     // Revenue, Profit, and Comparison by Establishment
     const establishmentComparison = establishments.map(establishment => {
@@ -4958,8 +5002,10 @@ async function startServer() {
           SELECT total_amount as revenue, 1 as count FROM transactions WHERE establishment_id = ?
           UNION ALL
           SELECT total_amount as revenue, 1 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type IN ('FT', 'FR')
+          UNION ALL
+          SELECT -total_amount as revenue, 0 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type = 'NC'
         )
-      `).get(establishment.id, establishment.id) as any;
+      `).get(establishment.id, establishment.id, establishment.id) as any;
 
       const purchases = db.prepare(`
         SELECT SUM(total_amount) as total FROM purchases WHERE establishment_id = ?
@@ -5028,6 +5074,20 @@ async function startServer() {
 
     processItems(db.prepare(`SELECT items FROM transactions WHERE establishment_id IN (${placeholders})`).all(...establishmentIds));
     processItems(db.prepare(`SELECT items FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR')`).all(...establishmentIds));
+    
+    // Subtract items from Credit Notes (NC)
+    const ncRows = db.prepare(`SELECT items FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'`).all(...establishmentIds);
+    ncRows.forEach((t: any) => {
+      try {
+        const items = JSON.parse(t.items);
+        items.forEach((item: any) => {
+          const id = item.id || item.product_id || item.ProductCode;
+          if (!id || !productSales[id]) return;
+          productSales[id].quantity -= (Number(item.quantity) || 0);
+          productSales[id].revenue -= (Number(item.quantity) || 0) * (Number(item.price) || 0);
+        });
+      } catch (e) {}
+    });
 
     const topProducts = Object.values(productSales)
       .sort((a, b) => b.revenue - a.revenue)
@@ -5947,11 +6007,28 @@ async function startServer() {
       const year = new Date().getFullYear();
       const count = db.prepare("SELECT count(*) as count FROM proforma_invoices WHERE establishment_id = ? AND strftime('%Y', created_at) = ?").get(establishment_id, year.toString()) as any;
       const invoice_number = `PF ${year}/${(count.count + 1).toString().padStart(3, '0')}`;
+      const doc_type = 'PP';
+
+      // Digital Signature
+      const owner = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
+      const signatureData = DigitalSignatureService.signDocument(owner.owner_id, establishment_id, {
+        invoice_number,
+        doc_type,
+        client_name,
+        total_amount,
+        date: new Date().toISOString(),
+        items: JSON.stringify(items)
+      });
 
       const result = db.prepare(`
-        INSERT INTO proforma_invoices (establishment_id, owner_id, client_name, client_nif, client_address, total_amount, items, bank_accounts, invoice_number)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(establishment_id, owner_id, client_name, client_nif, client_address, total_amount, JSON.stringify(items), bank_accounts, invoice_number);
+        INSERT INTO proforma_invoices (
+          establishment_id, owner_id, client_name, client_nif, client_address, total_amount, items, bank_accounts, invoice_number,
+          hash, signature, prev_signature, key_version_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        establishment_id, owner_id, client_name, client_nif, client_address, total_amount, JSON.stringify(items), bank_accounts, invoice_number,
+        signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.key_version_id
+      );
       
       const newProforma = db.prepare("SELECT * FROM proforma_invoices WHERE id = ?").get(result.lastInsertRowid) as any;
       res.json({
@@ -5986,39 +6063,43 @@ async function startServer() {
     try {
       let finalInvoice: any = null;
       db.transaction(() => {
-        let finalSeries = providedSeries;
-        let finalNumber = providedNumber;
+        // Auto-generate series and number from the active series
+        const establishmentInfo = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
+        if (!establishmentInfo) throw new Error("Estabelecimento não encontrado.");
+        
+        const ownerInfo = db.prepare("SELECT billing_mode FROM users WHERE id = ?").get(establishmentInfo.owner_id) as any;
+        const billing_mode = (ownerInfo?.billing_mode === 'eletronica') ? 'eletronica' : 'tradicional';
+        const seriesPrefix = billing_mode === 'eletronica' ? 'E' : 'A';
 
-        // Auto-generate series and number if not provided
-        if (!finalSeries) {
-          finalSeries = new Date().getFullYear().toString();
+        // Ensure we find the active series for the current mode
+        let activeSeries = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = ? AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id, seriesPrefix) as any;
+        
+        if (!activeSeries) {
+          // Create a default series if none active
+          const seriesName = billing_mode === 'eletronica' ? 'Série Eletrónica' : 'Série Tradicional';
+          const info = db.prepare(`
+            INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, status, agt_status, is_electronic)
+            VALUES (?, ?, ?, 1, 0, 'active', 'aprovada', ?)
+          `).run(
+            establishment_id, seriesName, seriesPrefix, billing_mode === 'eletronica' ? 1 : 0
+          );
+          activeSeries = db.prepare("SELECT * FROM invoice_series WHERE id = ?").get(info.lastInsertRowid) as any;
         }
 
-        if (!finalNumber) {
-          const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
-          const owner = db.prepare("SELECT billing_mode FROM users WHERE id = ?").get(establishment.owner_id) as any;
-          const billing_mode = (owner?.billing_mode === 'eletronica') ? 'eletronica' : 'tradicional';
-          const seriesPrefix = billing_mode === 'eletronica' ? 'E' : 'A';
+        const year = new Date().getFullYear();
+        const nextNum = Math.max(activeSeries.current_number + 1, activeSeries.start_number);
+        const finalNumber = `${doc_type} ${activeSeries.prefix}/${year}/${nextNum.toString().padStart(4, '0')}`;
+        const finalSeries = activeSeries.name;
 
-          const lastInvoice = db.prepare(`
-            SELECT invoice_number FROM credit_invoices 
-            WHERE establishment_id = ? AND doc_type = ? AND series = ?
-            ORDER BY id DESC LIMIT 1
-          `).get(establishment_id, doc_type, finalSeries) as { invoice_number: string } | undefined;
-
-          let nextNum = 1;
-          if (lastInvoice) {
-            const lastNumMatch = lastInvoice.invoice_number.match(/\/(\d+)$/);
-            const lastNum = lastNumMatch ? parseInt(lastNumMatch[1]) : 0;
-            nextNum = lastNum + 1;
-          }
-          finalNumber = `${doc_type} ${seriesPrefix}/${finalSeries}/${nextNum.toString().padStart(4, '0')}`;
-        }
+        // Update active series
+        db.prepare("UPDATE invoice_series SET current_number = ? WHERE id = ?").run(nextNum, activeSeries.id);
 
         // Digital Signature
         const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
         const signatureData = DigitalSignatureService.signDocument(establishment.owner_id, establishment_id, {
           invoice_number: finalNumber,
+          doc_type,
+          client_name: client_name || 'Consumidor Final',
           total_amount,
           date: invoice_date || new Date().toISOString(),
           items: JSON.stringify(items)
@@ -6080,15 +6161,20 @@ async function startServer() {
           try {
             const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
             if (establishment) {
-              const finType = doc_type === 'NC' ? 'expense' : 'income';
-              const finCategory = doc_type === 'NC' ? 'Nota de Crédito (Venda)' : 
+              // NC (Credit Note) is recorded as negative income to correctly reflect net revenue
+              // instead of artificially increasing expenses (Saídas)
+              const isNC = doc_type === 'NC';
+              const finType = isNC ? 'income' : 'income'; // Both are income, but NC is negative
+              const finAmount = isNC ? -total_amount : total_amount;
+              const finCategory = isNC ? 'Nota de Crédito (Venda)' : 
                                   doc_type === 'RC' ? 'Recibo de Pagamento (FT)' : 'Venda Faturada';
+              
               db.prepare(`
                 INSERT INTO financial_transactions (
                   establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paid', ?)
               `).run(
-                establishment_id, establishment.owner_id, finType, finCategory, total_amount, payment_method || 'cash',
+                establishment_id, establishment.owner_id, finType, finCategory, finAmount, payment_method || 'cash',
                 `${finCategory} - Documento ${finalNumber}${parent_invoice_id ? ' (Ref: ' + parent_invoice_id + ')' : ''}`, 
                 new Date().toISOString(), invoiceId
               );

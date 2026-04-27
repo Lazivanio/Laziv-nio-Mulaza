@@ -5724,7 +5724,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                                             parent_invoice_id: inv.id.toString(),
                                             reason: request ? `${request.doc_type}: ${request.type.toUpperCase()} - ${request.reason}` : '',
                                             note_category: request?.doc_type === 'ND' ? 'price_correction' : (request?.type === 'cancel' ? 'correction' : 'return'),
-                                            adjustment_amount: request?.type === 'cancel' ? formatted.total_amount : (request ? request.amount : 0),
+                                            adjustment_amount: request?.type === 'cancel' ? 0 : (request ? request.amount : 0),
                                             observations: request ? `Solicitado por ${request.requested_by_name}` : '',
                                             due_date: new Date().toISOString().split('T')[0],
                                             service_designation: ''
