@@ -3194,6 +3194,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
   const [viewingSupplierHistory, setViewingSupplierHistory] = useState<any>(null);
   const [supplierHistory, setSupplierHistory] = useState<any[]>([]);
   const [invoiceTypeFilter, setInvoiceTypeFilter] = useState('ALL');
+  const [startDateFilter, setStartDateFilter] = useState('');
+  const [endDateFilter, setEndDateFilter] = useState('');
 
   const [purchases, setPurchases] = useState<any[]>([]);
   const [purchaseReturns, setPurchaseReturns] = useState<any[]>([]);
@@ -5306,25 +5308,15 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                                   <option value="RC">Recibo (RC)</option>
                                 </select>
                               </div>
-                              <div className="grid grid-cols-2 gap-2">
+                              <div className="grid grid-cols-1 gap-2">
                                 <div>
-                                  <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Série</label>
-                                  <input 
-                                    type="text"
-                                    value={creditInvoiceForm.series}
-                                    onChange={e => setCreditInvoiceForm({...creditInvoiceForm, series: e.target.value})}
-                                    placeholder="Auto"
-                                    className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded-lg outline-none focus:border-orange-500 text-xs"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Nº Fatura</label>
+                                  <label className="block text-[9px] font-bold text-zinc-500 uppercase mb-1">Nº Documento (Obrigatório)</label>
                                   <input 
                                     type="text"
                                     value={creditInvoiceForm.invoice_number}
                                     onChange={e => setCreditInvoiceForm({...creditInvoiceForm, invoice_number: e.target.value})}
                                     className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded-lg outline-none focus:border-orange-500 text-xs"
-                                    placeholder="Auto"
+                                    placeholder="Auto (Recomendado)"
                                   />
                                 </div>
                               </div>
@@ -5531,6 +5523,35 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                       ))}
                     </div>
                   </div>
+                  <div className="hidden md:flex items-center gap-4 border-l border-zinc-200 pl-4">
+                    <div className="flex flex-col">
+                      <p className="text-[8px] font-black text-zinc-400 uppercase tracking-widest mb-1">De:</p>
+                      <input 
+                        type="date"
+                        value={startDateFilter}
+                        onChange={(e) => setStartDateFilter(e.target.value)}
+                        className="bg-zinc-100 px-2 py-1.5 rounded-lg text-[10px] font-bold outline-none focus:ring-1 focus:ring-black"
+                      />
+                    </div>
+                    <div className="flex flex-col">
+                      <p className="text-[8px] font-black text-zinc-400 uppercase tracking-widest mb-1">Até:</p>
+                      <input 
+                        type="date"
+                        value={endDateFilter}
+                        onChange={(e) => setEndDateFilter(e.target.value)}
+                        className="bg-zinc-100 px-2 py-1.5 rounded-lg text-[10px] font-bold outline-none focus:ring-1 focus:ring-black"
+                      />
+                    </div>
+                    {(startDateFilter || endDateFilter) && (
+                      <button 
+                        onClick={() => { setStartDateFilter(''); setEndDateFilter(''); }}
+                        className="mt-4 p-1.5 text-zinc-400 hover:text-rose-600 transition-colors"
+                        title="Limpar Datas"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   <button 
@@ -5571,7 +5592,13 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                     </thead>
                     <tbody>
                       {creditInvoices
-                        .filter(inv => invoiceTypeFilter === 'ALL' || inv.doc_type === invoiceTypeFilter)
+                        .filter(inv => {
+                          const matchesType = invoiceTypeFilter === 'ALL' || inv.doc_type === invoiceTypeFilter;
+                          const invDate = inv.invoice_date.split('T')[0];
+                          const matchesStart = !startDateFilter || invDate >= startDateFilter;
+                          const matchesEnd = !endDateFilter || invDate <= endDateFilter;
+                          return matchesType && matchesStart && matchesEnd;
+                        })
                         .length === 0 ? (
                         <tr>
                           <td colSpan={9} className="p-16 text-center text-zinc-400 font-black uppercase tracking-widest text-[10px] italic">
@@ -5580,7 +5607,13 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                         </tr>
                       ) : (
                         creditInvoices
-                          .filter(inv => invoiceTypeFilter === 'ALL' || inv.doc_type === invoiceTypeFilter)
+                          .filter(inv => {
+                            const matchesType = invoiceTypeFilter === 'ALL' || inv.doc_type === invoiceTypeFilter;
+                            const invDate = inv.invoice_date.split('T')[0];
+                            const matchesStart = !startDateFilter || invDate >= startDateFilter;
+                            const matchesEnd = !endDateFilter || invDate <= endDateFilter;
+                            return matchesType && matchesStart && matchesEnd;
+                          })
                           .map((inv) => {
                             const request = cancellationRequests.find(r => r.invoice_id === inv.id);
                             return (
@@ -9614,17 +9647,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
 
             <div className="space-y-6">
               <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-100 pb-2">Dados do Documento</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Série</label>
-                  <input 
-                    type="text" 
-                    required
-                    value={formalInvoiceForm.series}
-                    onChange={e => setFormalInvoiceForm({...formalInvoiceForm, series: e.target.value})}
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black font-bold text-sm"
-                  />
-                </div>
+              <div className="grid grid-cols-1 gap-4">
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Tipo de Pagamento</label>
                   <select 
