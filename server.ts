@@ -2757,22 +2757,29 @@ async function startServer() {
   };
 
   app.get("/api/owner/establishments/:ownerId", (req, res) => {
-    const { establishmentIds } = getContextData(req.params.ownerId);
-    if (establishmentIds.length === 0) return res.json([]);
+    try {
+      const { establishmentIds } = getContextData(req.params.ownerId);
+      if (establishmentIds.length === 0) return res.json([]);
 
-    const placeholders = establishmentIds.map(() => '?').join(',');
-    const establishments = db.prepare(`
-      SELECT e.*, 
-        (SELECT count(*) FROM staff st WHERE st.establishment_id = e.id) as staff_count,
-        (SELECT SUM(total_amount) FROM transactions t WHERE t.establishment_id = e.id AND date(t.timestamp) = date('now')) as today_sales
-      FROM establishments e 
-      WHERE e.id IN (${placeholders})
-    `).all(...establishmentIds) as any[];
-    
-    res.json(establishments.map(e => ({
-      ...e,
-      bank_accounts: e.bank_accounts ? (typeof e.bank_accounts === 'string' ? JSON.parse(e.bank_accounts) : e.bank_accounts) : []
-    })));
+      const placeholders = establishmentIds.map(() => '?').join(',');
+      const establishments = db.prepare(`
+        SELECT e.*, 
+          (SELECT count(*) FROM staff st WHERE st.establishment_id = e.id) as staff_count,
+          (SELECT SUM(total_amount) FROM transactions t WHERE t.establishment_id = e.id AND date(t.timestamp) = date('now')) as today_sales
+        FROM establishments e 
+        WHERE e.id IN (${placeholders})
+      `).all(...establishmentIds) as any[];
+      
+      res.json(establishments.map(e => ({
+        ...e,
+        bank_accounts: e.bank_accounts ? (typeof e.bank_accounts === 'string' ? (function() {
+          try { return JSON.parse(e.bank_accounts); } catch(err) { return []; }
+        })() : e.bank_accounts) : []
+      })));
+    } catch (error: any) {
+      console.error("Error in GET /api/owner/establishments/:ownerId:", error);
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.post("/api/owner/establishments", (req, res) => {

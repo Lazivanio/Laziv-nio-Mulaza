@@ -92,6 +92,7 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
       setEstablishments(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching establishments:', error);
+      alert("Erro ao carregar estabelecimentos. Verifique sua conexão ou tente novamente.");
     }
   };
 

@@ -89,6 +89,7 @@ export const MyEstablishments = ({ user }: { user: User }) => {
       })
       .catch(err => {
         console.error("Error fetching establishments:", err);
+        alert("Erro ao carregar estabelecimentos. Verifique sua conexão ou tente novamente.");
         setEstablishments([]);
       });
   };
