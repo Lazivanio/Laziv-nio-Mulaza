@@ -2819,8 +2819,7 @@ async function startServer() {
         SELECT 
           (
             COALESCE((SELECT SUM(total_amount) FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?), 0) +
-            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?), 0) -
-            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) = ?), 0)
+            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?), 0)
           ) as today_sales,
           (
             COALESCE((SELECT COUNT(*) FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?), 0) +
@@ -2832,7 +2831,6 @@ async function startServer() {
         ...establishmentIds, today, 
         ...establishmentIds, today,
         ...establishmentIds, today,
-        ...establishmentIds, today,
         ...establishmentIds, today
       ) as any;
 
@@ -2840,10 +2838,9 @@ async function startServer() {
         SELECT 
           (
             COALESCE((SELECT SUM(total_amount) FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ?), 0) +
-            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) >= ?), 0) -
-            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) >= ?), 0)
+            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) >= ?), 0)
           ) as monthly_sales
-      `).get(...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart) as any;
+      `).get(...establishmentIds, monthStart, ...establishmentIds, monthStart) as any;
 
       const lowStockCount = db.prepare(`SELECT COUNT(*) as count FROM products WHERE establishment_id IN (${placeholders}) AND stock <= min_stock`).get(...establishmentIds) as any;
       const staffCount = db.prepare(`SELECT COUNT(*) as count FROM staff WHERE establishment_id IN (${placeholders})`).get(...establishmentIds) as any;
@@ -4076,8 +4073,7 @@ async function startServer() {
         (SELECT COUNT(*) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR', 'NC', 'ND')) as total_transactions,
         
         COALESCE((SELECT SUM(total_amount) FROM transactions WHERE establishment_id = ? AND date(timestamp) = date('now')), 0) +
-        COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR', 'ND')), 0) -
-        COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type = 'NC'), 0) as total_revenue,
+        COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR', 'ND')), 0) as total_revenue,
         
         (SELECT COUNT(DISTINCT seller_id) FROM transactions WHERE establishment_id = ? AND date(timestamp) = date('now')) as active_sellers
     `).get(establishmentId, establishmentId, establishmentId, establishmentId, establishmentId, establishmentId) as any;
@@ -4787,12 +4783,11 @@ async function startServer() {
       params = [...establishmentIds];
     }
     
-    // Sales of the day (Transactions - Credit Invoices for NC)
+    // Sales of the day (Transactions)
     const todaySales = db.prepare(`
       SELECT 
-        (SELECT COUNT(*) FROM transactions WHERE ${whereClause} AND date(timestamp) = date('now')) -
-        (SELECT COUNT(*) FROM credit_invoices WHERE ${whereClause} AND date(invoice_date) = date('now') AND doc_type = 'NC') as count
-    `).get(...[...params, ...params]) as any;
+        (SELECT COUNT(*) FROM transactions WHERE ${whereClause} AND date(timestamp) = date('now')) as count
+    `).get(...params) as any;
 
     const todayCount = Math.max(0, todaySales?.count || 0);
 
@@ -4848,22 +4843,17 @@ async function startServer() {
       LIMIT 5
     `).all(...params) as any[];
 
-    // Sales by Day (Last 7 days) - Including Credit Notes as negative revenue
+    // Sales by Day (Last 7 days)
     const salesByDay = db.prepare(`
       SELECT day, SUM(total) as total FROM (
         SELECT date(timestamp) as day, SUM(total_amount) as total
         FROM transactions
         WHERE ${whereClause} AND timestamp >= date('now', '-7 days')
         GROUP BY day
-        UNION ALL
-        SELECT date(invoice_date) as day, SUM(-total_amount) as total
-        FROM credit_invoices
-        WHERE ${whereClause} AND invoice_date >= date('now', '-7 days') AND doc_type = 'NC'
-        GROUP BY day
       )
       GROUP BY day
       ORDER BY day ASC
-    `).all(...[...params, ...params]) as any[];
+    `).all(...params) as any[];
 
     // Sales by Establishment - Including Credit Notes
     const salesByEstablishment = db.prepare(`
@@ -4891,14 +4881,9 @@ async function startServer() {
         FROM transactions
         WHERE ${whereClause}
         GROUP BY payment_method
-        UNION ALL
-        SELECT payment_method as name, SUM(-total_amount) as value
-        FROM credit_invoices
-        WHERE ${whereClause} AND doc_type = 'NC'
-        GROUP BY payment_method
       )
       GROUP BY name
-    `).all(...[...params, ...params]) as any[];
+    `).all(...params) as any[];
 
     // Financial Summary (Real values)
     const financialToday = db.prepare(`
@@ -5192,10 +5177,8 @@ async function startServer() {
         SELECT total_amount as revenue, 1 as count FROM transactions WHERE establishment_id IN (${placeholders})
         UNION ALL
         SELECT total_amount as revenue, 1 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR')
-        UNION ALL
-        SELECT -total_amount as revenue, 0 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'
       )
-    `).get(...[...establishmentIds, ...establishmentIds, ...establishmentIds]) as any;
+    `).get(...[...establishmentIds, ...establishmentIds]) as any;
 
     // Revenue, Profit, and Comparison by Establishment
     const establishmentComparison = establishments.map(establishment => {
@@ -5204,10 +5187,8 @@ async function startServer() {
           SELECT total_amount as revenue, 1 as count FROM transactions WHERE establishment_id = ?
           UNION ALL
           SELECT total_amount as revenue, 1 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type IN ('FT', 'FR')
-          UNION ALL
-          SELECT -total_amount as revenue, 0 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type = 'NC'
         )
-      `).get(establishment.id, establishment.id, establishment.id) as any;
+      `).get(establishment.id, establishment.id) as any;
 
       const purchases = db.prepare(`
         SELECT SUM(total_amount) as total FROM purchases WHERE establishment_id = ?
@@ -6363,12 +6344,12 @@ async function startServer() {
           try {
             const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
             if (establishment) {
-              // NC (Credit Note) is recorded as negative income to correctly reflect net revenue
-              // instead of artificially increasing expenses (Saídas)
+              // NC (Credit Note) is recorded as expense to correctly reflect outflows (Saídas)
+              // This ensures that the user sees the refund in the Saídas section
               const isNC = doc_type === 'NC';
-              const finType = isNC ? 'income' : 'income'; // Both are income, but NC is negative
-              const finAmount = isNC ? -total_amount : total_amount;
-              const finCategory = isNC ? 'Anulação/NC (Venda)' : 
+              const finType = isNC ? 'expense' : 'income';
+              const finAmount = total_amount; // Always positive amount, type determines direction
+              const finCategory = isNC ? 'Nota de Crédito (Saída)' : 
                                   doc_type === 'RC' ? 'Recibo de Pagamento (FT)' : 'Venda Faturada';
               
               db.prepare(`
