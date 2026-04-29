@@ -74,11 +74,15 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
   // Invoice Series State
   const [series, setSeries] = useState<any[]>([]);
   const [isSeriesModalOpen, setIsSeriesModalOpen] = useState(false);
+  const [isRequestingSeries, setIsRequestingSeries] = useState(false);
   const [seriesFormData, setSeriesFormData] = useState({
     establishment_id: '',
     name: '',
     prefix: '',
-    start_number: '1'
+    start_number: '1',
+    fiscal_year: new Date().getFullYear(),
+    request_reason: 'Nova série anual',
+    type: 'FR'
   });
 
   // Taxes State
@@ -242,14 +246,48 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
   const handleCreateSeries = async (e: FormEvent) => {
     e.preventDefault();
     try {
+      const isElectronic = user.billing_mode === 'eletronica';
+      
+      if (isElectronic) {
+        setIsRequestingSeries(true);
+      }
+
       const res = await fetch('/api/owner/invoice-series', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(seriesFormData)
       });
+      
       if (res.ok) {
+        const data = await res.json();
+        
+        if (isElectronic && data.id) {
+          // Wait 3 seconds to simulate AGT response
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          const approveRes = await fetch(`/api/owner/invoice-series/${data.id}/request-approval`, {
+            method: 'POST'
+          });
+          
+          if (approveRes.ok) {
+            setNotification({ type: 'success', message: "Série solicitada e aprovada pela AGT!" });
+          } else {
+            setNotification({ type: 'error', message: "Erro ao obter resposta da AGT" });
+          }
+        } else {
+          setNotification({ type: 'success', message: "Série criada com sucesso!" });
+        }
+        
         setIsSeriesModalOpen(false);
-        setNotification({ type: 'success', message: "Série criada com sucesso!" });
+        setSeriesFormData({
+          establishment_id: '',
+          name: '',
+          prefix: '',
+          start_number: '1',
+          fiscal_year: new Date().getFullYear(),
+          request_reason: 'Nova série anual',
+          type: 'FR'
+        });
         fetchData();
       } else {
         const errorData = await res.json();
@@ -258,6 +296,8 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
     } catch (e) { 
       console.error(e);
       setNotification({ type: 'error', message: "Erro de conexão ao criar série" });
+    } finally {
+      setIsRequestingSeries(false);
     }
   };
 
@@ -1031,12 +1071,14 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
               className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-2xl font-bold hover:bg-zinc-800 transition-all active:scale-95"
             >
               <Plus size={20} />
-              Nova Série
+              {user.billing_mode === 'eletronica' ? 'Solicitar Série' : 'Nova Série'}
             </button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {series.map(s => (
+            {series
+              .filter(s => user.billing_mode !== 'eletronica' || s.agt_status === 'aprovada')
+              .map(s => (
               <Card key={s.id} className={cn("p-6 space-y-4", s.status === 'inactive' && "opacity-60")}>
                 <div className="flex justify-between items-start">
                   <div className="p-3 bg-zinc-100 rounded-xl">
@@ -1453,7 +1495,7 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
       <Modal 
         isOpen={isSeriesModalOpen} 
         onClose={() => setIsSeriesModalOpen(false)} 
-        title="Nova Série de Faturas"
+        title={user.billing_mode === 'eletronica' ? "Solicitar Nova Série" : "Nova Série de Faturas"}
       >
         <form onSubmit={handleCreateSeries} className="space-y-6">
           <div className="space-y-4">
@@ -1481,17 +1523,79 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
                 placeholder="Ex: Geral 2026"
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Prefixo</label>
-                <input 
-                  type="text" required
-                  value={seriesFormData.prefix}
-                  onChange={e => setSeriesFormData({...seriesFormData, prefix: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
-                  placeholder="Ex: FT, FR, NC"
-                />
+
+            {user.billing_mode === 'eletronica' && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Tipo de Série</label>
+                  <select 
+                    required
+                    value={seriesFormData.type}
+                    onChange={e => setSeriesFormData({...seriesFormData, type: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                  >
+                    <option value="FR">Fatura Recibo (FR)</option>
+                    <option value="FT">Fatura (FT)</option>
+                    <option value="RC">Recibo (RC)</option>
+                    <option value="FP">Fatura Proforma (FP)</option>
+                    <option value="NC">Nota de Crédito (NC)</option>
+                    <option value="ND">Nota de Débito (ND)</option>
+                    <option value="OR">Orçamento (OR)</option>
+                    <option value="PP">Pedido de Preço (PP)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Ano Fiscal</label>
+                  <input 
+                    type="number" required readOnly
+                    value={seriesFormData.fiscal_year}
+                    className="w-full px-4 py-3 bg-zinc-100 border border-zinc-100 rounded-xl text-sm outline-none cursor-not-allowed"
+                  />
+                </div>
               </div>
+            )}
+
+            {user.billing_mode === 'eletronica' && (
+              <div>
+                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Motivo do Pedido</label>
+                <select 
+                  required
+                  value={seriesFormData.request_reason}
+                  onChange={e => setSeriesFormData({...seriesFormData, request_reason: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                >
+                  <option value="Nova série anual">Nova série anual</option>
+                  <option value="Esgotamento da série anterior">Esgotamento da série anterior</option>
+                  <option value="Novo posto de faturação">Novo posto de faturação</option>
+                </select>
+              </div>
+            )}
+
+            {user.billing_mode !== 'eletronica' && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Prefixo</label>
+                  <input 
+                    type="text" required
+                    value={seriesFormData.prefix}
+                    onChange={e => setSeriesFormData({...seriesFormData, prefix: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                    placeholder="Ex: FT, FR, NC"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nº Inicial</label>
+                  <input 
+                    type="number" required min="1"
+                    value={seriesFormData.start_number}
+                    onChange={e => setSeriesFormData({...seriesFormData, start_number: e.target.value})}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                  />
+                </div>
+              </div>
+            )}
+
+            {user.billing_mode === 'eletronica' && (
               <div>
                 <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nº Inicial</label>
                 <input 
@@ -1501,13 +1605,21 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
                   className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
                 />
               </div>
-            </div>
+            )}
           </div>
           <button 
             type="submit"
-            className="w-full py-4 bg-black text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all shadow-lg active:scale-95"
+            disabled={isRequestingSeries}
+            className="w-full py-4 bg-black text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
           >
-            Criar Série
+            {isRequestingSeries ? (
+              <>
+                <RefreshCw size={20} className="animate-spin" />
+                Comunicando com AGT...
+              </>
+            ) : (
+              user.billing_mode === 'eletronica' ? 'Solicitar Série' : 'Criar Série'
+            )}
           </button>
         </form>
       </Modal>

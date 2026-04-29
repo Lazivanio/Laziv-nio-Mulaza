@@ -150,12 +150,30 @@ export const OwnerRH = ({ user }: { user: User }) => {
         fetch(`/api/owner/establishments/${user.id}`)
       ]);
 
-      if (empRes.ok) setEmployees(await empRes.json());
-      if (rolesRes.ok) setRoles(await rolesRes.json());
-      if (salRes.ok) setSalaries(await salRes.json());
-      if (salPayRes.ok) setSalaryPayments(await salPayRes.json());
-      if (attRes.ok) setAttendance(await attRes.json());
-      if (vacRes.ok) setVacations(await vacRes.json());
+      if (empRes.ok) {
+        const data = await empRes.json();
+        setEmployees(Array.isArray(data) ? data : []);
+      }
+      if (rolesRes.ok) {
+        const data = await rolesRes.json();
+        setRoles(Array.isArray(data) ? data : []);
+      }
+      if (salRes.ok) {
+        const data = await salRes.json();
+        setSalaries(Array.isArray(data) ? data : []);
+      }
+      if (salPayRes.ok) {
+        const data = await salPayRes.json();
+        setSalaryPayments(Array.isArray(data) ? data : []);
+      }
+      if (attRes.ok) {
+        const data = await attRes.json();
+        setAttendance(Array.isArray(data) ? data : []);
+      }
+      if (vacRes.ok) {
+        const data = await vacRes.json();
+        setVacations(Array.isArray(data) ? data : []);
+      }
       if (establishmentsRes.ok) {
         const data = await establishmentsRes.json();
         setEstablishments(Array.isArray(data) ? data : []);

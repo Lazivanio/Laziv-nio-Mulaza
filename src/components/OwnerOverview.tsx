@@ -88,6 +88,7 @@ export const OwnerOverview = ({ user }: { user: User }) => {
   const [stats, setStats] = useState<any>({ 
     todaySales: 0, 
     todayCount: 0,
+    todayExpense: 0,
     monthlySales: 0,
     lowStockCount: 0, 
     staffCount: 0,
@@ -108,7 +109,17 @@ export const OwnerOverview = ({ user }: { user: User }) => {
       fetch(`/api/owner/dashboard-stats/all?ownerId=${user.id}`).then(res => res.json()),
       fetch(`/api/owner/establishments/${user.id}`).then(res => res.json())
     ]).then(([statsData, establishmentsData]) => {
-      setStats(statsData);
+      if (statsData && !statsData.error) {
+        setStats((prev: any) => ({
+          ...prev,
+          ...statsData,
+          topProducts: Array.isArray(statsData.topProducts) ? statsData.topProducts : prev.topProducts,
+          recentTransactions: Array.isArray(statsData.recentTransactions) ? statsData.recentTransactions : prev.recentTransactions,
+          salesByDay: Array.isArray(statsData.salesByDay) ? statsData.salesByDay : prev.salesByDay,
+          salesByEstablishment: Array.isArray(statsData.salesByEstablishment) ? statsData.salesByEstablishment : prev.salesByEstablishment,
+          paymentMethods: Array.isArray(statsData.paymentMethods) ? statsData.paymentMethods : prev.paymentMethods
+        }));
+      }
       setEstablishments(Array.isArray(establishmentsData) ? establishmentsData : []);
       setLoading(false);
     }).catch(err => {

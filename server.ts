@@ -398,6 +398,9 @@ db.exec(`
     status TEXT DEFAULT 'active', -- 'active', 'inactive'
     agt_status TEXT DEFAULT 'aprovada', -- 'pendente', 'aprovada', 'rejeitada'
     is_electronic INTEGER DEFAULT 0,
+    fiscal_year INTEGER,
+    request_reason TEXT,
+    type TEXT DEFAULT 'FR',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(establishment_id) REFERENCES establishments(id)
   );
@@ -902,6 +905,15 @@ try {
   }
   if (!seriesColumns.some(col => col.name === 'is_electronic')) {
     db.exec("ALTER TABLE invoice_series ADD COLUMN is_electronic INTEGER DEFAULT 0");
+  }
+  if (!seriesColumns.some(col => col.name === 'fiscal_year')) {
+    db.exec("ALTER TABLE invoice_series ADD COLUMN fiscal_year INTEGER");
+  }
+  if (!seriesColumns.some(col => col.name === 'request_reason')) {
+    db.exec("ALTER TABLE invoice_series ADD COLUMN request_reason TEXT");
+  }
+  if (!seriesColumns.some(col => col.name === 'type')) {
+    db.exec("ALTER TABLE invoice_series ADD COLUMN type TEXT DEFAULT 'FR'");
   }
   if (!serviceColumns.some(col => col.name === 'retention_percentage')) {
     db.exec("ALTER TABLE services ADD COLUMN retention_percentage REAL DEFAULT 0");
@@ -2751,7 +2763,11 @@ async function startServer() {
 
 
   // Helper to get establishment IDs and effective owner ID based on user role
-  const getContextData = (userId: string | number) => {
+  const getContextData = (rawUserId: string | number) => {
+    if (!rawUserId || rawUserId === 'undefined') return { establishmentIds: [], ownerId: null };
+    const userId = Number(rawUserId);
+    if (isNaN(userId)) return { establishmentIds: [], ownerId: null };
+
     const userResult = db.prepare("SELECT role, establishment_id FROM users WHERE id = ?").get(userId) as any;
     if (!userResult) return { establishmentIds: [], ownerId: null };
     
@@ -2759,7 +2775,7 @@ async function startServer() {
       const establishments = db.prepare("SELECT id FROM establishments WHERE owner_id = ?").all(userId) as any[];
       return { 
         establishmentIds: establishments.map(e => e.id), 
-        ownerId: Number(userId) 
+        ownerId: userId 
       };
     } else if (userResult.role === 'manager' && userResult.establishment_id) {
       const est = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(userResult.establishment_id) as any;
@@ -2770,6 +2786,178 @@ async function startServer() {
     }
     return { establishmentIds: [], ownerId: null };
   };
+
+  app.get("/api/owner/dashboard-stats/all", (req, res) => {
+    try {
+      const ownerId = req.query.ownerId as string;
+      const { establishmentIds, ownerId: resolvedOwnerId } = getContextData(ownerId);
+      
+      if (establishmentIds.length === 0 || !resolvedOwnerId) {
+        return res.json({ 
+          todaySales: 0, 
+          todayCount: 0, 
+          todayExpense: 0, 
+          monthlySales: 0, 
+          lowStockCount: 0, 
+          staffCount: 0, 
+          topProducts: [], 
+          recentTransactions: [], 
+          salesByDay: [], 
+          salesByEstablishment: [], 
+          paymentMethods: [], 
+          totalExpenses: 0,
+          financialHealth: { enabled: false, enoughForSalaries: false, totalSalaries: 0, monthlyIncome: 0 }
+        });
+      }
+
+      const placeholders = establishmentIds.map(() => '?').join(',');
+      const today = new Date().toISOString().split('T')[0];
+      const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+
+      // Stats
+      const todayStats = db.prepare(`
+        SELECT 
+          (
+            COALESCE((SELECT SUM(total_amount) FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?), 0) +
+            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?), 0) -
+            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) = ?), 0)
+          ) as today_sales,
+          (
+            COALESCE((SELECT COUNT(*) FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?), 0) +
+            COALESCE((SELECT COUNT(*) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?), 0)
+          ) as today_count,
+          COALESCE((SELECT SUM(amount) FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND date(date) = ?), 0) as today_expense
+      `).get(
+        ...establishmentIds, today, 
+        ...establishmentIds, today, 
+        ...establishmentIds, today,
+        ...establishmentIds, today,
+        ...establishmentIds, today,
+        ...establishmentIds, today
+      ) as any;
+
+      const monthlySales = db.prepare(`
+        SELECT 
+          (
+            COALESCE((SELECT SUM(total_amount) FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ?), 0) +
+            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) >= ?), 0) -
+            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) >= ?), 0)
+          ) as monthly_sales
+      `).get(...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart) as any;
+
+      const lowStockCount = db.prepare(`SELECT COUNT(*) as count FROM products WHERE establishment_id IN (${placeholders}) AND stock <= min_stock`).get(...establishmentIds) as any;
+      const staffCount = db.prepare(`SELECT COUNT(*) as count FROM staff WHERE establishment_id IN (${placeholders})`).get(...establishmentIds) as any;
+      const totalExpenses = db.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND date >= ?`).get(...establishmentIds, monthStart) as any;
+      
+      // Financial Health check (Salaries vs Income)
+      const salarySettings = db.prepare("SELECT financial_reminder_enabled FROM owner_settings WHERE owner_id = ?").get(resolvedOwnerId) as any;
+      let financialHealth = { enabled: !!salarySettings?.financial_reminder_enabled, enoughForSalaries: false, totalSalaries: 0, monthlyIncome: monthlySales.monthly_sales };
+      
+      if (financialHealth.enabled) {
+        const totalSalaries = db.prepare(`SELECT SUM(salary) as total FROM staff WHERE establishment_id IN (${placeholders})`).get(...establishmentIds) as any;
+        financialHealth.totalSalaries = totalSalaries?.total || 0;
+        financialHealth.enoughForSalaries = (monthlySales.monthly_sales || 0) >= financialHealth.totalSalaries;
+      }
+
+      const topProducts = db.prepare(`
+        SELECT name, SUM(quantity) as total_qty FROM (
+          SELECT p.name, SUM(CAST(JSON_EXTRACT(ti_json.value, '$.quantity') AS REAL)) as quantity
+          FROM transactions t
+          JOIN json_each(t.items) as ti_json
+          JOIN products p ON JSON_EXTRACT(ti_json.value, '$.id') = p.id
+          WHERE t.establishment_id IN (${placeholders})
+          GROUP BY p.id
+          UNION ALL
+          SELECT p.name, SUM(-CAST(JSON_EXTRACT(cii_json.value, '$.quantity') AS REAL)) as quantity
+          FROM credit_invoices ci
+          JOIN json_each(ci.items) as cii_json
+          JOIN products p ON JSON_EXTRACT(cii_json.value, '$.id') = p.id
+          WHERE ci.establishment_id IN (${placeholders}) AND ci.doc_type = 'NC'
+          GROUP BY p.id
+        )
+        GROUP BY name
+        ORDER BY total_qty DESC
+        LIMIT 5
+      `).all(...establishmentIds, ...establishmentIds) as any[];
+
+      const recentTransactions = db.prepare(`
+        SELECT t.*, s.name as establishment_name
+        FROM transactions t
+        JOIN establishments s ON t.establishment_id = s.id
+        WHERE t.establishment_id IN (${placeholders})
+        ORDER BY t.timestamp DESC
+        LIMIT 5
+      `).all(...establishmentIds);
+
+      const salesByDay = db.prepare(`
+        SELECT day, SUM(total) as total FROM (
+          SELECT date(timestamp) as day, SUM(total_amount) as total
+          FROM transactions
+          WHERE establishment_id IN (${placeholders}) AND timestamp >= date('now', '-7 days')
+          GROUP BY day
+          UNION ALL
+          SELECT date(invoice_date) as day, SUM(-total_amount) as total
+          FROM credit_invoices
+          WHERE establishment_id IN (${placeholders}) AND invoice_date >= date('now', '-7 days') AND doc_type = 'NC'
+          GROUP BY day
+        )
+        GROUP BY day
+        ORDER BY day ASC
+      `).all(...establishmentIds, ...establishmentIds);
+
+      const salesByEstablishment = db.prepare(`
+        SELECT name, SUM(total) as total FROM (
+          SELECT s.name, SUM(t.total_amount) as total
+          FROM transactions t
+          JOIN establishments s ON t.establishment_id = s.id
+          WHERE s.owner_id = ?
+          GROUP BY s.id
+          UNION ALL
+          SELECT s.name, SUM(-ci.total_amount) as total
+          FROM credit_invoices ci
+          JOIN establishments s ON ci.establishment_id = s.id
+          WHERE s.owner_id = ? AND ci.doc_type = 'NC'
+          GROUP BY s.id
+        )
+        GROUP BY name
+        ORDER BY total DESC
+      `).all(resolvedOwnerId, resolvedOwnerId);
+
+      const paymentMethods = db.prepare(`
+        SELECT name, SUM(value) as value FROM (
+          SELECT payment_method as name, SUM(total_amount) as value
+          FROM transactions
+          WHERE establishment_id IN (${placeholders})
+          GROUP BY payment_method
+          UNION ALL
+          SELECT payment_method as name, SUM(-total_amount) as value
+          FROM credit_invoices
+          WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'
+          GROUP BY payment_method
+        )
+        GROUP BY name
+      `).all(...establishmentIds, ...establishmentIds);
+
+      res.json({
+        todaySales: todayStats.today_sales,
+        todayCount: todayStats.today_count,
+        todayExpense: todayStats.today_expense,
+        monthlySales: monthlySales.monthly_sales,
+        lowStockCount: lowStockCount.count,
+        staffCount: staffCount.count,
+        topProducts,
+        recentTransactions,
+        salesByDay,
+        salesByEstablishment,
+        paymentMethods,
+        totalExpenses: totalExpenses.total,
+        financialHealth
+      });
+    } catch (error: any) {
+      console.error("Error in dashboard stats:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   app.get("/api/owner/establishments/:ownerId", (req, res) => {
     try {
@@ -4578,7 +4766,21 @@ async function startServer() {
     if (establishmentId === 'all' && ownerId) {
       const { establishmentIds } = getContextData(ownerId as string);
       if (establishmentIds.length === 0) {
-        return res.json({ todaySales: 0, todayCount: 0, monthlySales: 0, lowStockCount: 0, staffCount: 0, topProducts: [], recentTransactions: [], salesByDay: [], salesByEstablishment: [], paymentMethods: [], totalExpenses: 0 });
+        return res.json({ 
+          todaySales: 0, 
+          todayCount: 0, 
+          todayExpense: 0,
+          monthlySales: 0, 
+          lowStockCount: 0, 
+          staffCount: 0, 
+          topProducts: [], 
+          recentTransactions: [], 
+          salesByDay: [], 
+          salesByEstablishment: [], 
+          paymentMethods: [], 
+          totalExpenses: 0,
+          financialHealth: { enabled: false, enoughForSalaries: false, totalSalaries: 0, monthlyIncome: 0 }
+        });
       }
       const placeholders = establishmentIds.map(() => '?').join(',');
       whereClause = `establishment_id IN (${placeholders})`;
@@ -6166,7 +6368,7 @@ async function startServer() {
               const isNC = doc_type === 'NC';
               const finType = isNC ? 'income' : 'income'; // Both are income, but NC is negative
               const finAmount = isNC ? -total_amount : total_amount;
-              const finCategory = isNC ? 'Nota de Crédito (Venda)' : 
+              const finCategory = isNC ? 'Anulação/NC (Venda)' : 
                                   doc_type === 'RC' ? 'Recibo de Pagamento (FT)' : 'Venda Faturada';
               
               db.prepare(`
@@ -6286,7 +6488,7 @@ async function startServer() {
   });
 
   app.post("/api/owner/invoice-series", (req, res) => {
-    const { establishment_id, name, prefix: providedPrefix, start_number } = req.body;
+    const { establishment_id, name, prefix: providedPrefix, start_number, fiscal_year, request_reason, type } = req.body;
     
     // Force prefix based on billing mode
     const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
@@ -6294,11 +6496,13 @@ async function startServer() {
     const billing_mode = (owner?.billing_mode === 'eletronica') ? 'eletronica' : 'tradicional';
     const forcedPrefix = billing_mode === 'eletronica' ? 'E' : 'A';
     
-    db.prepare(`
-      INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, agt_status, is_electronic)
-      VALUES (?, ?, ?, ?, ?, 'aprovada', ?)
-    `).run(establishment_id, name, forcedPrefix, start_number, 0, billing_mode === 'eletronica' ? 1 : 0);
-    res.json({ success: true });
+    const agt_status = billing_mode === 'eletronica' ? 'pendente' : 'aprovada';
+    
+    const result = db.prepare(`
+      INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, agt_status, is_electronic, fiscal_year, request_reason, type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(establishment_id, name, forcedPrefix, start_number, 0, agt_status, billing_mode === 'eletronica' ? 1 : 0, fiscal_year, request_reason, type || 'FR');
+    res.json({ success: true, id: result.lastInsertRowid });
   });
 
   app.put("/api/owner/invoice-series/:id/status", (req, res) => {

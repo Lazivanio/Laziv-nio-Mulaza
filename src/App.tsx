@@ -657,15 +657,15 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
         responses.map(r => r.json())
       );
 
-      setDashboardData(dashData);
-      setClients(clientsData);
-      setLicenses(licensesData);
-      setTickets(ticketsData);
-      setMonitoring(monitoringData);
-      setPlans(plansData);
-      setReportsData(reportsData);
-      setSystemSettings(settingsData);
-      setFinanceData(financeData);
+      setDashboardData(dashData || { stats: {}, recentClients: [] });
+      setClients(Array.isArray(clientsData) ? clientsData : []);
+      setLicenses(Array.isArray(licensesData) ? licensesData : []);
+      setTickets(Array.isArray(ticketsData) ? ticketsData : []);
+      setMonitoring(monitoringData || { stats: {}, recentActivity: [], systemAlerts: [], memory: {}, uptime: 0 });
+      setPlans(Array.isArray(plansData) ? plansData : []);
+      setReportsData(reportsData || { revenueByMonth: [], clientGrowth: [], licensesByPlan: [], ticketsByStatus: [] });
+      setSystemSettings(settingsData || {});
+      setFinanceData(financeData || { payments: [], stats: {}, pendingPayments: [], reports: {}, methods: [] });
     } catch (e: any) {
       console.error("Error fetching admin data", e);
       setError(e.message);
