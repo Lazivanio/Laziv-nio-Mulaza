@@ -1076,24 +1076,27 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {series
-              .filter(s => user.billing_mode !== 'eletronica' || s.agt_status === 'aprovada')
-              .map(s => (
-              <Card key={s.id} className={cn("p-6 space-y-4", s.status === 'inactive' && "opacity-60")}>
+            {series.map(s => (
+              <Card key={s.id} className={cn("p-6 space-y-4 shadow-sm", s.status === 'inactive' && "opacity-60")}>
                 <div className="flex justify-between items-start">
-                  <div className="p-3 bg-zinc-100 rounded-xl">
-                    <FileText size={24} />
+                  <div className={cn(
+                    "p-3 rounded-xl",
+                    s.agt_status === 'aprovada' ? "bg-zinc-100" : "bg-amber-50 text-amber-600"
+                  )}>
+                    {s.agt_status === 'aprovada' ? <FileText size={24} /> : <Clock size={24} />}
                   </div>
                   <div className="flex gap-2">
-                    <button 
-                      onClick={() => handleToggleSeries(s.id, s.status)}
-                      className={cn(
-                        "p-2 rounded-lg transition-all",
-                        s.status === 'active' ? "text-amber-500 hover:bg-amber-50" : "text-emerald-500 hover:bg-emerald-50"
-                      )}
-                    >
-                      {s.status === 'active' ? <XCircle size={18} /> : <CheckCircle2 size={18} />}
-                    </button>
+                    {s.agt_status === 'aprovada' && (
+                      <button 
+                        onClick={() => handleToggleSeries(s.id, s.status)}
+                        className={cn(
+                          "p-2 rounded-lg transition-all",
+                          s.status === 'active' ? "text-amber-500 hover:bg-amber-50" : "text-emerald-500 hover:bg-emerald-50"
+                        )}
+                      >
+                        {s.status === 'active' ? <XCircle size={18} /> : <CheckCircle2 size={18} />}
+                      </button>
+                    )}
                     <button 
                       onClick={() => handleDeleteSeries(s.id)}
                       className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
@@ -1105,14 +1108,20 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-[10px] font-black bg-zinc-100 text-zinc-500 px-2 py-0.5 rounded uppercase tracking-wider">
-                      {s.prefix}
+                      {s.type} {s.prefix}
                     </span>
-                    <span className={cn(
-                      "text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider",
-                      s.status === 'active' ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
-                    )}>
-                      {s.status === 'active' ? 'Ativa' : 'Inativa'}
-                    </span>
+                    {s.agt_status === 'aprovada' ? (
+                      <span className={cn(
+                        "text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider",
+                        s.status === 'active' ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
+                      )}>
+                        {s.status === 'active' ? 'Ativa' : 'Inativa'}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider bg-amber-100 text-amber-700 animate-pulse">
+                        Aguardando AGT
+                      </span>
+                    )}
                   </div>
                   <h4 className="text-lg font-black text-zinc-900">{s.name}</h4>
                   <p className="text-xs text-zinc-500 flex items-center gap-1 mt-1">
@@ -1121,12 +1130,12 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
                 </div>
                 <div className="pt-4 border-t border-zinc-100 flex justify-between items-center">
                   <div>
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Número Inicial</p>
-                    <p className="text-sm font-bold">{s.start_number}</p>
+                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Ano Fiscal</p>
+                    <p className="text-sm font-bold">{s.fiscal_year || new Date().getFullYear()}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Actual</p>
-                    <p className="text-sm font-black text-black">{s.current_number}</p>
+                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Nº Inicial</p>
+                    <p className="text-sm font-black text-black">{s.start_number}</p>
                   </div>
                 </div>
               </Card>
@@ -1479,8 +1488,9 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
 
                 <div className="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
                   <p className="text-xs text-zinc-500 leading-relaxed">
-                    <span className="font-bold text-zinc-900">Nota Importante:</span> A alteração do modo de faturação encerra automaticamente as séries atuais e cria novas séries para o novo modo. 
-                    Esta acção deve ser realizada apenas quando não houver documentos pendentes de comunicação.
+                    <span className="font-bold text-zinc-900">Nota Importante:</span> A alteração do modo de faturação encerra automaticamente as séries atuais. 
+                    No modo <span className="font-bold text-zinc-900">Tradicional</span>, as novas séries são criadas automaticamente. 
+                    No modo <span className="font-bold text-zinc-900">Eletrónico</span>, você deverá solicitar a aprovação de novas séries (Série E) manualmente após a alteração.
                   </p>
                 </div>
               </div>
@@ -1524,36 +1534,35 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
               />
             </div>
 
-            {user.billing_mode === 'eletronica' && (
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Tipo de Série</label>
-                  <select 
-                    required
-                    value={seriesFormData.type}
-                    onChange={e => setSeriesFormData({...seriesFormData, type: e.target.value})}
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
-                  >
-                    <option value="FR">Fatura Recibo (FR)</option>
-                    <option value="FT">Fatura (FT)</option>
-                    <option value="RC">Recibo (RC)</option>
-                    <option value="FP">Fatura Proforma (FP)</option>
-                    <option value="NC">Nota de Crédito (NC)</option>
-                    <option value="ND">Nota de Débito (ND)</option>
-                    <option value="OR">Orçamento (OR)</option>
-                    <option value="PP">Pedido de Preço (PP)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Ano Fiscal</label>
-                  <input 
-                    type="number" required readOnly
-                    value={seriesFormData.fiscal_year}
-                    className="w-full px-4 py-3 bg-zinc-100 border border-zinc-100 rounded-xl text-sm outline-none cursor-not-allowed"
-                  />
-                </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Tipo de Série</label>
+                <select 
+                  required
+                  value={seriesFormData.type}
+                  onChange={e => setSeriesFormData({...seriesFormData, type: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all font-bold"
+                >
+                  <option value="FR">Fatura Recibo (FR)</option>
+                  <option value="FT">Fatura (FT)</option>
+                  <option value="RC">Recibo (RC)</option>
+                  <option value="FP">Fatura Proforma (FP)</option>
+                  <option value="NC">Nota de Crédito (NC)</option>
+                  <option value="ND">Nota de Débito (ND)</option>
+                  <option value="OR">Orçamento (OR)</option>
+                  <option value="PP">Pedido de Preço (PP)</option>
+                  <option value="EX">Exportação (EX)</option>
+                </select>
               </div>
-            )}
+              <div>
+                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Ano Fiscal</label>
+                <input 
+                  type="number" required readOnly
+                  value={seriesFormData.fiscal_year}
+                  className="w-full px-4 py-3 bg-zinc-100 border border-zinc-100 rounded-xl text-sm outline-none cursor-not-allowed"
+                />
+              </div>
+            </div>
 
             {user.billing_mode === 'eletronica' && (
               <div>

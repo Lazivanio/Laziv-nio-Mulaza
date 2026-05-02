@@ -574,7 +574,7 @@ export const MyEstablishments = ({ user }: { user: User }) => {
         title={`Abrir Caixa - ${selectedEstablishmentForOpening?.name}`}
       >
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
             {registersForSelectedEstablishment.map(register => {
               const isOpenedByMe = register.session_status === 'open' && register.seller_id === user.id;
               const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id;

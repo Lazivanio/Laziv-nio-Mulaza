@@ -68,6 +68,7 @@ export const OwnerPartners = ({ user }: { user: User }) => {
   const [supplierReport, setSupplierReport] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   // Modals
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
@@ -80,28 +81,50 @@ export const OwnerPartners = ({ user }: { user: User }) => {
   const [supplierForm, setSupplierForm] = useState({ name: '', nif: '', email: '', phone: '', address: '', category: '' });
 
   useEffect(() => {
-    fetchData();
-  }, [user.establishment_id, user.id]);
+    if (user && user.id) {
+      fetchData();
+    }
+  }, [user?.establishment_id, user?.id]);
 
   const fetchData = async () => {
+    if (!user || !user.id) return;
     setLoading(true);
+    setError(null);
     try {
-      const establishmentId = user.establishment_id || (user.role === 'owner' ? 1 : null);
-      const [clientsRes, suppliersRes, reportRes] = await Promise.all([
-        fetch(`/api/owner/clients/${establishmentId}?userId=${user.id}`),
-        fetch(`/api/owner/suppliers/${user.id}`),
-        fetch(`/api/owner/suppliers/${user.id}/report`)
-      ]);
+      const establishmentId = user.establishment_id || 'all';
+      
+      const endpoints = [
+        `/api/owner/clients/${establishmentId}?userId=${user.id}`,
+        `/api/owner/suppliers/${user.id}`,
+        `/api/owner/suppliers/${user.id}/report`
+      ];
 
-      const clientsData = await clientsRes.json();
-      const suppliersData = await suppliersRes.json();
-      const reportData = await reportRes.json();
+      const results = await Promise.all(endpoints.map(async (url) => {
+        const res = await fetch(url);
+        if (!res.ok) {
+          const text = await res.text();
+          console.error(`Fetch failed for ${url}: ${res.status}`, text.substring(0, 200));
+          throw new Error(`Failed to fetch ${url.split('?')[0]}: ${res.status}`);
+        }
+        
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+           const text = await res.text();
+           console.error(`Expected JSON but got HTML for ${url}:`, text.substring(0, 200));
+           throw new Error(`Servidor retornou resposta inesperada para ${url.split('?')[0]}. Verifique a rota no servidor.`);
+        }
+        
+        return res.json();
+      }));
 
-      setClients(clientsData);
-      setSuppliers(suppliersData);
-      setSupplierReport(reportData);
+      const [clientsData, suppliersData, reportData] = results;
+
+      setClients(Array.isArray(clientsData) ? clientsData : []);
+      setSuppliers(Array.isArray(suppliersData) ? suppliersData : []);
+      setSupplierReport(Array.isArray(reportData) ? reportData : []);
     } catch (error) {
       console.error("Error fetching partners data:", error);
+      setError((error as Error).message);
     } finally {
       setLoading(false);
     }

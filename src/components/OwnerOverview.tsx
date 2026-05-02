@@ -105,27 +105,41 @@ export const OwnerOverview = ({ user }: { user: User }) => {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([
-      fetch(`/api/owner/dashboard-stats/all?ownerId=${user.id}`).then(res => res.json()),
-      fetch(`/api/owner/establishments/${user.id}`).then(res => res.json())
-    ]).then(([statsData, establishmentsData]) => {
-      if (statsData && !statsData.error) {
-        setStats((prev: any) => ({
-          ...prev,
-          ...statsData,
-          topProducts: Array.isArray(statsData.topProducts) ? statsData.topProducts : prev.topProducts,
-          recentTransactions: Array.isArray(statsData.recentTransactions) ? statsData.recentTransactions : prev.recentTransactions,
-          salesByDay: Array.isArray(statsData.salesByDay) ? statsData.salesByDay : prev.salesByDay,
-          salesByEstablishment: Array.isArray(statsData.salesByEstablishment) ? statsData.salesByEstablishment : prev.salesByEstablishment,
-          paymentMethods: Array.isArray(statsData.paymentMethods) ? statsData.paymentMethods : prev.paymentMethods
-        }));
+    
+    async function fetchData() {
+      try {
+        const [statsRes, establishmentsRes] = await Promise.all([
+          fetch(`/api/owner/dashboard-stats/all?ownerId=${user.id}`),
+          fetch(`/api/owner/establishments/${user.id}`)
+        ]);
+
+        if (!statsRes.ok || !establishmentsRes.ok) {
+          throw new Error(`Server error: ${statsRes.status} / ${establishmentsRes.status}`);
+        }
+
+        const statsData = await statsRes.json();
+        const establishmentsData = await establishmentsRes.json();
+
+        if (statsData && !statsData.error) {
+          setStats((prev: any) => ({
+            ...prev,
+            ...statsData,
+            topProducts: Array.isArray(statsData.topProducts) ? statsData.topProducts : prev.topProducts,
+            recentTransactions: Array.isArray(statsData.recentTransactions) ? statsData.recentTransactions : prev.recentTransactions,
+            salesByDay: Array.isArray(statsData.salesByDay) ? statsData.salesByDay : prev.salesByDay,
+            salesByEstablishment: Array.isArray(statsData.salesByEstablishment) ? statsData.salesByEstablishment : prev.salesByEstablishment,
+            paymentMethods: Array.isArray(statsData.paymentMethods) ? statsData.paymentMethods : prev.paymentMethods
+          }));
+        }
+        setEstablishments(Array.isArray(establishmentsData) ? establishmentsData : []);
+      } catch (err) {
+        console.error("Error fetching overview data:", err);
+      } finally {
+        setLoading(false);
       }
-      setEstablishments(Array.isArray(establishmentsData) ? establishmentsData : []);
-      setLoading(false);
-    }).catch(err => {
-      console.error("Error fetching overview data:", err);
-      setLoading(false);
-    });
+    }
+
+    fetchData();
   }, [user.id]);
 
   if (loading) {
@@ -180,8 +194,8 @@ export const OwnerOverview = ({ user }: { user: User }) => {
                 <p className="text-sm font-bold">Lembrete Financeiro</p>
                 <p className="text-xs opacity-90">
                   {stats.financialHealth.enoughForSalaries 
-                    ? `Parabéns! O saldo acumulado este mês (Kz ${stats.financialHealth.monthlyIncome.toLocaleString()}) é suficiente para cobrir os salários dos funcionários (Kz ${stats.financialHealth.totalSalaries.toLocaleString()}).`
-                    : `Atenção: O saldo acumulado até agora (Kz ${stats.financialHealth.monthlyIncome.toLocaleString()}) ainda não é suficiente para cobrir os salários (Kz ${stats.financialHealth.totalSalaries.toLocaleString()}).`
+                    ? `Parabéns! O saldo acumulado este mês (Kz ${(stats.financialHealth.monthlyIncome || 0).toLocaleString()}) é suficiente para cobrir os salários dos funcionários (Kz ${(stats.financialHealth.totalSalaries || 0).toLocaleString()}).`
+                    : `Atenção: O saldo acumulado até agora (Kz ${(stats.financialHealth.monthlyIncome || 0).toLocaleString()}) ainda não é suficiente para cobrir os salários (Kz ${(stats.financialHealth.totalSalaries || 0).toLocaleString()}).`
                   }
                 </p>
               </div>
@@ -214,7 +228,7 @@ export const OwnerOverview = ({ user }: { user: User }) => {
           value={`Kz ${(stats.monthlySales || 0).toLocaleString()}`} 
           icon={DollarSign} 
           color="blue" 
-          subtitle={`Estimativa de lucro: Kz ${profit.toLocaleString()}`}
+          subtitle={`Estimativa de lucro: Kz ${(profit || 0).toLocaleString()}`}
         />
         <StatCard 
           label="Margem Operacional" 
@@ -258,7 +272,7 @@ export const OwnerOverview = ({ user }: { user: User }) => {
                 />
                 <Tooltip 
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  formatter={(val: any) => [`Kz ${val.toLocaleString()}`, 'Vendas']}
+                  formatter={(val: any) => [`Kz ${(val || 0).toLocaleString()}`, 'Vendas']}
                 />
                 <Area 
                   type="monotone" 
@@ -432,7 +446,7 @@ export const OwnerOverview = ({ user }: { user: User }) => {
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="font-bold text-sm text-emerald-600">+ Kz {tx.total_amount.toLocaleString()}</p>
+                  <p className="font-bold text-sm text-emerald-600">+ Kz {(tx.total_amount || 0).toLocaleString()}</p>
                   <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-wider">{tx.payment_method}</p>
                 </div>
               </div>
@@ -453,8 +467,8 @@ export const OwnerOverview = ({ user }: { user: User }) => {
             <div>
               <h3 className="text-xl font-bold mb-2">Análise Financeira</h3>
               <p className="text-zinc-400 text-sm mb-6">
-                Seu faturamento mensal é de Kz {stats.monthlySales.toLocaleString()}. 
-                Considerando as despesas com compras e salários (Kz {stats.totalExpenses.toLocaleString()}), 
+                Seu faturamento mensal é de Kz {(stats.monthlySales || 0).toLocaleString()}. 
+                Considerando as despesas com compras e salários (Kz {(stats.totalExpenses || 0).toLocaleString()}), 
                 sua margem operacional estimada é de {profitMargin.toFixed(1)}%.
               </p>
             </div>

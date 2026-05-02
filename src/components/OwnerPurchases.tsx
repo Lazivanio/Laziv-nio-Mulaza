@@ -153,6 +153,12 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
         fetch(`/api/owner/establishments/${user.id}`),
         fetch(`/api/owner/suppliers/${user.id}`)
       ]);
+      
+      if (!establishmentsRes.ok || !suppliersRes.ok) {
+        console.error("Error fetching initial data for purchases:", establishmentsRes.status, suppliersRes.status);
+        return;
+      }
+      
       const establishmentsData = await establishmentsRes.json();
       const suppliersData = await suppliersRes.json();
       
@@ -166,19 +172,21 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
         setSuppliers(suppliersData);
       }
     } catch (e) {
-      console.error(e);
+      console.error("Error in fetchInitialData:", e);
     }
   };
 
   const fetchPurchases = async () => {
+    if (!selectedEstablishmentId) return;
     try {
       const res = await fetch(`/api/owner/purchases/${selectedEstablishmentId}`);
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const data = await res.json();
       if (Array.isArray(data)) {
         setPurchases(data);
       }
     } catch (e) {
-      console.error(e);
+      console.error("Error fetching purchases:", e);
     }
   };
 

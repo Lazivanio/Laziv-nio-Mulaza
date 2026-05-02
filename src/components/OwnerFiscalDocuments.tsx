@@ -101,7 +101,7 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
     try {
       const response = await fetch(`/api/owner/generated-files/${user.id}`);
       const data = await response.json();
-      setHistory(data);
+      setHistory(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching history:', error);
     } finally {

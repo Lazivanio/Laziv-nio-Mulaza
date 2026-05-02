@@ -39,10 +39,23 @@ export const OwnerReports = ({ user }: { user: User }) => {
   const reportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setIsLoading(true);
     fetch(`/api/owner/global-reports/${user.id}`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          throw new Error("Servidor retornou resposta inesperada (não-JSON)");
+        }
+        return res.json();
+      })
       .then(data => {
         setData(data);
+      })
+      .catch(err => {
+        console.error("Error fetching global reports:", err);
+      })
+      .finally(() => {
         setIsLoading(false);
       });
   }, [user.id]);

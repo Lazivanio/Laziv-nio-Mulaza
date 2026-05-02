@@ -80,9 +80,11 @@ import {
   Clock,
   Zap,
   AlertCircle,
+  RefreshCw,
   CheckCircle2,
   CheckCircle,
   Receipt,
+  CloudUpload,
   Warehouse,
   ClipboardList,
   Loader2,
@@ -119,6 +121,148 @@ function hasPermission(user: User | null, permissionId: string): boolean {
 
 // --- Components ---
 
+const AdminReliability = () => {
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [healthLogs, setHealthLogs] = useState<any[]>([]);
+  const [isTesting, setIsTesting] = useState(false);
+
+  const fetchData = async () => {
+    try {
+      const [alertsRes, logsRes] = await Promise.all([
+        fetch('/api/admin/reliability/alerts'),
+        fetch('/api/admin/reliability/health-logs')
+      ]);
+      if (alertsRes.ok) setAlerts(await alertsRes.json());
+      if (logsRes.ok) setHealthLogs(await logsRes.json());
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const runRestoreTest = async () => {
+    setIsTesting(true);
+    try {
+      const res = await fetch('/api/admin/reliability/restore-test', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Teste concluído com sucesso! Integridade verificada para ${data.userCount} utilizadores.`);
+      } else {
+        alert(`Falha no teste: ${data.error}`);
+      }
+      fetchData();
+    } catch (e) {
+      alert("Erro ao executar teste.");
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  return (
+    <div className="p-8 space-y-8 max-w-6xl mx-auto">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-black text-zinc-900 tracking-tight">Centro de Confiabilidade</h1>
+          <p className="text-zinc-500">Monitorização de integridade, backups e estabilidade operacional.</p>
+        </div>
+        <button 
+          onClick={runRestoreTest}
+          disabled={isTesting}
+          className="bg-black text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-zinc-800 transition-all disabled:opacity-50"
+        >
+          {isTesting ? <RefreshCw className="animate-spin" size={20} /> : <Database size={20} />}
+          Executar Teste de Restauração
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Alerts Section */}
+        <Card className="p-0 border-zinc-100 flex flex-col h-[600px]">
+          <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+            <h2 className="text-xl font-bold flex items-center gap-2">
+              <ShieldAlert className="text-rose-500" size={20} />
+              Alertas Críticos
+            </h2>
+            <span className="bg-rose-100 text-rose-600 text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider">
+              {alerts.length} Totais
+            </span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-zinc-50/30">
+            {alerts.length === 0 ? (
+              <div className="text-center py-20 text-zinc-400">
+                <CheckCircle size={48} className="mx-auto mb-4 text-emerald-500 opacity-20" />
+                <p>Nenhum alerta pendente.</p>
+              </div>
+            ) : (
+              alerts.map(alert => (
+                <div key={alert.id} className="bg-white p-4 rounded-2xl border border-zinc-100 shadow-sm">
+                  <div className="flex items-start gap-4">
+                    <div className={cn(
+                      "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
+                      alert.level === 'critical' ? "bg-rose-100 text-rose-600" : "bg-amber-100 text-amber-600"
+                    )}>
+                      {alert.source === 'database' ? <Database size={20} /> : <Server size={20} />}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{alert.source}</span>
+                        <span className="text-xs text-zinc-400">{new Date(alert.created_at).toLocaleString()}</span>
+                      </div>
+                      <h4 className="font-bold text-zinc-900">{alert.message}</h4>
+                      {alert.details && <p className="text-xs text-zinc-500 mt-2 font-mono bg-zinc-50 p-2 rounded-lg">{alert.details}</p>}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+
+        {/* Health Logs Section */}
+        <Card className="p-0 border-zinc-100 flex flex-col h-[600px]">
+          <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+            <h2 className="text-xl font-bold flex items-center gap-2">
+              <Activity className="text-indigo-500" size={20} />
+              Logs de Saúde
+            </h2>
+            <button onClick={fetchData} className="text-zinc-400 hover:text-zinc-900 transition-colors">
+              <RefreshCw size={18} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-zinc-50/30">
+            {healthLogs.length === 0 ? (
+              <div className="text-center py-20 text-zinc-400">
+                <p>Nenhum log de monitorização disponível.</p>
+              </div>
+            ) : (
+              healthLogs.map(log => (
+                <div key={log.id} className="bg-white p-4 rounded-2xl border border-zinc-100 shadow-sm">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className={cn(
+                        "w-2 h-2 rounded-full",
+                        log.status === 'success' ? "bg-emerald-500" : "bg-rose-500"
+                      )} />
+                      <span className="text-sm font-bold capitalize">{log.check_type.replace('_', ' ')}</span>
+                    </div>
+                    <span className="text-xs text-zinc-400">{new Date(log.created_at).toLocaleTimeString()}</span>
+                  </div>
+                  <p className="text-sm text-zinc-600 mb-2">{log.message}</p>
+                  <div className="flex items-center gap-4 text-[10px] text-zinc-400 font-bold uppercase tracking-widest">
+                    <span>Duração: {log.duration_ms}ms</span>
+                    <span>Status: {log.status}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
 const SidebarItem = ({ icon: Icon, label, to, onClick }: { icon: any, label: string, to: string, onClick?: () => void }) => {
   const location = useLocation();
   const active = location.pathname === to;
@@ -137,6 +281,140 @@ const SidebarItem = ({ icon: Icon, label, to, onClick }: { icon: any, label: str
       <Icon size={20} />
       <span className="font-medium">{label}</span>
     </Link>
+  );
+};
+
+const ReliabilityMonitor = () => {
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const fetchAlerts = async () => {
+    try {
+      const res = await fetch('/api/admin/reliability/alerts');
+      if (res.ok) {
+        const data = await res.json();
+        setAlerts(data);
+        setUnreadCount(data.filter((a: any) => !a.is_read).length);
+      }
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    fetchAlerts();
+    const interval = setInterval(fetchAlerts, 30000); // Check every 30s
+    return () => clearInterval(interval);
+  }, []);
+
+  const markAsRead = async (id: number) => {
+    try {
+      await fetch(`/api/admin/reliability/alerts/${id}/read`, { method: 'POST' });
+      fetchAlerts();
+    } catch (e) {}
+  };
+
+  if (unreadCount === 0 && !isModalOpen) return null;
+
+  return (
+    <>
+      <div 
+        onClick={() => setIsModalOpen(true)}
+        className={cn(
+          "fixed top-4 right-4 z-[60] flex items-center gap-3 px-4 py-3 rounded-2xl shadow-2xl cursor-pointer animate-pulse transition-all",
+          unreadCount > 0 ? "bg-rose-600 text-white" : "bg-white text-zinc-900 border border-zinc-200"
+        )}
+      >
+        <ShieldAlert size={20} />
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider opacity-80">Segurança & Confiabilidade</p>
+          <p className="text-sm font-bold">{unreadCount} eventos críticos detectados</p>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {isModalOpen && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setIsModalOpen(false)}
+              className="absolute inset-0 bg-zinc-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+            >
+              <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center">
+                    <ShieldAlert size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold">Monitor de Operações</h2>
+                    <p className="text-sm text-zinc-500">Monitorização em tempo real da integridade do sistema</p>
+                  </div>
+                </div>
+                <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-white rounded-xl text-zinc-400 transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-zinc-50/30">
+                {alerts.length === 0 ? (
+                  <div className="text-center py-12 text-zinc-400">
+                    <CheckCircle size={48} className="mx-auto mb-4 text-emerald-500 opacity-20" />
+                    <p className="font-medium text-zinc-500">O sistema está operando com 100% de integridade.</p>
+                  </div>
+                ) : (
+                  alerts.map(alert => (
+                    <div 
+                      key={alert.id}
+                      className={cn(
+                        "p-4 rounded-2xl border transition-all",
+                        alert.is_read ? "bg-white border-zinc-100 opacity-60" : "bg-white border-rose-100 shadow-sm ring-1 ring-rose-50"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex gap-4">
+                          <div className={cn(
+                            "w-8 h-8 rounded-lg flex items-center justify-center mt-1 shrink-0",
+                            alert.level === 'critical' ? "bg-rose-100 text-rose-600" : "bg-amber-100 text-amber-600"
+                          )}>
+                            {alert.source === 'database' ? <Database size={16} /> : <CloudUpload size={16} />}
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">{alert.source}</span>
+                              <span className="text-[10px] text-zinc-300">•</span>
+                              <span className="text-[10px] text-zinc-400">{new Date(alert.created_at).toLocaleString()}</span>
+                            </div>
+                            <h4 className="font-bold text-zinc-900 leading-tight">{alert.message}</h4>
+                            {alert.details && (
+                              <div className="mt-3 bg-zinc-900 rounded-xl p-3">
+                                <p className="text-xs text-zinc-400 font-mono break-all leading-relaxed">{alert.details}</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {!alert.is_read && (
+                          <button 
+                            onClick={() => markAsRead(alert.id)}
+                            className="text-xs font-bold text-rose-600 hover:bg-rose-50 px-3 py-2 rounded-lg transition-colors whitespace-nowrap bg-rose-50/50"
+                          >
+                            Arquivar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </>
   );
 };
 
@@ -335,6 +613,12 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
 // --- Layout ---
 
 const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: () => void, children: ReactNode }) => {
+  const [proformaForm, setProformaForm] = useState({
+    client_name: '',
+    client_nif: '',
+    client_address: '',
+  });
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -347,7 +631,8 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
   const closeSidebar = () => setIsSidebarOpen(false);
 
   return (
-    <div className="h-screen bg-zinc-50 flex overflow-hidden">
+    <div className="h-screen bg-zinc-50 flex overflow-hidden relative">
+      <ReliabilityMonitor />
       {/* Sidebar Overlay */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -363,7 +648,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-zinc-200 transition-transform duration-300 lg:relative lg:translate-x-0",
+        "fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-zinc-200 transition-transform duration-300 lg:relative lg:translate-x-0 outline-none",
         !isSidebarOpen && "-translate-x-full"
       )}>
         <div className="h-full flex flex-col p-4">
@@ -379,13 +664,14 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             </button>
           </div>
 
-          <nav className="flex-1 space-y-1 overflow-y-auto">
+          <nav className="flex-1 space-y-1 overflow-y-auto pr-1 custom-scrollbar">
             {user.role === 'admin' && (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Dashboard" to="/admin" onClick={closeSidebar} />
                 <SidebarItem icon={Store} label="Estabelecimentos" to="/admin/establishments" onClick={closeSidebar} />
                 <SidebarItem icon={Users} label="Clientes" to="/admin/clients" onClick={closeSidebar} />
                 <SidebarItem icon={CreditCard} label="Pagamentos" to="/admin/payments" onClick={closeSidebar} />
+                <SidebarItem icon={Activity} label="Confiabilidade" to="/admin/reliability" onClick={closeSidebar} />
                 <SidebarItem icon={Settings} label="Configurações" to="/admin/settings" onClick={closeSidebar} />
               </>
             )}
@@ -408,6 +694,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Painel e Insights" to="/seller/dashboard" onClick={closeSidebar} />
                 {hasPermission(user, 'pos_access') && <SidebarItem icon={ShoppingCart} label="Vendas (PDV)" to="/seller" onClick={closeSidebar} />}
+                {hasPermission(user, 'hr_manage') && <SidebarItem icon={Briefcase} label="RH" to="/seller/rh" onClick={closeSidebar} />}
                 {hasPermission(user, 'pos_withdraw') && <SidebarItem icon={Wallet} label="Movimentos" to="/seller/movements" onClick={closeSidebar} />}
                 {hasPermission(user, 'pos_close_cashier') && <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />}
                 <SidebarItem icon={History} label="Histórico" to="/seller/history" onClick={closeSidebar} />
@@ -3115,6 +3402,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
   useEffect(() => {
     // Basic active tab initialization if needed
   }, [location.pathname, user.role]);
+  const [activeSeries, setActiveSeries] = useState<any[]>([]);
   const [establishmentData, setEstablishmentData] = useState<any>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [services, setServices] = useState<any[]>([]);
@@ -3315,12 +3603,27 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
 
   const navigate = useNavigate();
 
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
   const fetchData = () => {
+    setFetchError(null);
     fetch(`/api/owner/establishment-details/${establishmentId}`)
-      .then(res => res.json())
+      .then(async res => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `Erro ${res.status}: ${res.statusText}`);
+        }
+        return res.json();
+      })
       .then(data => {
         setEstablishmentData(data);
-      }).catch(() => {});
+      }).catch((err) => {
+        console.error("Fetch details error:", err);
+        setFetchError(err.message);
+      });
+    fetch(`/api/owner/active-series/${establishmentId}`)
+      .then(res => res.json())
+      .then(setActiveSeries).catch(() => {});
     fetch(`/api/owner/products/${establishmentId}`)
       .then(res => res.json())
       .then(setProducts).catch(() => {});
@@ -3890,6 +4193,25 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     e.preventDefault();
     if (creditInvoiceForm.items.length === 0 && !creditInvoiceForm.adjustment_amount) return;
 
+    // Check for active series for this doc_type
+    const relevantSeries = activeSeries.find(s => s.type === creditInvoiceForm.doc_type && s.status === 'active');
+    
+    if (user.billing_mode === 'eletronica') {
+      if (!relevantSeries || relevantSeries.prefix !== 'E') {
+        alert(`Erro: Não existe uma série de Faturação Eletrónica ("E") ativa para o tipo de documento ${creditInvoiceForm.doc_type}. Por favor, solicite uma série nas configurações.`);
+        return;
+      }
+      if (relevantSeries.agt_status !== 'aprovada') {
+        alert(`Faturação Eletrónica: A série para ${creditInvoiceForm.doc_type} ("E") ainda não foi aprovada pela AGT. Aguarde a aprovação antes de faturar.`);
+        return;
+      }
+    } else {
+      if (!relevantSeries && user.billing_mode === 'tradicional') {
+        // Traditional mode usually auto-creates, but good to have a fallback message
+        // Though handleCreateCreditInvoice doesn't auto-create here, the server does.
+      }
+    }
+
     const items_total = creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
     const items_tax = creditInvoiceForm.items.reduce((acc, item) => acc + (item.price * item.quantity * ((item.tax ?? (user?.fiscal_regime === 'exclusao' ? 0 : 14)) / 100)), 0);
     
@@ -3947,6 +4269,27 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
 
 
 
+  if (fetchError) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-4">
+        <div className="p-4 bg-rose-50 text-rose-500 rounded-full">
+          <AlertCircle size={48} />
+        </div>
+        <div className="max-w-md">
+          <h2 className="text-2xl font-black text-zinc-900">Acesso negado ou erro de carregamento</h2>
+          <p className="text-zinc-500 mt-2 font-medium">{fetchError}</p>
+        </div>
+        <button 
+          onClick={fetchData}
+          className="flex items-center gap-2 px-6 py-2 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all"
+        >
+          <RefreshCw size={20} />
+          Tentar Novamente
+        </button>
+      </div>
+    );
+  }
+  
   if (!establishmentData) return <div className="p-8 text-center text-zinc-500">Carregando dados do estabelecimento...</div>;
   if (!establishmentData.establishment) return <div className="p-8 text-center text-zinc-500">Estabelecimento não encontrado ou acesso negado.</div>;
 
@@ -4040,7 +4383,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
             <div className="flex-1 overflow-y-auto pr-2 space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard label="Vendas (Hoje)" value={dashboard.todaySales} icon={ShoppingCart} color="blue" />
-                <StatCard label="Faturamento (Hoje)" value={`Kz ${dashboard.todayRevenue.toLocaleString()}`} icon={DollarSign} color="emerald" />
+                <StatCard label="Faturamento (Hoje)" value={`Kz ${(dashboard.todayRevenue || 0).toLocaleString()}`} icon={DollarSign} color="emerald" />
                 <StatCard label="Stock Baixo" value={dashboard.lowStockCount} icon={AlertTriangle} color={dashboard.lowStockCount > 0 ? "rose" : "blue"} />
                 <StatCard label="Vendedores Ativos" value={dashboard.activeSellers} icon={Users} color="amber" />
               </div>
@@ -4109,8 +4452,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                         </div>
                         <p className="text-xs font-medium leading-relaxed">
                           {dashboard.financialReminder.enoughForSalaries 
-                            ? `Excelente! O faturamento mensal (Kz ${dashboard.financialReminder.monthlyIncome.toLocaleString()}) já é suficiente para cobrir os salários (Kz ${dashboard.financialReminder.neededForSalaries.toLocaleString()}).` 
-                            : `Atenção: Ainda restam ${dashboard.financialReminder.daysUntilMonthEnd} dias para o fim do mês. O faturamento actual é de Kz ${dashboard.financialReminder.monthlyIncome.toLocaleString()}, mas precisa de Kz ${dashboard.financialReminder.neededForSalaries.toLocaleString()} para os salários.`
+                            ? `Excelente! O faturamento mensal (Kz ${(dashboard.financialReminder.monthlyIncome || 0).toLocaleString()}) já é suficiente para cobrir os salários (Kz ${(dashboard.financialReminder.neededForSalaries || 0).toLocaleString()}).` 
+                            : `Atenção: Ainda restam ${dashboard.financialReminder.daysUntilMonthEnd} dias para o fim do mês. O faturamento actual é de Kz ${(dashboard.financialReminder.monthlyIncome || 0).toLocaleString()}, mas precisa de Kz ${(dashboard.financialReminder.neededForSalaries || 0).toLocaleString()} para os salários.`
                           }
                         </p>
                         {!dashboard.financialReminder.enoughForSalaries && (
@@ -8274,6 +8617,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
   const [isProcessing, setIsProcessing] = useState(false);
+  const [activeSeries, setActiveSeries] = useState<any>(null);
 
   const checkActiveSession = async () => {
     if (!user.cash_register_id) {
@@ -8335,6 +8679,16 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         setEstablishmentInfo(currentEstablishment);
       }
     }).catch(() => {});
+    
+    // Fetch active series for FR
+    fetch(`/api/owner/invoice-series/${user.id}`).then(res => res.json()).then(seriesList => {
+      if (Array.isArray(seriesList)) {
+        const prefix = user.billing_mode === 'eletronica' ? 'E' : 'A';
+        const active = seriesList.find(s => s.establishment_id === establishmentId && s.prefix === prefix && s.type === 'FR' && s.status === 'active');
+        setActiveSeries(active);
+      }
+    }).catch(() => {});
+
     fetch(`/api/owner/taxes/establishment/${establishmentId}`).then(res => res.json()).then(taxes => {
       if (Array.isArray(taxes)) {
         const defTax = taxes.find((t: any) => t.is_default === 1 && t.status === 'active');
@@ -8441,9 +8795,10 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     const userHasOpenSession = cashRegisters.some(r => r.session_status === 'open' && r.seller_id === user.id);
 
     return (
-      <div className="flex-1 flex flex-col p-8 space-y-8 max-w-6xl mx-auto">
-        <div className="text-center space-y-2">
-          <div className="w-20 h-20 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-4">
+      <div className="flex-1 flex flex-col h-full bg-zinc-50 overflow-hidden">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 max-w-6xl mx-auto w-full custom-scrollbar">
+          <div className="text-center space-y-2">
+            <div className="w-20 h-20 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-4">
             <Wallet size={40} />
           </div>
           <h2 className="text-3xl font-black text-zinc-900">Ativar Caixa para Trabalhar</h2>
@@ -8538,8 +8893,9 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           })}
         </div>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
   const subtotal = cart.reduce((acc, i) => {
     let price = i.type === 'product' 
@@ -8597,6 +8953,18 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       return;
     }
     if (cart.length === 0) return;
+    
+    // Check if in electronic billing mode and if series is approved
+    if (user.billing_mode === 'eletronica') {
+      if (!activeSeries) {
+        alert('Faturação Eletrónica Ativada: Você não possui uma série "E" ativa e aprovada para este estabelecimento. Por favor, solicite a aprovação de uma série nas definições.');
+        return;
+      }
+      if (activeSeries.agt_status !== 'aprovada') {
+        alert('Faturação Eletrónica Ativada: A sua série de faturação ainda não foi aprovada pela AGT. Aguarde a aprovação antes de faturar.');
+        return;
+      }
+    }
     
     setIsProcessing(true);
     try {
@@ -8722,7 +9090,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     setIsProcessing(true);
     try {
       const establishmentId = user.establishment_id || 1;
-      const res = await fetch('/api/v1/process-checkout', {
+      const res = await fetch('/api/p-venda', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -8824,6 +9192,18 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const handleCreateFormalInvoice = async (e: FormEvent) => {
     e.preventDefault();
     if (cart.length === 0) return;
+
+    // Check if in electronic billing mode and if series is approved
+    if (user.billing_mode === 'eletronica') {
+      if (!activeSeries) {
+        alert('Faturação Eletrónica Ativada: Você não possui uma série "E" ativa e aprovada para este estabelecimento. Por favor, solicite a aprovação de uma série nas definições.');
+        return;
+      }
+      if (activeSeries.agt_status !== 'aprovada') {
+        alert('Faturação Eletrónica Ativada: A sua série de faturação ainda não foi aprovada pela AGT. Aguarde a aprovação antes de faturar.');
+        return;
+      }
+    }
 
     setIsProcessing(true);
     try {
@@ -11307,6 +11687,7 @@ export default function App() {
       {user.role === 'admin' ? (
         <Routes>
           <Route path="/admin" element={<AdminPanel user={user} onLogout={handleLogout} />} />
+          <Route path="/admin/reliability" element={<AdminReliability />} />
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Routes>
       ) : (
@@ -11336,6 +11717,7 @@ export default function App() {
               <>
                 <Route path="/seller" element={<SellerPOS user={user} onUpdate={setUser} />} />
                 <Route path="/seller/dashboard" element={<SellerDashboard user={user} />} />
+                <Route path="/seller/rh" element={<OwnerRH user={user} />} />
                 <Route path="/seller/movements" element={<SellerCashMovements user={user} />} />
                 <Route path="/seller/history" element={<SellerHistory user={user} />} />
                 <Route path="/seller/settings" element={<SellerSettings user={user} onUpdate={handleLogin} />} />

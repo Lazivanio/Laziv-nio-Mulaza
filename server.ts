@@ -12,1445 +12,1298 @@ import crypto from "crypto";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database("database.db");
 
-// Handle BigInt serialization for JSON.stringify (needed for better-sqlite3 row IDs)
-(BigInt.prototype as any).toJSON = function () {
-  return this.toString();
-};
+let db: Database.Database;
 
-// Migrations
-db.exec(`
-  CREATE TABLE IF NOT EXISTS owner_settings (
-    owner_id INTEGER PRIMARY KEY,
-    backup_enabled INTEGER DEFAULT 0,
-    backup_frequency TEXT DEFAULT 'daily',
-    financial_reminder_enabled INTEGER DEFAULT 0,
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-`);
+const DB_PATH = "database.db";
+const BACKUP_DIR = "backups";
+const LOCK_FILE = "database.lock";
 
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS cancellation_requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    invoice_id INTEGER NOT NULL,
-    doc_type TEXT DEFAULT 'NC', -- 'NC' or 'ND'
-    type TEXT NOT NULL, -- 'cancel', 'reduce', 'return', 'correction', etc.
-    reason TEXT,
-    items_json TEXT, -- If specific items are being returned
-    amount DECIMAL(10, 2),
-    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
-    requested_by INTEGER NOT NULL,
-    requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    processed_by INTEGER,
-    processed_at DATETIME,
-    establishment_id INTEGER,
-    FOREIGN KEY(invoice_id) REFERENCES transactions(id),
-    FOREIGN KEY(requested_by) REFERENCES users(id)
-  )
-`).run();
+if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR);
 
-// Migration for existing table
-try {
-  db.prepare("ALTER TABLE cancellation_requests ADD COLUMN doc_type TEXT DEFAULT 'NC'").run();
-} catch (e) {}
+/**
+ * LIMITES E GARANTIAS DO SQLITE NESTE SISTEMA:
+ * 1. Concorrência: SQLite permite múltiplos leitores simultâneos (WAL), mas apenas um escritor atómico.
+ *    Este sistema usa busy_timeout (10s) para gerir filas de escrita. O desempenho degrada-se se
+ *    a taxa de I/O de escrita exceder a capacidade do hardware.
+ * 2. Volume: Recomendado para bases até 100GB. Backups (VACUUM INTO) demoram proporcionalmente ao tamanho.
+ * 3. Ambiente: EXIGE armazenamento local fiável. Sistemas de ficheiros em rede (NFS/SMB)
+ *    PODEM CORROMPER o banco devido a falhas nos locks do SO.
+ * 4. Recuperação e Perda de Dados:
+ *    - Protegemos contra términos de processo (SIGTERM/SIGINT) via checkpoints totais no encerramento.
+ *    - Protegemos contra corrupção via backups periódicos VALIDADOS antes de serem arquivados.
+ *    - Risco Residual: Falhas de energia catastróficas ou erros de disco físico podem causar a perda
+ *      de transações que ainda não foram consolidadas do WAL para o ficheiro principal.
+ * 5. Fronteira de Responsabilidade:
+ *    - Aplicação: Garante a atomicidade das transações, bloqueios de instância e recuperação de backups.
+ *    - Infraestrutura: Garante a persistência física dos ficheiros e a estabilidade do sistema de ficheiros.
+ * 6. Migração: Se a latência de escrita começar a afetar a experiência do utilizador ou se houver necessidade
+ *    de alta disponibilidade entre múltiplos servidores, a migração para PostgreSQL é obrigatória.
+ */
 
-// Migrations
-const usersTable = db.prepare("PRAGMA table_info(users)").all();
-if (!usersTable.some((col: any) => col.name === 'bi_number')) {
+/**
+ * Sistema de Bloqueio de Instância Única
+ * Garante que apenas um processo node aceda ao banco.
+ */
+function acquireLock() {
   try {
-    db.prepare("ALTER TABLE users ADD COLUMN bi_number TEXT").run();
-    console.log("Migration: Added bi_number column to users table");
-  } catch (e) {
-    console.error("Migration error (users.bi_number):", e);
-  }
-}
-if (!usersTable.some((col: any) => col.name === 'address')) {
-  try {
-    db.prepare("ALTER TABLE users ADD COLUMN address TEXT").run();
-  } catch (e) {}
-}
-
-const hrAttendanceTable = db.prepare("PRAGMA table_info(hr_attendance)").all();
-if (!hrAttendanceTable.some((col: any) => col.name === 'type')) {
-  try {
-    db.prepare("ALTER TABLE hr_attendance ADD COLUMN type TEXT DEFAULT 'manual'").run();
-  } catch (e) {}
-}
-
-const transactionsTable = db.prepare("PRAGMA table_info(transactions)").all();
-if (!transactionsTable.some((col: any) => col.name === 'cancellation_id')) {
-  try {
-    db.prepare("ALTER TABLE transactions ADD COLUMN cancellation_id INTEGER").run();
-  } catch (e) {}
-}
-
-// Digital Signature Service
-const MASTER_KEY = (process.env.SIGNATURE_MASTER_KEY || "a-very-secret-master-key-32-chars").slice(0, 32).padEnd(32, '0');
-const IV_LENGTH = 16;
-
-const DigitalSignatureService = {
-  encryptPrivateKey(privateKey: string): string {
-    const iv = crypto.randomBytes(IV_LENGTH);
-    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(MASTER_KEY), iv);
-    let encrypted = cipher.update(privateKey);
-    encrypted = Buffer.concat([encrypted, cipher.final()]);
-    return iv.toString('hex') + ':' + encrypted.toString('hex');
-  },
-
-  decryptPrivateKey(encryptedData: string): string {
-    const textParts = encryptedData.split(':');
-    const iv = Buffer.from(textParts.shift()!, 'hex');
-    const encryptedText = Buffer.from(textParts.join(':'), 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(MASTER_KEY), iv);
-    let decrypted = decipher.update(encryptedText);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-    return decrypted.toString();
-  },
-
-  generateCompanyKeys(ownerId: number, userId: number) {
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
-      modulusLength: 2048,
-      publicKeyEncoding: { type: 'spki', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-    });
-
-    const encryptedPrivate = this.encryptPrivateKey(privateKey);
-    
-    // Deactivate old keys
-    db.prepare("UPDATE company_keys SET is_active = 0 WHERE owner_id = ?").run(ownerId);
-
-    // Get current version
-    const lastKey = db.prepare("SELECT MAX(version) as max_v FROM company_keys WHERE owner_id = ?").get(ownerId) as { max_v: number };
-    const nextVersion = (lastKey?.max_v || 0) + 1;
-
-    const result = db.prepare(`
-      INSERT INTO company_keys (owner_id, public_key, private_key_encrypted, version, is_active, created_by)
-      VALUES (?, ?, ?, ?, 1, ?)
-    `).run(ownerId, publicKey, encryptedPrivate, nextVersion, userId);
-
-    return { id: result.lastInsertRowid, publicKey, version: nextVersion };
-  },
-
-  getActiveKey(ownerId: number) {
-    return db.prepare("SELECT * FROM company_keys WHERE owner_id = ? AND is_active = 1").get(ownerId) as any;
-  },
-
-  getPrevSignature(establishmentId: number, docType: string) {
-    // Check transactions (POS is typically FR)
-    const lastTrans = db.prepare(`
-      SELECT signature, invoice_number FROM transactions 
-      WHERE establishment_id = ? AND signature IS NOT NULL AND invoice_number LIKE ?
-      ORDER BY timestamp DESC, id DESC LIMIT 1
-    `).get(establishmentId, `${docType}%`) as { signature: string };
-
-    // Check credit invoices
-    const lastCI = db.prepare(`
-      SELECT signature FROM credit_invoices 
-      WHERE establishment_id = ? AND signature IS NOT NULL AND doc_type = ?
-      ORDER BY created_at DESC, id DESC LIMIT 1
-    `).get(establishmentId, docType) as { signature: string };
-
-    // Check proforma invoices
-    const lastPI = db.prepare(`
-      SELECT signature FROM proforma_invoices 
-      WHERE establishment_id = ? AND signature IS NOT NULL AND invoice_number LIKE ?
-      ORDER BY created_at DESC, id DESC LIMIT 1
-    `).get(establishmentId, `${docType}%`) as { signature: string };
-
-    return lastTrans?.signature || lastCI?.signature || lastPI?.signature || "";
-  },
-
-  signDocument(ownerId: number, establishmentId: number, data: any) {
-    const docType = data.doc_type || (data.invoice_number ? data.invoice_number.split(' ')[0] : 'FR');
-    const prevSignature = this.getPrevSignature(establishmentId, docType);
-    
-    // Data to sign/hash: invoice_number, doc_type, date, client_name
-    const dataString = `${data.invoice_number};${docType};${data.date};${data.client_name || 'Consumidor Final'}`;
-
-    if (!prevSignature) {
-      // First invoice of this type: Use Private Key
-      let activeKey = this.getActiveKey(ownerId);
-      if (!activeKey) {
+    if (fs.existsSync(LOCK_FILE)) {
+      const pidStr = fs.readFileSync(LOCK_FILE, 'utf8').trim();
+      const pid = parseInt(pidStr);
+      
+      if (!isNaN(pid)) {
         try {
-          this.generateCompanyKeys(ownerId, ownerId);
-          activeKey = this.getActiveKey(ownerId);
-        } catch (e) {}
+          // Verifica se o processo dono do lock ainda existe
+          process.kill(pid, 0);
+          console.error(`[SERVER] FATAL: O Banco de Dados já está em uso pelo processo PID ${pid}.`);
+          process.exit(1);
+        } catch (e) {
+          console.warn(`[SERVER] Lock antigo detetado (PID ${pid} não existe). Removendo...`);
+          fs.unlinkSync(LOCK_FILE);
+        }
+      } else {
+        fs.unlinkSync(LOCK_FILE); // Ficheiro de lock inválido
+      }
+    }
+    fs.writeFileSync(LOCK_FILE, process.pid.toString());
+  } catch (err) {
+    console.error("[SERVER] Falha ao gerir ficheiro de lock:", err);
+  }
+}
+
+function releaseLock() {
+  if (fs.existsSync(LOCK_FILE)) {
+    fs.unlinkSync(LOCK_FILE);
+    console.log("[SERVER] Lock removido com sucesso.");
+  }
+}
+
+function openDatabase(readonly = false) {
+  try {
+    const options: Database.Options = { 
+      timeout: 10000, 
+      readonly: readonly
+    };
+    
+    const newDb = new Database(DB_PATH, options);
+    
+    newDb.pragma('journal_mode = WAL');
+    newDb.pragma('synchronous = NORMAL');
+    newDb.pragma('busy_timeout = 10000');
+    newDb.pragma('cache_size = -64000');
+    newDb.pragma('temp_store = MEMORY');
+    
+    return newDb;
+  } catch (error) {
+    console.error(`[DB] Falha crítica ao abrir banco (readonly=${readonly}):`, error);
+    throw error;
+  }
+}
+
+/**
+ * Backup seguro usando VACUUM INTO
+ * Isso cria uma cópia consistente do banco de dados mesmo durante o modo WAL
+ */
+function backupDatabase() {
+  if (!fs.existsSync(DB_PATH)) return;
+  
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupFile = path.join(BACKUP_DIR, `database_${timestamp}.db.bak`);
+  const latestBackup = "database.db.bak";
+
+  try {
+    // 1. Criar backup consistente via VACUUM INTO
+    const backupDb = openDatabase(true); // Abre em modo leitura
+    backupDb.prepare(`VACUUM INTO '${backupFile}'`).run();
+    backupDb.close();
+
+    // 2. VALIDAR A INTEGRIDADE DO BACKUP ANTES DE ACEITAR
+    console.log(`[DB] Validando integridade do backup: ${backupFile}...`);
+    try {
+      const verifyDb = new Database(backupFile, { readonly: true });
+      const check = verifyDb.pragma('integrity_check') as any[];
+      verifyDb.close();
+      
+      if (check[0].integrity_check !== 'ok') {
+        throw new Error("Backup integrity check failed: " + check[0].integrity_check);
+      }
+    } catch (verifyError) {
+      console.error("[DB] BACKUP CORROMPIDO GERADO! Eliminando ficheiro inválido:", verifyError);
+      if (fs.existsSync(backupFile)) fs.unlinkSync(backupFile);
+      return;
+    }
+
+    // 3. Atualizar o backup principal (mais recente) de forma atómica
+    const tempLatest = `${latestBackup}.tmp`;
+    fs.copyFileSync(backupFile, tempLatest);
+    fs.renameSync(tempLatest, latestBackup);
+    
+    // Rotação: manter apenas os últimos 10 backups válidos
+    const backups = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.startsWith("database_") && f.endsWith(".db.bak"))
+      .sort()
+      .reverse();
+      
+    if (backups.length > 10) {
+      backups.slice(10).forEach(f => fs.unlinkSync(path.join(BACKUP_DIR, f)));
+    }
+    
+    console.log(`[DB] Backup validado e arquivado com sucesso: ${backupFile}`);
+  } catch (error) {
+    console.error("[DB] Falha crítica no processo de backup:", error);
+  }
+}
+
+function ensureDatabaseIntegrity(retries = 3) {
+  console.log("[DB] Iniciando verificação de integridade...");
+  
+  if (!fs.existsSync(DB_PATH)) {
+    console.log("[DB] Banco de dados não existe, será criado.");
+    return true;
+  }
+
+  for (let i = 0; i < retries; i++) {
+    let tempDb: Database.Database | null = null;
+    try {
+      tempDb = openDatabase();
+      const check = tempDb.pragma('integrity_check') as any[];
+      tempDb.close();
+      tempDb = null;
+
+      if (check[0].integrity_check === 'ok') {
+        console.log("[DB] Integridade confirmada.");
+        return true;
+      } else {
+        throw new Error(`Corrupção de integridade: ${check[0].integrity_check}`);
+      }
+    } catch (error: any) {
+      const isLocked = error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED' || error.message?.includes('locked');
+      if (isLocked && i < retries - 1) {
+        console.warn(`[DB] Banco ocupado durante verificação de integridade, tentativa ${i+1}/${retries}...`);
+        if (tempDb) {
+          try { (tempDb as any).close(); } catch(e) {}
+        }
+        const start = Date.now();
+        while (Date.now() - start < 1000) {} 
+        continue;
       }
 
-      if (!activeKey) {
-        throw new Error("Nenhuma chave ativa encontrada para gerar o primeiro hash deste tipo de documento.");
+      console.error("[DB] Falha de integridade detetada!", error);
+      if (tempDb) {
+        try { (tempDb as any).close(); } catch(e) {}
       }
-
-      const privateKey = this.decryptPrivateKey(activeKey.private_key_encrypted);
-      const sign = crypto.createSign('SHA256');
-      sign.update(dataString);
-      sign.end();
-      const signature = sign.sign(privateKey, 'hex');
-
-      // For the first signature, the hash is the SHA256 of the data, and the signature is the RSA output
-      const hash = crypto.createHash('sha256').update(dataString).digest('hex');
-
-      return {
-        hash,
-        signature,
-        prev_signature: "0",
-        key_version_id: activeKey.id
-      };
-    } else {
-      // Subsequent invoices: Encrypt with previous hash (without private key)
-      // We use the previous signature as the 'key' to generate the next one
-      // The user says "encripta con o hash anterior", we'll use HMAC to simulate this securely
-      const newSignature = crypto.createHmac('sha256', prevSignature).update(dataString).digest('hex');
-      const hash = crypto.createHash('sha256').update(dataString + prevSignature).digest('hex');
-
-      return {
-        hash,
-        signature: newSignature,
-        prev_signature: prevSignature,
-        key_version_id: null // No RSA key used for this step
-      };
+      
+      const latestBackup = "database.db.bak";
+      if (fs.existsSync(latestBackup)) {
+        console.log("[DB] Restaurando a partir do último backup conhecido...");
+        const timestamp = new Date().getTime();
+        // Apenas move para corrupt se for realmente corrupção, não se for erro de ficheiro travado
+        if (!isLocked) {
+          try {
+            fs.renameSync(DB_PATH, `${DB_PATH}.corrupt.${timestamp}`);
+          } catch (e) {
+             console.error("[DB] Falha ao mover ficheiro corrupto:", e);
+          }
+        }
+        try {
+          fs.copyFileSync(latestBackup, DB_PATH);
+          console.log("[DB] Restauro de backup concluído.");
+          return true; // Assume ok e deixa o openDatabase principal lidar com locks
+        } catch (e) {
+          console.error("[DB] Falha crítica ao copiar backup:", e);
+          return false;
+        }
+      } else {
+        console.log("[DB] Nenhum backup encontrado para restauro automático.");
+        return isLocked; // Se estiver apenas locked, vamos tentar continuar. Se estiver corrupto e sem backup, retorna false.
+      }
     }
   }
+  return false;
+}
+
+/**
+ * Wrapper para operações de escrita com Retry Automático
+ */
+function dbExecute<T>(operation: (dbInstance: Database.Database) => T, retries = 3): T {
+  let lastError: any;
+  for (let i = 0; i < retries; i++) {
+    try {
+      return operation(db);
+    } catch (error: any) {
+      lastError = error;
+      if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
+        console.warn(`[DB] Banco ocupado, tentativa ${i+1}/${retries}...`);
+        // Espera síncrona curta (apenas em caso de bloqueios externos o timeout do driver falhar)
+        const start = Date.now();
+        while (Date.now() - start < 100) {} 
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
+// Inicialização SEQUENCIAL e PROTEGIDA
+try {
+  acquireLock();
+  if (!ensureDatabaseIntegrity()) {
+    console.warn("[DB] O banco de dados foi reiniciado devido a falhas graves detectadas no boot.");
+  }
+  db = openDatabase();
+  console.log("[DB] Conexão principal estabelecida e protegida.");
+} catch (error) {
+  console.error("[DB] Falha fatal na inicialização:", error);
+  releaseLock();
+  process.exit(1);
+}
+
+// Backup periódico (a cada 4 horas)
+setInterval(backupDatabase, 4 * 60 * 60 * 1000);
+// Backup inicial após o boot estável (2 min)
+setTimeout(backupDatabase, 2 * 60 * 1000);
+
+/**
+ * Checkpoint Inteligente
+ * Reduz o tamanho do ficheiro .db-wal e consolida escritas no disco.
+ * O modo RESTART garante que o log é limpo mesmo com leitores ativos (se possível).
+ */
+function runCheckpoint(mode: 'PASSIVE' | 'RESTART' | 'TRUNCATE' = 'RESTART') {
+  try {
+    if (db) {
+       const result = db.pragma(`wal_checkpoint(${mode})`) as any;
+       console.log(`[DB] Checkpoint ${mode} concluído. Log:`, result);
+    }
+  } catch (e) {
+    console.error(`[DB] Falha ao realizar checkpoint ${mode}:`, e);
+  }
+}
+
+// Checkpoint Periódico (cada 20 minutos)
+// Usamos PASSIVE para consolidar o que for possível sem bloquear leitores ativos.
+setInterval(() => runCheckpoint('PASSIVE'), 20 * 60 * 1000);
+
+// Fechamento gracioso (SigTERM/SigINT e Erros Fatais)
+const gracefulShutdown = (signal: string) => {
+  console.log(`[SERVER] Sinal ${signal} recebido. Encerrando processos de forma segura...`);
+  try {
+    if (db) {
+      // Força um checkpoint total para esvaziar o WAL antes de fechar
+      db.pragma('wal_checkpoint(TRUNCATE)');
+      db.close();
+      console.log("[DB] Banco de dados consolidado e encerrado.");
+    }
+    releaseLock();
+  } catch (e) {
+    console.error("[DB] Erro no encerramento forçado:", e);
+    releaseLock();
+  }
+  process.exit(0);
 };
 
-// Initialize Database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT UNIQUE,
-    username TEXT UNIQUE,
-    password TEXT,
-    name TEXT,
-    role TEXT,
-    phone TEXT,
-    nif TEXT,
-    address TEXT,
-    company_name TEXT,
-    status TEXT DEFAULT 'active', -- 'active', 'suspended'
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-`);
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('uncaughtException', (err) => {
+  console.error('[SERVER] UNCAUGHT EXCEPTION:', err);
+  gracefulShutdown('EXCEPTION');
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[SERVER] UNHANDLED REJECTION:', reason);
+  gracefulShutdown('REJECTION');
+});
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS licenses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    establishment_id INTEGER,
-    plan_type TEXT, -- 'basic', 'pro', 'enterprise'
-    start_date TEXT,
-    expiry_date TEXT,
-    status TEXT DEFAULT 'active', -- 'active', 'suspended', 'expired'
-    features TEXT, -- JSON string of limits
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id),
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id)
-  );
 
-  CREATE TABLE IF NOT EXISTS support_tickets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    subject TEXT,
-    description TEXT,
-    priority TEXT DEFAULT 'medium', -- 'low', 'medium', 'high'
-    status TEXT DEFAULT 'open', -- 'open', 'pending', 'closed'
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS ticket_messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticket_id INTEGER,
-    sender_id INTEGER,
-    message TEXT,
-    is_admin INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(ticket_id) REFERENCES support_tickets(id),
-    FOREIGN KEY(sender_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS system_plans (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    price REAL,
-    max_establishments INTEGER,
-    max_products INTEGER,
-    features TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS system_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS system_payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    amount REAL,
-    plan_id INTEGER,
-    payment_method TEXT, -- 'Dinheiro', 'Transferência', 'Multicaixa', 'Outros'
-    status TEXT DEFAULT 'paid', -- 'paid', 'pending'
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id),
-    FOREIGN KEY(plan_id) REFERENCES system_plans(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS establishments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    name TEXT,
-    address TEXT,
-    phone TEXT,
-    email TEXT,
-    nif TEXT,
-    logo_url TEXT,
-    establishment_code TEXT,
-    status TEXT DEFAULT 'active', -- 'active' or 'inactive'
-    license_status TEXT DEFAULT 'active',
-    license_expiry TEXT,
-    bank_accounts TEXT, -- JSON string
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS financial_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    owner_id INTEGER,
-    type TEXT, -- 'income', 'expense'
-    category TEXT,
-    amount REAL,
-    payment_method TEXT, -- 'cash', 'transfer', 'multicaixa', 'other'
-    description TEXT,
-    date TEXT,
-    status TEXT DEFAULT 'paid', -- 'paid', 'pending'
-    reference_id INTEGER,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS accounts_receivable (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    owner_id INTEGER,
-    client_name TEXT,
-    amount REAL,
-    due_date TEXT,
-    status TEXT DEFAULT 'pending', -- 'pending', 'paid', 'overdue'
-    description TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS accounts_payable (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    owner_id INTEGER,
-    supplier_name TEXT,
-    amount REAL,
-    due_date TEXT,
-    status TEXT DEFAULT 'pending', -- 'pending', 'paid', 'overdue'
-    description TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS products (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    warehouse_id INTEGER,
-    name TEXT,
-    price REAL,
-    stock INTEGER,
-    category TEXT,
-    image_url TEXT,
-    is_promo INTEGER DEFAULT 0,
-    min_stock INTEGER DEFAULT 5,
-    barcode TEXT,
-    tax_id INTEGER,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(warehouse_id) REFERENCES warehouses(id),
-    FOREIGN KEY(tax_id) REFERENCES taxes(id)
-  );
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_products_establishment_barcode ON products(establishment_id, barcode);
-
-  CREATE TABLE IF NOT EXISTS generated_files (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    name TEXT,
-    type TEXT, -- 'SAFT', 'Excel', 'PDF'
-    generated_by TEXT, -- User name
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    file_data BLOB,
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS invoice_series (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    name TEXT,
-    prefix TEXT,
-    start_number INTEGER,
-    current_number INTEGER,
-    status TEXT DEFAULT 'active', -- 'active', 'inactive'
-    agt_status TEXT DEFAULT 'aprovada', -- 'pendente', 'aprovada', 'rejeitada'
-    is_electronic INTEGER DEFAULT 0,
-    fiscal_year INTEGER,
-    request_reason TEXT,
-    type TEXT DEFAULT 'FR',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS taxes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    name TEXT,
-    percentage REAL,
-    tax_code TEXT DEFAULT 'NOR', -- 'NOR', 'ISE', 'OUT'
-    is_default INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'active', -- 'active', 'inactive'
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS backups (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    filename TEXT,
-    size INTEGER,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS warehouses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    name TEXT,
-    type TEXT, -- 'principal', 'secondary', 'returns', etc.
-    status TEXT DEFAULT 'active', -- 'active', 'inactive'
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    seller_id INTEGER,
-    cash_register_id INTEGER,
-    total_amount REAL,
-    payment_method TEXT,
-    cash_received REAL,
-    discount_percent REAL DEFAULT 0,
-    discount_amount REAL DEFAULT 0,
-    tax_amount REAL DEFAULT 0,
-    invoice_number TEXT,
-    agt_status TEXT DEFAULT 'pending',
-    billing_mode TEXT DEFAULT 'tradicional',
-    split_details TEXT,
-    client_name TEXT,
-    client_nif TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    items TEXT,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(seller_id) REFERENCES users(id),
-    FOREIGN KEY(cash_register_id) REFERENCES cash_registers(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS staff (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    user_id INTEGER,
-    salary REAL,
-    shift_info TEXT,
-    UNIQUE(establishment_id, user_id),
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS cash_movements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    seller_id INTEGER,
-    cash_register_id INTEGER,
-    type TEXT, -- 'in' or 'out'
-    amount REAL,
-    description TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(seller_id) REFERENCES users(id),
-    FOREIGN KEY(cash_register_id) REFERENCES cash_registers(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS cash_registers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    name TEXT,
-    code TEXT UNIQUE,
-    default_initial_balance REAL DEFAULT 0,
-    max_limit REAL DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS cashier_sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    cash_register_id INTEGER,
-    seller_id INTEGER,
-    opening_amount REAL,
-    closing_amount REAL,
-    physical_amount REAL,
-    opening_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-    closing_time DATETIME,
-    status TEXT DEFAULT 'open', -- 'open' or 'closed'
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(cash_register_id) REFERENCES cash_registers(id),
-    FOREIGN KEY(seller_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS promotions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    name TEXT,
-    start_date TEXT,
-    end_date TEXT,
-    discount_percent REAL,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS promotion_products (
-    promotion_id INTEGER,
-    product_id INTEGER,
-    PRIMARY KEY(promotion_id, product_id),
-    FOREIGN KEY(promotion_id) REFERENCES promotions(id),
-    FOREIGN KEY(product_id) REFERENCES products(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS proforma_invoices (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    owner_id INTEGER,
-    client_name TEXT,
-    client_nif TEXT,
-    client_address TEXT,
-    total_amount REAL,
-    items TEXT, -- JSON string
-    bank_accounts TEXT, -- JSON string
-    status TEXT DEFAULT 'draft', -- 'draft', 'sent', 'converted'
-    invoice_number TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS credit_invoices (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    owner_id INTEGER,
-    seller_id INTEGER,
-    parent_invoice_id INTEGER,
-    client_name TEXT,
-    client_nif TEXT,
-    address TEXT,
-    country TEXT,
-    doc_type TEXT,
-    series TEXT,
-    invoice_number TEXT,
-    invoice_date TEXT,
-    currency TEXT,
-    total_amount REAL,
-    tax_amount REAL,
-    payment_method TEXT,
-    reason TEXT,
-    note_category TEXT,
-    adjustment_amount REAL DEFAULT 0,
-    observations TEXT,
-    items TEXT, -- JSON string
-    due_date TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(owner_id) REFERENCES users(id),
-    FOREIGN KEY(seller_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS clients (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    name TEXT,
-    nif TEXT,
-    email TEXT,
-    phone TEXT,
-    address TEXT,
-    type TEXT DEFAULT 'individual',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS hr_roles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    name TEXT,
-    base_role TEXT DEFAULT 'seller', -- 'seller' or 'manager'
-    permissions TEXT, -- JSON string
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS hr_salaries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER UNIQUE,
-    base_salary REAL DEFAULT 0,
-    bonuses REAL DEFAULT 0,
-    discounts REAL DEFAULT 0,
-    vacation_days_per_year INTEGER DEFAULT 22,
-    last_payment_date TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS hr_salary_payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    salary_id INTEGER,
-    amount REAL,
-    type TEXT, -- 'base', 'bonus', 'discount', 'full_payment'
-    description TEXT,
-    month TEXT, -- Format: YYYY-MM
-    bonus REAL DEFAULT 0,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(salary_id) REFERENCES hr_salaries(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS services (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    establishment_id INTEGER,
-    name TEXT,
-    code TEXT,
-    description TEXT,
-    price REAL,
-    availability_condition TEXT, -- 'always' or 'product_purchased'
-    show_in_pos INTEGER DEFAULT 1, -- 0 for NO, 1 for YES
-    tax_id INTEGER,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(owner_id) REFERENCES users(id),
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(tax_id) REFERENCES taxes(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS service_fees (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    service_id INTEGER,
-    name TEXT,
-    amount REAL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(service_id) REFERENCES services(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS hr_attendance (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    establishment_id INTEGER,
-    entry_time DATETIME,
-    exit_time DATETIME,
-    status TEXT, -- 'present', 'late', 'absent', 'half_day'
-    date TEXT, -- YYYY-MM-DD
-    notes TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id),
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS hr_vacations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    start_date TEXT,
-    end_date TEXT,
-    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
-    days_count INTEGER,
-    notes TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS suppliers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    name TEXT NOT NULL,
-    company_name TEXT,
-    nif TEXT,
-    phone TEXT,
-    email TEXT,
-    country TEXT,
-    city TEXT,
-    address TEXT,
-    responsible_person TEXT,
-    payment_method TEXT,
-    payment_term TEXT,
-    observations TEXT,
-    status TEXT DEFAULT 'active', -- 'active', 'inactive'
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS purchases (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    supplier_id INTEGER,
-    total_amount REAL,
-    paid_amount REAL DEFAULT 0,
-    tax_amount REAL DEFAULT 0,
-    status TEXT DEFAULT 'pending', -- 'pending', 'partial', 'paid'
-    delivery_status TEXT DEFAULT 'pending',
-    received_at DATETIME,
-    is_direct INTEGER DEFAULT 0,
-    is_stock_updated INTEGER DEFAULT 0,
-    is_closed INTEGER DEFAULT 0,
-    invoice_number TEXT,
-    items TEXT, -- JSON string of items purchased
-    due_date DATETIME,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(supplier_id) REFERENCES suppliers(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS purchase_payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    purchase_id INTEGER,
-    amount REAL,
-    payment_method TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(purchase_id) REFERENCES purchases(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS purchase_returns (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    supplier_id INTEGER,
-    purchase_id INTEGER,
-    total_amount REAL,
-    tax_amount REAL DEFAULT 0,
-    reason TEXT,
-    items TEXT,
-    type TEXT DEFAULT 'credit',
-    note_category TEXT DEFAULT 'return',
-    adjustment_amount REAL DEFAULT 0,
-    observations TEXT,
-    invoice_number TEXT,
-    status TEXT DEFAULT 'pending',
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
-    FOREIGN KEY(purchase_id) REFERENCES purchases(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS billing_mode_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    changed_by INTEGER,
-    old_mode TEXT,
-    new_mode TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(owner_id) REFERENCES users(id),
-    FOREIGN KEY(changed_by) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS company_keys (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    public_key TEXT,
-    private_key_encrypted TEXT,
-    version INTEGER,
-    is_active INTEGER DEFAULT 1,
-    type TEXT DEFAULT 'internal', -- 'internal', 'external'
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    created_by INTEGER,
-    FOREIGN KEY(owner_id) REFERENCES users(id),
-    FOREIGN KEY(created_by) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS key_management_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    user_id INTEGER,
-    action TEXT,
-    old_key_id INTEGER,
-    new_key_id INTEGER,
-    details TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(owner_id) REFERENCES users(id),
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-`);
-
-// Migration: Rename stores to establishments and store_id to establishment_id
-try {
-  // 1. Rename table 'stores' to 'establishments'
-  const tableInfo = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='stores'").get();
-  if (tableInfo) {
-    db.exec("ALTER TABLE stores RENAME TO establishments");
-    console.log("Table 'stores' renamed to 'establishments'");
-  }
-
-  // 2. Rename 'store_id' to 'establishment_id' in all relevant tables
-  const tablesToUpdate = [
-    'users', 'licenses', 'financial_transactions', 'accounts_receivable', 
-    'accounts_payable', 'products', 'transactions', 'cash_registers', 
-    'cashier_sessions', 'cash_movements', 'hr_attendance', 'services', 
-    'stock_movements', 'purchases', 'proforma_invoices', 'invoice_series'
-  ];
-
-  for (const table of tablesToUpdate) {
-    try {
-      const columns = db.prepare(`PRAGMA table_info(${table})`).all() as any[];
-      if (columns.some(col => col.name === 'store_id') && !columns.some(col => col.name === 'establishment_id')) {
-        db.exec(`ALTER TABLE ${table} RENAME COLUMN store_id TO establishment_id`);
-        console.log(`Column 'store_id' in '${table}' renamed to 'establishment_id'`);
+// Migration: Ensure purchase_returns has establishment_id and supplier_id
+function runStartupMigrations() {
+  try {
+    const purchaseReturnsCols = db.prepare("PRAGMA table_info(purchase_returns)").all() as any[];
+    if (purchaseReturnsCols.length > 0) { // Only if table exists
+      if (!purchaseReturnsCols.some(col => col.name === 'establishment_id')) {
+        db.exec("ALTER TABLE purchase_returns ADD COLUMN establishment_id INTEGER");
       }
-    } catch (e) {
-      console.error(`Error renaming column in ${table}:`, e);
+      if (!purchaseReturnsCols.some(col => col.name === 'supplier_id')) {
+        db.exec("ALTER TABLE purchase_returns ADD COLUMN supplier_id INTEGER");
+      }
     }
-  }
-} catch (e) {
-  console.error("Migration error (renaming stores to establishments):", e);
-}
 
-// Migration: Ensure default owner has a license
-try {
-  const owner = db.prepare("SELECT id FROM users WHERE email = 'owner@factu.com'").get() as any;
-  if (owner) {
-    const license = db.prepare("SELECT id FROM licenses WHERE user_id = ?").get(owner.id);
-    if (!license) {
-      db.prepare(`
-        INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, features)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(owner.id, 1, 'enterprise', new Date().toISOString(), '2026-12-31', 'active', '{"reports": true, "multi_establishment": true, "api_access": true}');
-      console.log("Default license added for owner@factu.com");
+    // New migrations for service_designation and owner_id
+    const creditInvoicesCols = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
+    if (creditInvoicesCols.length > 0) {
+      if (!creditInvoicesCols.some(col => col.name === 'service_designation')) {
+        db.exec("ALTER TABLE credit_invoices ADD COLUMN service_designation TEXT");
+      }
+      if (!creditInvoicesCols.some(col => col.name === 'owner_id')) {
+        db.exec("ALTER TABLE credit_invoices ADD COLUMN owner_id INTEGER");
+      }
     }
-  }
-} catch (e) {
-  console.error("Migration error (default license):", e);
-}
 
-// Migration: Add missing columns
-try {
-  // Users migrations
-  const userColumns = db.prepare("PRAGMA table_info(users)").all() as any[];
-  if (!userColumns.some(col => col.name === 'phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT");
-  if (!userColumns.some(col => col.name === 'nif')) db.exec("ALTER TABLE users ADD COLUMN nif TEXT");
-  if (!userColumns.some(col => col.name === 'address')) db.exec("ALTER TABLE users ADD COLUMN address TEXT");
-  if (!userColumns.some(col => col.name === 'company_name')) db.exec("ALTER TABLE users ADD COLUMN company_name TEXT");
-  if (!userColumns.some(col => col.name === 'status')) {
-    db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
-  }
-  db.exec("UPDATE users SET status = 'active' WHERE status IS NULL");
-  if (!userColumns.some(col => col.name === 'username')) {
-    db.exec("ALTER TABLE users ADD COLUMN username TEXT");
-    db.exec("UPDATE users SET username = email WHERE username IS NULL");
-  }
-  if (!userColumns.some(col => col.name === 'created_at')) {
-    db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME");
-    db.exec("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
-  }
-  if (!userColumns.some(col => col.name === 'role_id')) db.exec("ALTER TABLE users ADD COLUMN role_id INTEGER");
-  if (!userColumns.some(col => col.name === 'custom_permissions')) db.exec("ALTER TABLE users ADD COLUMN custom_permissions TEXT");
-  if (!userColumns.some(col => col.name === 'establishment_id')) db.exec("ALTER TABLE users ADD COLUMN establishment_id INTEGER");
-  if (!userColumns.some(col => col.name === 'cash_register_id')) db.exec("ALTER TABLE users ADD COLUMN cash_register_id INTEGER");
-  if (!userColumns.some(col => col.name === 'fiscal_regime')) {
-    db.exec("ALTER TABLE users ADD COLUMN fiscal_regime TEXT DEFAULT 'geral'");
-    db.exec("UPDATE users SET fiscal_regime = 'geral' WHERE fiscal_regime IS NULL OR fiscal_regime = ''");
-  }
-  if (!userColumns.some(col => col.name === 'billing_mode')) {
-    db.exec("ALTER TABLE users ADD COLUMN billing_mode TEXT DEFAULT 'tradicional'");
-    db.exec("UPDATE users SET billing_mode = 'tradicional' WHERE billing_mode IS NULL OR billing_mode = ''");
-  }
-
-  // Transactions migrations
-  const transColumns = db.prepare("PRAGMA table_info(transactions)").all() as any[];
-  if (!transColumns.some(col => col.name === 'billing_mode')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN billing_mode TEXT DEFAULT 'tradicional'");
-    db.exec("UPDATE transactions SET billing_mode = 'tradicional' WHERE billing_mode IS NULL OR billing_mode = ''");
-  }
-  if (!transColumns.some(col => col.name === 'hash')) db.exec("ALTER TABLE transactions ADD COLUMN hash TEXT");
-  if (!transColumns.some(col => col.name === 'signature')) db.exec("ALTER TABLE transactions ADD COLUMN signature TEXT");
-  if (!transColumns.some(col => col.name === 'prev_signature')) db.exec("ALTER TABLE transactions ADD COLUMN prev_signature TEXT");
-  if (!transColumns.some(col => col.name === 'key_version_id')) db.exec("ALTER TABLE transactions ADD COLUMN key_version_id INTEGER");
-
-  const ciColumns = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
-  if (!ciColumns.some(col => col.name === 'hash')) db.exec("ALTER TABLE credit_invoices ADD COLUMN hash TEXT");
-  if (!ciColumns.some(col => col.name === 'signature')) db.exec("ALTER TABLE credit_invoices ADD COLUMN signature TEXT");
-  if (!ciColumns.some(col => col.name === 'prev_signature')) db.exec("ALTER TABLE credit_invoices ADD COLUMN prev_signature TEXT");
-  if (!ciColumns.some(col => col.name === 'key_version_id')) db.exec("ALTER TABLE credit_invoices ADD COLUMN key_version_id INTEGER");
-
-  const piColumns = db.prepare("PRAGMA table_info(proforma_invoices)").all() as any[];
-  if (!piColumns.some(col => col.name === 'hash')) db.exec("ALTER TABLE proforma_invoices ADD COLUMN hash TEXT");
-  if (!piColumns.some(col => col.name === 'signature')) db.exec("ALTER TABLE proforma_invoices ADD COLUMN signature TEXT");
-  if (!piColumns.some(col => col.name === 'prev_signature')) db.exec("ALTER TABLE proforma_invoices ADD COLUMN prev_signature TEXT");
-  if (!piColumns.some(col => col.name === 'key_version_id')) db.exec("ALTER TABLE proforma_invoices ADD COLUMN key_version_id INTEGER");
-
-  // Services migrations
-  const serviceColumns = db.prepare("PRAGMA table_info(services)").all() as any[];
-  if (!serviceColumns.some(col => col.name === 'retention_enabled')) {
-    db.exec("ALTER TABLE services ADD COLUMN retention_enabled INTEGER DEFAULT 0");
-  }
-
-  // Invoice Series migrations
-  const seriesColumns = db.prepare("PRAGMA table_info(invoice_series)").all() as any[];
-  if (!seriesColumns.some(col => col.name === 'agt_status')) {
-    db.exec("ALTER TABLE invoice_series ADD COLUMN agt_status TEXT DEFAULT 'aprovada'");
-    db.exec("UPDATE invoice_series SET agt_status = 'aprovada'");
-  }
-  if (!seriesColumns.some(col => col.name === 'is_electronic')) {
-    db.exec("ALTER TABLE invoice_series ADD COLUMN is_electronic INTEGER DEFAULT 0");
-  }
-  if (!seriesColumns.some(col => col.name === 'fiscal_year')) {
-    db.exec("ALTER TABLE invoice_series ADD COLUMN fiscal_year INTEGER");
-  }
-  if (!seriesColumns.some(col => col.name === 'request_reason')) {
-    db.exec("ALTER TABLE invoice_series ADD COLUMN request_reason TEXT");
-  }
-  if (!seriesColumns.some(col => col.name === 'type')) {
-    db.exec("ALTER TABLE invoice_series ADD COLUMN type TEXT DEFAULT 'FR'");
-  }
-  if (!serviceColumns.some(col => col.name === 'retention_percentage')) {
-    db.exec("ALTER TABLE services ADD COLUMN retention_percentage REAL DEFAULT 0");
-  }
-
-  // Stores migrations
-  const establishmentColumns = db.prepare("PRAGMA table_info(establishments)").all() as any[];
-  if (!establishmentColumns.some(col => col.name === 'email')) db.exec("ALTER TABLE establishments ADD COLUMN email TEXT");
-  if (!establishmentColumns.some(col => col.name === 'establishment_code')) db.exec("ALTER TABLE establishments ADD COLUMN establishment_code TEXT");
-
-  // HR migrations
-  const hrPaymentColumns = db.prepare("PRAGMA table_info(hr_salary_payments)").all() as any[];
-  if (!hrPaymentColumns.some(col => col.name === 'bonus')) db.exec("ALTER TABLE hr_salary_payments ADD COLUMN bonus REAL DEFAULT 0");
-
-  // Support tickets migrations
-  const ticketColumns = db.prepare("PRAGMA table_info(support_tickets)").all() as any[];
-  if (!ticketColumns.some(col => col.name === 'created_at')) {
-    db.exec("ALTER TABLE support_tickets ADD COLUMN created_at DATETIME");
-    db.exec("UPDATE support_tickets SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
-  }
-  if (!ticketColumns.some(col => col.name === 'updated_at')) {
-    db.exec("ALTER TABLE support_tickets ADD COLUMN updated_at DATETIME");
-    db.exec("UPDATE support_tickets SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL");
-  }
-  if (!ticketColumns.some(col => col.name === 'priority')) {
-    db.exec("ALTER TABLE support_tickets ADD COLUMN priority TEXT DEFAULT 'medium'");
-  }
-
-  // Products migrations
-  const productColumns = db.prepare("PRAGMA table_info(products)").all() as any[];
-  if (!productColumns.some(col => col.name === 'warehouse_id')) {
-    db.exec("ALTER TABLE products ADD COLUMN warehouse_id INTEGER");
-  }
-
-  // Ensure every establishment has at least one warehouse
-  const establishments = db.prepare("SELECT id FROM establishments").all() as { id: number }[];
-  establishments.forEach(est => {
-    const warehouse = db.prepare("SELECT id FROM warehouses WHERE establishment_id = ?").get(est.id);
-    if (!warehouse) {
-      db.prepare("INSERT INTO warehouses (establishment_id, name, type) VALUES (?, ?, ?)").run(est.id, 'Armazém Principal', 'principal');
+    const transactionsCols = db.prepare("PRAGMA table_info(transactions)").all() as any[];
+    if (transactionsCols.length > 0 && !transactionsCols.some(col => col.name === 'owner_id')) {
+      db.exec("ALTER TABLE transactions ADD COLUMN owner_id INTEGER");
     }
-  });
 
-  // Link products to a warehouse if they are not linked
-  db.exec(`
-    UPDATE products 
-    SET warehouse_id = (
-      SELECT id FROM warehouses 
-      WHERE establishment_id = products.establishment_id 
-      LIMIT 1
-    ) 
-    WHERE warehouse_id IS NULL
-  `);
-} catch (e) {
-  console.error("Migration error:", e);
-}
-
-try {
-  const columns = db.prepare("PRAGMA table_info(licenses)").all() as any[];
-  if (!columns.some(col => col.name === 'created_at')) {
-    db.exec("ALTER TABLE licenses ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP");
-  }
-} catch (e) {
-  console.error("Migration error (licenses):", e);
-}
-
-try {
-  const columns = db.prepare("PRAGMA table_info(establishments)").all() as any[];
-  if (!columns.some(col => col.name === 'created_at')) {
-    db.exec("ALTER TABLE establishments ADD COLUMN created_at DATETIME");
-    db.exec("UPDATE establishments SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
-  }
-  if (!columns.some(col => col.name === 'nif')) db.exec("ALTER TABLE establishments ADD COLUMN nif TEXT");
-  if (!columns.some(col => col.name === 'phone')) db.exec("ALTER TABLE establishments ADD COLUMN phone TEXT");
-  if (!columns.some(col => col.name === 'bank_accounts')) db.exec("ALTER TABLE establishments ADD COLUMN bank_accounts TEXT");
-} catch (e) {
-  console.error("Migration error (establishments):", e);
-}
-
-try {
-  const columns = db.prepare("PRAGMA table_info(proforma_invoices)").all() as any[];
-  if (!columns.some(col => col.name === 'bank_accounts')) db.exec("ALTER TABLE proforma_invoices ADD COLUMN bank_accounts TEXT");
-} catch (e) {
-  console.error("Migration error (proforma_invoices):", e);
-}
-
-try {
-  const columns = db.prepare("PRAGMA table_info(products)").all() as any[];
-  
-  const hasMinStock = columns.some(col => col.name === 'min_stock');
-  if (!hasMinStock) {
-    db.exec("ALTER TABLE products ADD COLUMN min_stock INTEGER DEFAULT 5");
-  }
-
-  const hasIsPromo = columns.some(col => col.name === 'is_promo');
-  if (!hasIsPromo) {
-    db.exec("ALTER TABLE products ADD COLUMN is_promo INTEGER DEFAULT 0");
-  }
-
-  const hasBarcode = columns.some(col => col.name === 'barcode');
-  if (!hasBarcode) {
-    db.exec("ALTER TABLE products ADD COLUMN barcode TEXT");
-    // Generate barcodes for existing products
-    const products = db.prepare("SELECT id FROM products WHERE barcode IS NULL").all() as any[];
-    for (const p of products) {
-      const barcode = Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
-      db.prepare("UPDATE products SET barcode = ? WHERE id = ?").run(barcode, p.id);
-    }
-  }
-  
-  // Ensure barcode uniqueness is per store, not global
-  try {
-    db.exec("DROP INDEX IF EXISTS idx_products_barcode");
-    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_products_establishment_barcode ON products(establishment_id, barcode)");
-  } catch (e) {
-    console.error("Error updating barcode index:", e);
-  }
-  const proformaColumns = db.prepare("PRAGMA table_info(proforma_invoices)").all() as any[];
-  if (!proformaColumns.some(col => col.name === 'invoice_number')) {
-    db.exec("ALTER TABLE proforma_invoices ADD COLUMN invoice_number TEXT");
-  }
-} catch (e) {
-  console.error("Migration error:", e);
-}
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS stock_movements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    product_id INTEGER,
-    user_id INTEGER,
-    type TEXT, -- 'in', 'out', 'transfer', 'adjustment'
-    quantity INTEGER,
-    reason TEXT,
-    from_establishment_id INTEGER,
-    to_establishment_id INTEGER,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(product_id) REFERENCES products(id),
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-`);
-
-  try {
-    const columns = db.prepare("PRAGMA table_info(stock_movements)").all() as any[];
-    if (!columns.some(col => col.name === 'from_establishment_id')) {
-      db.exec("ALTER TABLE stock_movements ADD COLUMN from_establishment_id INTEGER");
-    }
-    if (!columns.some(col => col.name === 'to_establishment_id')) {
-      db.exec("ALTER TABLE stock_movements ADD COLUMN to_establishment_id INTEGER");
-    }
-    if (!columns.some(col => col.name === 'supplier_id')) {
-      db.exec("ALTER TABLE stock_movements ADD COLUMN supplier_id INTEGER");
-    }
-    if (!columns.some(col => col.name === 'purchase_id')) {
-      db.exec("ALTER TABLE stock_movements ADD COLUMN purchase_id INTEGER");
-    }
-  } catch (e) {
-    console.error("Migration error (stock_movements):", e);
-  }
-
-  // Migration for credit_invoices
-  try {
-    const columns = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
-    if (!columns.some(col => col.name === 'seller_id')) {
-      db.exec("ALTER TABLE credit_invoices ADD COLUMN seller_id INTEGER");
-    }
-    if (!columns.some(col => col.name === 'payment_method')) {
-      db.exec("ALTER TABLE credit_invoices ADD COLUMN payment_method TEXT");
-    }
-    if (!columns.some(col => col.name === 'parent_invoice_id')) {
-      db.exec("ALTER TABLE credit_invoices ADD COLUMN parent_invoice_id INTEGER");
-    }
-    if (!columns.some(col => col.name === 'reason')) {
-      db.exec("ALTER TABLE credit_invoices ADD COLUMN reason TEXT");
-    }
-    if (!columns.some(col => col.name === 'note_category')) {
-      db.exec("ALTER TABLE credit_invoices ADD COLUMN note_category TEXT");
-    }
-    if (!columns.some(col => col.name === 'adjustment_amount')) {
-      db.exec("ALTER TABLE credit_invoices ADD COLUMN adjustment_amount REAL DEFAULT 0");
-    }
-    if (!columns.some(col => col.name === 'observations')) {
-      db.exec("ALTER TABLE credit_invoices ADD COLUMN observations TEXT");
-    }
-  } catch (e) {
-    console.error("Migration error (credit_invoices):", e);
-  }
-
-  // Migration for purchase_returns
-  try {
-    const columns = db.prepare("PRAGMA table_info(purchase_returns)").all() as any[];
-    if (!columns.some(col => col.name === 'type')) {
-      db.exec("ALTER TABLE purchase_returns ADD COLUMN type TEXT DEFAULT 'credit'");
-    }
-    if (!columns.some(col => col.name === 'note_category')) {
-      db.exec("ALTER TABLE purchase_returns ADD COLUMN note_category TEXT DEFAULT 'return'");
-    }
-    if (!columns.some(col => col.name === 'adjustment_amount')) {
-      db.exec("ALTER TABLE purchase_returns ADD COLUMN adjustment_amount REAL DEFAULT 0");
-    }
-    if (!columns.some(col => col.name === 'observations')) {
-      db.exec("ALTER TABLE purchase_returns ADD COLUMN observations TEXT");
-    }
-    if (!columns.some(col => col.name === 'invoice_number')) {
-      db.exec("ALTER TABLE purchase_returns ADD COLUMN invoice_number TEXT");
+    const proformaInvoicesCols = db.prepare("PRAGMA table_info(proforma_invoices)").all() as any[];
+    if (proformaInvoicesCols.length > 0) {
+      if (!proformaInvoicesCols.some(col => col.name === 'service_designation')) {
+        db.exec("ALTER TABLE proforma_invoices ADD COLUMN service_designation TEXT");
+      }
+      if (!proformaInvoicesCols.some(col => col.name === 'owner_id')) {
+        db.exec("ALTER TABLE proforma_invoices ADD COLUMN owner_id INTEGER");
+      }
     }
   } catch (e) {
     console.error("Migration error (purchase_returns):", e);
   }
-
-  try {
-    db.prepare("ALTER TABLE hr_roles ADD COLUMN base_role TEXT DEFAULT 'seller'").run();
-  } catch (e) {}
-
-  try {
-    const columns = db.prepare("PRAGMA table_info(cashier_sessions)").all() as any[];
-    if (!columns.some(col => col.name === 'cash_register_id')) {
-      db.exec("ALTER TABLE cashier_sessions ADD COLUMN cash_register_id INTEGER");
-    }
-  } catch (e) {
-    console.error("Migration error (cashier_sessions):", e);
-  }
-
-  try {
-    const columns = db.prepare("PRAGMA table_info(transactions)").all() as any[];
-    if (!columns.some(col => col.name === 'cash_register_id')) {
-      db.exec("ALTER TABLE transactions ADD COLUMN cash_register_id INTEGER");
-    }
-  } catch (e) {
-    console.error("Migration error (transactions):", e);
-  }
-
-  try {
-    const columns = db.prepare("PRAGMA table_info(cash_movements)").all() as any[];
-    if (!columns.some(col => col.name === 'cash_register_id')) {
-      db.exec("ALTER TABLE cash_movements ADD COLUMN cash_register_id INTEGER");
-    }
-  } catch (e) {
-    console.error("Migration error (cash_movements):", e);
-  }
-  db.exec(`
-  CREATE TABLE IF NOT EXISTS hr_salaries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER UNIQUE,
-    base_salary REAL DEFAULT 0,
-    bonuses REAL DEFAULT 0,
-    discounts REAL DEFAULT 0,
-    vacation_days_per_year INTEGER DEFAULT 22,
-    last_payment_date TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS hr_salary_payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    salary_id INTEGER,
-    amount REAL,
-    type TEXT, -- 'base', 'bonus', 'discount', 'full_payment'
-    description TEXT,
-    month TEXT, -- Format: YYYY-MM
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(salary_id) REFERENCES hr_salaries(id)
-  );
-  `);
-
-  try {
-    db.prepare("ALTER TABLE hr_salary_payments ADD COLUMN month TEXT").run();
-  } catch (e) {
-    // Column might already exist
-  }
-
-  db.exec(`
-  CREATE TABLE IF NOT EXISTS services (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    establishment_id INTEGER,
-    name TEXT,
-    code TEXT,
-    description TEXT,
-    price REAL,
-    availability_condition TEXT, -- 'always' or 'product_purchased'
-    show_in_pos INTEGER DEFAULT 1, -- 0 for NO, 1 for YES
-    tax_id INTEGER,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(owner_id) REFERENCES users(id),
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(tax_id) REFERENCES taxes(id)
-  );
-  `);
-
-  db.exec(`
-  CREATE TABLE IF NOT EXISTS hr_attendance (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    establishment_id INTEGER,
-    entry_time DATETIME,
-    exit_time DATETIME,
-    status TEXT, -- 'present', 'late', 'absent', 'half_day'
-    date TEXT, -- YYYY-MM-DD
-    notes TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id),
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS hr_vacations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    start_date TEXT,
-    end_date TEXT,
-    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
-    days_count INTEGER,
-    notes TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS suppliers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER,
-    name TEXT NOT NULL,
-    company_name TEXT,
-    nif TEXT,
-    phone TEXT,
-    email TEXT,
-    country TEXT,
-    city TEXT,
-    address TEXT,
-    responsible_person TEXT,
-    payment_method TEXT,
-    payment_term TEXT,
-    observations TEXT,
-    status TEXT DEFAULT 'active', -- 'active', 'inactive'
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS purchases (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    establishment_id INTEGER,
-    supplier_id INTEGER,
-    total_amount REAL,
-    paid_amount REAL DEFAULT 0,
-    status TEXT DEFAULT 'pending', -- 'pending', 'partial', 'paid'
-    invoice_number TEXT,
-    items TEXT, -- JSON string of items purchased
-    due_date DATETIME,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-    FOREIGN KEY(supplier_id) REFERENCES suppliers(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS purchase_payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    purchase_id INTEGER,
-    amount REAL,
-    payment_method TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(purchase_id) REFERENCES purchases(id)
-  );
-`);
-
-
-try {
-  const columnsTransactions = db.prepare("PRAGMA table_info(transactions)").all() as any[];
-  if (!columnsTransactions.some(col => col.name === 'split_details')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN split_details TEXT");
-  }
-  if (!columnsTransactions.some(col => col.name === 'client_name')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN client_name TEXT");
-  }
-  if (!columnsTransactions.some(col => col.name === 'client_nif')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN client_nif TEXT");
-  }
-  if (!columnsTransactions.some(col => col.name === 'discount_percent')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN discount_percent REAL DEFAULT 0");
-  }
-  if (!columnsTransactions.some(col => col.name === 'discount_amount')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN discount_amount REAL DEFAULT 0");
-  }
-  if (!columnsTransactions.some(col => col.name === 'tax_amount')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN tax_amount REAL DEFAULT 0");
-  }
-  if (!columnsTransactions.some(col => col.name === 'invoice_number')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN invoice_number TEXT");
-  }
-  if (!columnsTransactions.some(col => col.name === 'agt_status')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN agt_status TEXT DEFAULT 'pending'");
-  }
-
-  // Digital Signature Columns
-  const tablesToUpdate = ['transactions', 'credit_invoices', 'proforma_invoices'];
-  for (const table of tablesToUpdate) {
-    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as any[];
-    if (!cols.some(c => c.name === 'hash')) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN hash TEXT`);
-    }
-    if (!cols.some(c => c.name === 'signature')) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN signature TEXT`);
-    }
-    if (!cols.some(c => c.name === 'prev_signature')) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN prev_signature TEXT`);
-    }
-    if (!cols.some(c => c.name === 'key_version_id')) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN key_version_id INTEGER`);
-    }
-  }
-
-  const columnsPurchases = db.prepare("PRAGMA table_info(purchases)").all() as any[];
-  if (!columnsPurchases.some(col => col.name === 'delivery_status')) {
-    db.exec("ALTER TABLE purchases ADD COLUMN delivery_status TEXT DEFAULT 'pending'");
-  }
-  if (!columnsPurchases.some(col => col.name === 'received_at')) {
-    db.exec("ALTER TABLE purchases ADD COLUMN received_at DATETIME");
-  }
-  if (!columnsPurchases.some(col => col.name === 'is_direct')) {
-    db.exec("ALTER TABLE purchases ADD COLUMN is_direct INTEGER DEFAULT 0");
-  }
-  if (!columnsPurchases.some(col => col.name === 'is_stock_updated')) {
-    db.exec("ALTER TABLE purchases ADD COLUMN is_stock_updated INTEGER DEFAULT 0");
-  }
-  if (!columnsPurchases.some(col => col.name === 'is_closed')) {
-    db.exec("ALTER TABLE purchases ADD COLUMN is_closed INTEGER DEFAULT 0");
-  }
-  if (!columnsPurchases.some(col => col.name === 'tax_amount')) {
-    db.exec("ALTER TABLE purchases ADD COLUMN tax_amount REAL DEFAULT 0");
-  }
-
-  const columnsPurchaseReturns = db.prepare("PRAGMA table_info(purchase_returns)").all() as any[];
-  if (!columnsPurchaseReturns.some(col => col.name === 'tax_amount')) {
-    db.exec("ALTER TABLE purchase_returns ADD COLUMN tax_amount REAL DEFAULT 0");
-  }
-
-  // Finance integration migrations
-  try {
-    const ciCols = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
-    if (!ciCols.some(col => col.name === 'status')) {
-      db.exec("ALTER TABLE credit_invoices ADD COLUMN status TEXT DEFAULT 'pending'");
-    }
-
-    const arCols = db.prepare("PRAGMA table_info(accounts_receivable)").all() as any[];
-    if (!arCols.some(col => col.name === 'invoice_id')) {
-      db.exec("ALTER TABLE accounts_receivable ADD COLUMN invoice_id INTEGER");
-    }
-
-    const apCols = db.prepare("PRAGMA table_info(accounts_payable)").all() as any[];
-    if (!apCols.some(col => col.name === 'purchase_id')) {
-      db.exec("ALTER TABLE accounts_payable ADD COLUMN purchase_id INTEGER");
-    }
-  } catch (e) {
-    console.error("Migration error (finance integration):", e);
-  }
-} catch (e) {
-  console.error("Migration error (purchases/returns/transactions):", e);
 }
 
+runStartupMigrations();
 
-try {
-  const columns = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
-  if (!columns.some(col => col.name === 'due_date')) {
-    db.exec("ALTER TABLE credit_invoices ADD COLUMN due_date TEXT");
-  }
-  if (!columns.some(col => col.name === 'service_designation')) {
-    db.exec("ALTER TABLE credit_invoices ADD COLUMN service_designation TEXT");
-  }
-} catch (e) {}
+// Digital Signature Service
+const SIGNATURE_MASTER_KEY = process.env.SIGNATURE_MASTER_KEY || "factu-r-master-signature-key-2024";
 
-try {
-  const columns = db.prepare("PRAGMA table_info(clients)").all() as any[];
-  if (!columns.some(col => col.name === 'type')) {
-    db.exec("ALTER TABLE clients ADD COLUMN type TEXT DEFAULT 'individual'");
-  }
-} catch (e) {
-  console.error("Migration error (clients):", e);
-}
+const DigitalSignatureService = {
+  encryptPrivateKey: (privateKey: string) => {
+    try {
+      const cipher = crypto.createCipheriv("aes-256-cbc", Buffer.from(SIGNATURE_MASTER_KEY.padEnd(32).slice(0, 32)), Buffer.alloc(16, 0));
+      let encrypted = cipher.update(privateKey, "utf8", "hex");
+      encrypted += cipher.final("hex");
+      return encrypted;
+    } catch (e) {
+      console.error("Encryption error:", e);
+      throw e;
+    }
+  },
 
-// Seed Data (if empty)
-const userCount = db.prepare("SELECT count(*) as count FROM users").get() as { count: number };
-if (userCount.count === 0) {
-  db.prepare("INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, ?)").run("admin@factu.com", "admin", "Admin Master", "admin");
-  db.prepare("INSERT INTO users (email, password, name, role, phone, nif, address) VALUES (?, ?, ?, ?, ?, ?, ?)").run("owner@factu.com", "owner", "Dono do Estabelecimento", "owner", "923000000", "540123456", "Luanda, Angola");
-  db.prepare("INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, ?)").run("seller@factu.com", "seller", "Vendedor 1", "seller");
-  
-  db.prepare("INSERT INTO establishments (owner_id, name, address, license_expiry) VALUES (?, ?, ?, ?)").run(2, "Meu Estabelecimento A", "Rua 1, Luanda", "2026-12-31");
-  db.prepare("INSERT INTO establishments (owner_id, name, address, license_expiry) VALUES (?, ?, ?, ?)").run(2, "Meu Estabelecimento B", "Rua 2, Luanda", "2026-12-31");
-  
-  db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Básico", 5000, 1, 100, '{"reports": false, "multi_establishment": false}');
-  db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Profissional", 15000, 2, 1000, '{"reports": true, "multi_establishment": true}');
-  db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Empresarial", 35000, 10, 5000, '{"reports": true, "multi_establishment": true, "api_access": true}');
-  
-  db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("expiration_notice", "true");
-  db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("weekly_reports", "false");
-  db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("system_name", "Fatu-R");
-  
-  db.prepare("INSERT INTO support_tickets (user_id, subject, description, status) VALUES (?, ?, ?, ?)").run(2, "Dúvida sobre faturação", "Como posso emitir uma fatura pro-forma?", "open");
-  
-  // Seed Payments
-  db.prepare("INSERT INTO system_payments (user_id, amount, plan_id, payment_method, timestamp) VALUES (?, ?, ?, ?, ?)").run(2, 15000, 2, "Multicaixa", "2026-03-01 10:00:00");
-  db.prepare("INSERT INTO system_payments (user_id, amount, plan_id, payment_method, timestamp) VALUES (?, ?, ?, ?, ?)").run(2, 5000, 1, "Transferência", "2026-03-08 14:30:00");
-  db.prepare("INSERT INTO system_payments (user_id, amount, plan_id, payment_method, timestamp) VALUES (?, ?, ?, ?, ?)").run(2, 15000, 2, "Dinheiro", "2026-02-15 09:00:00");
-  db.prepare("INSERT INTO system_payments (user_id, amount, plan_id, payment_method, timestamp) VALUES (?, ?, ?, ?, ?)").run(2, 15000, 2, "Outros", "2025-12-20 16:00:00");
+  decryptPrivateKey: (encrypted: string) => {
+    try {
+      const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.from(SIGNATURE_MASTER_KEY.padEnd(32).slice(0, 32)), Buffer.alloc(16, 0));
+      let decrypted = decipher.update(encrypted, "hex", "utf8");
+      decrypted += decipher.final("utf8");
+      return decrypted;
+    } catch (e) {
+      console.error("Decryption error:", e);
+      throw e;
+    }
+  },
 
-  // Seed Staff
-  db.prepare("INSERT INTO staff (establishment_id, user_id, salary, shift_info) VALUES (?, ?, ?, ?)").run(1, 3, 50000, "Manhã");
+  generateCompanyKeys: (ownerId: number, createdById: number) => {
+    try {
+      const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
+        modulusLength: 2048,
+        publicKeyEncoding: { type: "spki", format: "pem" },
+        privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      });
 
-  // Seed License for the default owner
-  db.prepare(`
-    INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, features)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(2, 1, 'enterprise', new Date().toISOString(), '2026-12-31', 'active', '{"reports": true, "multi_establishment": true, "api_access": true}');
-}
+      // Inactivate old keys
+      db.prepare("UPDATE company_keys SET is_active = 0 WHERE owner_id = ?").run(ownerId);
 
-// Migration: Generate keys for existing owners
-try {
-  const owners = db.prepare("SELECT id, email FROM users WHERE role = 'owner'").all() as { id: number, email: string }[];
-  console.log(`Checking digital signature keys for ${owners.length} owners...`);
-  for (const owner of owners) {
-    const activeKey = DigitalSignatureService.getActiveKey(owner.id);
-    if (!activeKey) {
-      console.log(`Generating initial keys for owner ${owner.id} (${owner.email})`);
-      try {
-        DigitalSignatureService.generateCompanyKeys(owner.id, owner.id);
-        console.log(`Successfully generated keys for owner ${owner.id}`);
-      } catch (genError) {
-        console.error(`Failed to generate keys for owner ${owner.id}:`, genError);
+      const encryptedPrivate = DigitalSignatureService.encryptPrivateKey(privateKey);
+      
+      const result = db.prepare(`
+        INSERT INTO company_keys (owner_id, public_key, private_key_encrypted, version, is_active, type, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(ownerId, publicKey, encryptedPrivate, 1, 1, 'internal', createdById);
+
+      return { id: result.lastInsertRowid, publicKey, privateKey, version: 1 };
+    } catch (e) {
+      console.error("Error generating company keys:", e);
+      throw e;
+    }
+  },
+
+  getActiveKey: (ownerId: number) => {
+    return db.prepare("SELECT * FROM company_keys WHERE owner_id = ? AND is_active = 1 LIMIT 1").get(ownerId) as any;
+  },
+
+  signDocument: (ownerId: number, establishmentId: number, data: any) => {
+    try {
+      const activeKey = DigitalSignatureService.getActiveKey(ownerId);
+      if (!activeKey) {
+        // Auto-generate if missing for convenience in dev/initial setup
+        const keys = DigitalSignatureService.generateCompanyKeys(ownerId, ownerId);
+        return DigitalSignatureService.signDocument(ownerId, establishmentId, data);
       }
-    } else {
-      console.log(`Owner ${owner.id} already has an active key.`);
+
+      const privateKey = DigitalSignatureService.decryptPrivateKey(activeKey.private_key_encrypted);
+      const sign = crypto.createSign("SHA256");
+      sign.update(JSON.stringify(data));
+      const signature = sign.sign(privateKey, "base64");
+
+      return {
+        signature,
+        keyVersionId: activeKey.id,
+        hash: crypto.createHash("sha256").update(JSON.stringify(data)).digest("hex"),
+        prev_signature: "N/A"
+      };
+    } catch (e) {
+      console.error("Signing error:", e);
+      return { signature: "N/A", keyVersionId: null, hash: "N/A", prev_signature: "N/A" };
     }
   }
-} catch (e) {
-  console.error("Error in digital signature migration:", e);
+};
+
+// Initialize Database function
+function initializeDatabase() {
+  console.log("[DB] Initializing database...");
+  try {
+    // Handle BigInt serialization for JSON.stringify (needed for better-sqlite3 row IDs)
+    (BigInt.prototype as any).toJSON = function () {
+      return this.toString();
+    };
+
+    // Core Tables
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS owner_settings (
+        owner_id INTEGER PRIMARY KEY,
+        backup_enabled INTEGER DEFAULT 0,
+        backup_frequency TEXT DEFAULT 'daily',
+        financial_reminder_enabled INTEGER DEFAULT 0,
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE,
+        username TEXT UNIQUE,
+        password TEXT,
+        name TEXT,
+        role TEXT,
+        phone TEXT,
+        nif TEXT,
+        address TEXT,
+        bi_number TEXT,
+        company_name TEXT,
+        fiscal_regime TEXT DEFAULT 'geral',
+        billing_mode TEXT DEFAULT 'tradicional',
+        status TEXT DEFAULT 'active',
+        role_id INTEGER,
+        custom_permissions TEXT,
+        establishment_id INTEGER,
+        cash_register_id INTEGER,
+        owner_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS establishments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        name TEXT,
+        address TEXT,
+        phone TEXT,
+        email TEXT,
+        nif TEXT,
+        logo_url TEXT,
+        establishment_code TEXT,
+        status TEXT DEFAULT 'active',
+        license_status TEXT DEFAULT 'active',
+        license_expiry TEXT,
+        bank_accounts TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS billing_mode_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        changed_by INTEGER,
+        old_mode TEXT,
+        new_mode TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS critical_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        level TEXT, -- 'critical', 'warning', 'info'
+        source TEXT, -- 'database', 'system', 'backup'
+        message TEXT,
+        details TEXT,
+        is_read INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS health_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        check_type TEXT,
+        status TEXT,
+        message TEXT,
+        duration_ms INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS licenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        establishment_id INTEGER,
+        plan_type TEXT,
+        start_date TEXT,
+        expiry_date TEXT,
+        status TEXT DEFAULT 'active',
+        features TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS cancellation_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER NOT NULL,
+        doc_type TEXT DEFAULT 'NC',
+        type TEXT NOT NULL,
+        reason TEXT,
+        items_json TEXT,
+        amount DECIMAL(10, 2),
+        status TEXT DEFAULT 'pending',
+        requested_by INTEGER NOT NULL,
+        requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        processed_by INTEGER,
+        processed_at DATETIME,
+        establishment_id INTEGER,
+        FOREIGN KEY(invoice_id) REFERENCES transactions(id),
+        FOREIGN KEY(requested_by) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        warehouse_id INTEGER,
+        name TEXT,
+        price REAL,
+        stock INTEGER,
+        category TEXT,
+        image_url TEXT,
+        is_promo INTEGER DEFAULT 0,
+        min_stock INTEGER DEFAULT 5,
+        barcode TEXT,
+        tax_id INTEGER,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(tax_id) REFERENCES taxes(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        owner_id INTEGER,
+        seller_id INTEGER,
+        cash_register_id INTEGER,
+        total_amount REAL,
+        payment_method TEXT,
+        cash_received REAL,
+        discount_percent REAL DEFAULT 0,
+        discount_amount REAL DEFAULT 0,
+        tax_amount REAL DEFAULT 0,
+        invoice_number TEXT,
+        agt_status TEXT DEFAULT 'pending',
+        billing_mode TEXT DEFAULT 'tradicional',
+        split_details TEXT,
+        client_name TEXT,
+        client_nif TEXT,
+        hash TEXT,
+        signature TEXT,
+        prev_signature TEXT,
+        key_version_id INTEGER,
+        cancellation_id INTEGER,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        items TEXT,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(seller_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS credit_invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        owner_id INTEGER,
+        seller_id INTEGER,
+        parent_invoice_id INTEGER,
+        client_name TEXT,
+        client_nif TEXT,
+        address TEXT,
+        country TEXT,
+        doc_type TEXT,
+        series TEXT,
+        invoice_number TEXT,
+        invoice_date TEXT,
+        currency TEXT,
+        total_amount REAL,
+        tax_amount REAL,
+        payment_method TEXT,
+        reason TEXT,
+        note_category TEXT,
+        adjustment_amount REAL DEFAULT 0,
+        observations TEXT,
+        items TEXT,
+        due_date TEXT,
+        service_designation TEXT,
+        status TEXT DEFAULT 'pending',
+        hash TEXT,
+        signature TEXT,
+        prev_signature TEXT,
+        key_version_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS proforma_invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        owner_id INTEGER,
+        client_name TEXT,
+        client_nif TEXT,
+        client_address TEXT,
+        total_amount REAL,
+        items TEXT,
+        bank_accounts TEXT,
+        status TEXT DEFAULT 'draft',
+        invoice_number TEXT,
+        service_designation TEXT,
+        hash TEXT,
+        signature TEXT,
+        prev_signature TEXT,
+        key_version_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS warehouses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        type TEXT,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS cash_registers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        code TEXT UNIQUE,
+        default_initial_balance REAL DEFAULT 0,
+        max_limit REAL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS cash_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        seller_id INTEGER,
+        cash_register_id INTEGER,
+        type TEXT,
+        amount REAL,
+        description TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(seller_id) REFERENCES users(id),
+        FOREIGN KEY(cash_register_id) REFERENCES cash_registers(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS cashier_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        cash_register_id INTEGER,
+        seller_id INTEGER,
+        opening_amount REAL,
+        closing_amount REAL,
+        physical_amount REAL,
+        opening_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        closing_time DATETIME,
+        status TEXT DEFAULT 'open',
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(cash_register_id) REFERENCES cash_registers(id),
+        FOREIGN KEY(seller_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS staff (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        user_id INTEGER,
+        salary REAL,
+        shift_info TEXT,
+        UNIQUE(establishment_id, user_id),
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS hr_attendance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        establishment_id INTEGER,
+        entry_time DATETIME,
+        exit_time DATETIME,
+        status TEXT, -- 'present', 'late', 'absent', 'half_day'
+        date TEXT, -- YYYY-MM-DD
+        notes TEXT,
+        type TEXT DEFAULT 'manual',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS company_keys (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        public_key TEXT,
+        private_key_encrypted TEXT,
+        version INTEGER,
+        is_active INTEGER DEFAULT 1,
+        type TEXT DEFAULT 'internal',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER,
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS financial_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        owner_id INTEGER,
+        type TEXT,
+        category TEXT,
+        amount REAL,
+        payment_method TEXT,
+        description TEXT,
+        date TEXT,
+        status TEXT DEFAULT 'paid',
+        reference_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS accounts_receivable (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        owner_id INTEGER,
+        client_name TEXT,
+        amount REAL,
+        due_date TEXT,
+        status TEXT DEFAULT 'pending',
+        description TEXT,
+        invoice_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS accounts_payable (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        owner_id INTEGER,
+        supplier_name TEXT,
+        amount REAL,
+        due_date TEXT,
+        status TEXT DEFAULT 'pending',
+        description TEXT,
+        purchase_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS invoice_series (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        prefix TEXT,
+        start_number INTEGER,
+        current_number INTEGER,
+        status TEXT DEFAULT 'active',
+        agt_status TEXT DEFAULT 'aprovada',
+        is_electronic INTEGER DEFAULT 0,
+        fiscal_year INTEGER,
+        request_reason TEXT,
+        type TEXT DEFAULT 'FR',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS taxes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        percentage REAL,
+        tax_code TEXT DEFAULT 'NOR',
+        is_default INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS clients (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        nif TEXT,
+        email TEXT,
+        phone TEXT,
+        address TEXT,
+        type TEXT DEFAULT 'individual',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        subject TEXT,
+        description TEXT,
+        status TEXT DEFAULT 'open',
+        priority TEXT DEFAULT 'medium',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS system_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT UNIQUE,
+        value TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS system_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        price REAL,
+        max_establishments INTEGER,
+        max_products INTEGER,
+        features TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS system_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        amount REAL,
+        plan_id INTEGER,
+        payment_method TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(plan_id) REFERENCES system_plans(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS services (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        establishment_id INTEGER,
+        name TEXT,
+        code TEXT,
+        description TEXT,
+        price REAL,
+        availability_condition TEXT,
+        show_in_pos INTEGER DEFAULT 1,
+        tax_id INTEGER,
+        retention_enabled INTEGER DEFAULT 0,
+        retention_percentage REAL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users(id),
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(tax_id) REFERENCES taxes(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        name TEXT NOT NULL,
+        company_name TEXT,
+        nif TEXT,
+        phone TEXT,
+        email TEXT,
+        country TEXT,
+        city TEXT,
+        address TEXT,
+        responsible_person TEXT,
+        payment_method TEXT,
+        payment_term TEXT,
+        observations TEXT,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS purchases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        supplier_id INTEGER,
+        total_amount REAL,
+        paid_amount REAL DEFAULT 0,
+        tax_amount REAL DEFAULT 0,
+        status TEXT DEFAULT 'pending',
+        delivery_status TEXT DEFAULT 'pending',
+        received_at DATETIME,
+        is_direct INTEGER DEFAULT 0,
+        is_stock_updated INTEGER DEFAULT 0,
+        is_closed INTEGER DEFAULT 0,
+        invoice_number TEXT,
+        items TEXT,
+        due_date DATETIME,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(supplier_id) REFERENCES suppliers(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS purchase_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        purchase_id INTEGER,
+        amount REAL,
+        payment_method TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(purchase_id) REFERENCES purchases(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS purchase_returns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        supplier_id INTEGER,
+        purchase_id INTEGER,
+        items TEXT,
+        amount REAL,
+        tax_amount REAL DEFAULT 0,
+        type TEXT DEFAULT 'credit',
+        note_category TEXT DEFAULT 'return',
+        adjustment_amount REAL DEFAULT 0,
+        observations TEXT,
+        invoice_number TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
+        FOREIGN KEY(purchase_id) REFERENCES purchases(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS promotions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        start_date TEXT,
+        end_date TEXT,
+        discount_percent REAL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS promotion_products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        promotion_id INTEGER,
+        product_id INTEGER,
+        FOREIGN KEY(promotion_id) REFERENCES promotions(id),
+        FOREIGN KEY(product_id) REFERENCES products(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS stock_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        product_id INTEGER,
+        user_id INTEGER,
+        type TEXT,
+        quantity INTEGER,
+        reason TEXT,
+        from_establishment_id INTEGER,
+        to_establishment_id INTEGER,
+        supplier_id INTEGER,
+        purchase_id INTEGER,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(product_id) REFERENCES products(id),
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS hr_salaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER UNIQUE,
+        base_salary REAL DEFAULT 0,
+        bonuses REAL DEFAULT 0,
+        discounts REAL DEFAULT 0,
+        vacation_days_per_year INTEGER DEFAULT 22,
+        last_payment_date TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS hr_salary_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        salary_id INTEGER,
+        amount REAL,
+        bonus REAL DEFAULT 0,
+        type TEXT,
+        description TEXT,
+        month TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(salary_id) REFERENCES hr_salaries(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS hr_vacations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        start_date TEXT,
+        end_date TEXT,
+        status TEXT DEFAULT 'pending',
+        days_count INTEGER,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS hr_roles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        name TEXT,
+        base_role TEXT,
+        permissions TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS generated_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        name TEXT,
+        type TEXT,
+        generated_by TEXT,
+        file_data BLOB,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS backups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        filename TEXT,
+        size INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS ticket_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id INTEGER,
+        sender_id INTEGER,
+        message TEXT,
+        is_admin INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(ticket_id) REFERENCES support_tickets(id),
+        FOREIGN KEY(sender_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS key_management_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        user_id INTEGER,
+        action TEXT,
+        old_key_id INTEGER,
+        new_key_id INTEGER,
+        details TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users(id),
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS service_fees (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        service_id INTEGER,
+        name TEXT,
+        amount REAL,
+        FOREIGN KEY(service_id) REFERENCES services(id)
+      );
+    `);
+
+    // Run migrations after table creations
+    runStartupMigrations();
+
+    // Migration logic
+    const tablesToRenamCheck = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='stores'").get();
+    if (tablesToRenamCheck) {
+      db.exec("ALTER TABLE stores RENAME TO establishments");
+      console.log("[DB] Renamed stores to establishments");
+    }
+
+    // Migration: Add owner_id to users table if missing
+    const usersCols = db.prepare("PRAGMA table_info(users)").all() as any[];
+    if (!usersCols.find(c => c.name === 'owner_id')) {
+      db.exec("ALTER TABLE users ADD COLUMN owner_id INTEGER REFERENCES users(id)");
+      console.log("[DB] Added owner_id column to users table");
+    }
+
+    // Ensure default admin exists
+    let adminUser = db.prepare("SELECT id FROM users WHERE email = ?").get("admin@factu.com") as any;
+    if (!adminUser) {
+      console.log("[DB] Creating default admin...");
+      const result = db.prepare("INSERT INTO users (email, password, name, role, status, owner_id) VALUES (?, ?, ?, ?, ?, ?)").run(
+        "admin@factu.com", "admin", "Admin Master", "admin", "active", null
+      );
+      adminUser = { id: result.lastInsertRowid };
+    }
+
+    // Ensure default owner exists
+    let ownerUser = db.prepare("SELECT id FROM users WHERE email = ?").get("owner@factu.com") as any;
+    if (!ownerUser) {
+      console.log("[DB] Creating default owner...");
+      const result = db.prepare("INSERT INTO users (email, password, name, role, status, billing_mode) VALUES (?, ?, ?, ?, ?, ?)").run(
+        "owner@factu.com", "owner", "Proprietário", "owner", "active", "eletronica"
+      );
+      ownerUser = { id: result.lastInsertRowid };
+      // Self-reference for owner
+      db.prepare("UPDATE users SET owner_id = ? WHERE id = ?").run(ownerUser.id, ownerUser.id);
+    } else {
+      // Ensure owner self-references itself
+      db.prepare("UPDATE users SET owner_id = ? WHERE id = ? AND (owner_id IS NULL OR owner_id != id)").run(ownerUser.id, ownerUser.id);
+    }
+
+    // Ensure at least one establishment exists for the owner
+    const estCount = db.prepare("SELECT COUNT(*) as count FROM establishments").get() as any;
+    if (estCount.count === 0 && ownerUser) {
+      console.log("[DB] Seeding initial establishments...");
+      db.prepare("INSERT INTO establishments (owner_id, name, address, license_expiry, license_status) VALUES (?, ?, ?, ?, ?)").run(
+        ownerUser.id, "Meu Estabelecimento A", "Rua 1, Luanda", "2026-12-31", "active"
+      );
+      db.prepare("INSERT INTO establishments (owner_id, name, address, license_expiry, license_status) VALUES (?, ?, ?, ?, ?)").run(
+        ownerUser.id, "Meu Estabelecimento B", "Rua 2, Luanda", "2026-12-31", "active"
+      );
+      
+      const firstEst = db.prepare("SELECT id FROM establishments ORDER BY id ASC LIMIT 1").get() as any;
+      if (firstEst) {
+        db.prepare(`
+          INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, features)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(ownerUser.id, firstEst.id, 'enterprise', new Date().toISOString(), '2026-12-31', 'active', '{"reports": true, "multi_establishment": true, "api_access": true}');
+      }
+    }
+
+    // Ensure default seller exists and is correctly configured
+    let sellerUser = db.prepare("SELECT id FROM users WHERE email = ?").get("seller@factu.com") as any;
+    if (!sellerUser && ownerUser) {
+       console.log("[DB] Creating default seller...");
+       const result = db.prepare("INSERT INTO users (email, password, name, role, status, owner_id) VALUES (?, ?, ?, ?, ?, ?)").run(
+         "seller@factu.com", "seller", "Vendedor Exemplo", "seller", "active", ownerUser.id
+       );
+       sellerUser = { id: result.lastInsertRowid };
+    }
+
+    const sellerPerms = '["hr_manage", "pos_access", "pos_sell", "pos_open_cashier", "pos_close_cashier"]';
+    
+    if (sellerUser && ownerUser) {
+      console.log("[DB] Updating/Verifying default seller staff records...");
+      const firstEst = db.prepare("SELECT id FROM establishments ORDER BY id ASC LIMIT 1").get() as any;
+      if (firstEst) {
+        db.prepare("UPDATE users SET owner_id = ?, establishment_id = ?, custom_permissions = ?, status = 'active', role = 'seller' WHERE id = ?").run(
+          ownerUser.id,
+          firstEst.id,
+          sellerPerms,
+          sellerUser.id
+        );
+        db.prepare("INSERT OR IGNORE INTO staff (establishment_id, user_id, salary, shift_info) VALUES (?, ?, ?, ?)").run(firstEst.id, sellerUser.id, 75000, "Integral");
+        db.prepare("INSERT OR IGNORE INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(sellerUser.id, 75000);
+      }
+    }
+
+    // Seed Data (granular checks)
+    const plansCount = db.prepare("SELECT COUNT(*) as count FROM system_plans").get() as any;
+    if (plansCount.count === 0) {
+      console.log("[DB] Seeding system plans...");
+      db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Básico", 5000, 1, 100, '{"reports": false, "multi_establishment": false}');
+      db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Profissional", 15000, 2, 1000, '{"reports": true, "multi_establishment": true}');
+      db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Empresarial", 35000, 10, 5000, '{"reports": true, "multi_establishment": true, "api_access": true}');
+    }
+
+    const settingsCount = db.prepare("SELECT COUNT(*) as count FROM system_settings").get() as any;
+    if (settingsCount.count === 0) {
+      db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("expiration_notice", "true");
+      db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("weekly_reports", "false");
+      db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("system_name", "Fatu-R");
+    }
+
+    // Ensure series exist for establishment 1
+    const neededSeries = [
+      { prefix: 'A', type: 'FR' }, { prefix: 'E', type: 'FR' },
+      { prefix: 'A', type: 'FT' }, { prefix: 'E', type: 'FT' },
+      { prefix: 'A', type: 'NC' }, { prefix: 'E', type: 'NC' },
+      { prefix: 'A', type: 'ND' }, { prefix: 'E', type: 'ND' },
+      { prefix: 'A', type: 'PP' }, { prefix: 'E', type: 'PP' },
+      { prefix: 'A', type: 'RE' }, { prefix: 'E', type: 'RE' }
+    ];
+
+    for (const s of neededSeries) {
+      const existingSeries = db.prepare("SELECT id FROM invoice_series WHERE establishment_id = 1 AND prefix = ? AND type = ?").get(s.prefix, s.type);
+      if (!existingSeries) {
+        const isElectronic = s.prefix === 'E' ? 1 : 0;
+        const name = `Série ${isElectronic ? 'Eletrónica' : 'Normal'} ${s.type}`;
+        db.prepare(`
+          INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, status, agt_status, is_electronic, type)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(1, name, s.prefix, 1, 0, "active", "aprovada", isElectronic, s.type);
+      }
+    }
+
+    // Fix existing users without owner_id
+    db.prepare(`
+      UPDATE users 
+      SET owner_id = (SELECT owner_id FROM establishments WHERE establishments.id = users.establishment_id)
+      WHERE owner_id IS NULL AND establishment_id IS NOT NULL
+    `).run();
+
+    // Ensure owners have an owner_id set to themselves if not already set (important for licensing checks)
+    db.prepare("UPDATE users SET owner_id = id WHERE role = 'owner' AND owner_id IS NULL").run();
+
+    // Migration: Digital Signature Keys
+    const owners = db.prepare("SELECT id, email FROM users WHERE role = 'owner'").all() as any[];
+    for (const owner of owners) {
+      const activeKey = DigitalSignatureService.getActiveKey(owner.id);
+      if (!activeKey) {
+        try {
+          DigitalSignatureService.generateCompanyKeys(owner.id, owner.id);
+          console.log(`[DB] Generated signature keys for owner ${owner.email}`);
+        } catch (e) {
+          console.error(`[DB] Error generating keys for owner ${owner.id}:`, e);
+        }
+      }
+    }
+
+    // Ensure every establishment has at least one warehouse
+    const ests = db.prepare("SELECT id FROM establishments").all() as any[];
+    for (const est of ests) {
+      const warehouse = db.prepare("SELECT id FROM warehouses WHERE establishment_id = ?").get(est.id);
+      if (!warehouse) {
+        db.prepare("INSERT INTO warehouses (establishment_id, name, type) VALUES (?, ?, ?)").run(est.id, 'Armazém Principal', 'principal');
+      }
+    }
+
+    console.log("[DB] Database initialization complete.");
+  } catch (error) {
+    console.error("[DB] Initialization error:", error);
+  }
 }
 
-// Cleanup test products once
-db.exec("DELETE FROM products WHERE establishment_id = 1 AND name IN ('Cuca Garrafa 33cl', 'Nocal Garrafa 33cl', 'Eka Garrafa 33cl', 'Doppel Munich', 'Booster Cider', 'Coca-Cola Lata', 'Pão Francês', 'Morango Fresco', 'Perfume Chanel N5', 'Blue Polpa 33cl', 'Arroz Tio Lucas 1kg', 'Sabonete Dove', 'Leite Nido 400g', 'Massa Esparguete', 'Vinho Pera Doce', 'Detergente Omo 1kg', 'Óleo Alimentar 1L', 'N''Gola Garrafa', '33 Export', 'Bolachas Maria')");
+// Database initialization and migrations concentrated in initializeDatabase()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // --- Helper Functions ---
 function hasPermission(userId: number, permissionId: string): boolean {
@@ -1494,8 +1347,14 @@ function hasPermission(userId: number, permissionId: string): boolean {
 }
 
 async function startServer() {
+  console.log("[Server] Starting startup sequence...");
+  initializeDatabase();
   const app = express();
   
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", time: new Date().toISOString() });
+  });
+
   // Request Logger
   app.use((req, res, next) => {
     if (req.path.startsWith('/api')) {
@@ -1508,14 +1367,85 @@ async function startServer() {
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
   const PORT = 3000;
 
-  // --- API Routes ---
-  app.post("/api/v1/process-checkout", (req, res) => {
+  // --- Reliability Utilities ---
+  function logCriticalAlert(level: string, source: string, message: string, details?: string) {
     try {
+      db.prepare(`
+        INSERT INTO critical_alerts (level, source, message, details)
+        VALUES (?, ?, ?, ?)
+      `).run(level, source, message, details || null);
+      console.error(`[CRITICAL ALERT] ${level.toUpperCase()} | ${source} | ${message}`);
+    } catch (e) {
+      console.error("Failed to log critical alert:", e);
+    }
+  }
+
+  async function performRestoreTest() {
+    const startTime = Date.now();
+    try {
+      // 1. Create a temporary backup
+      const backupFilename = `restore_test_${Date.now()}.db`;
+      await db.backup(backupFilename);
+      
+      // 2. Open the backup to verify it
+      const backupDb = new Database(backupFilename);
+      const userCount = backupDb.prepare("SELECT count(*) as count FROM users").get() as any;
+      
+      // 3. Simple integrity check
+      const check = backupDb.pragma("integrity_check") as any[];
+      if (check[0].integrity_check !== 'ok') {
+        throw new Error(`Integridade do backup falhou: ${check[0].integrity_check}`);
+      }
+      
+      backupDb.close();
+      
+      // 4. Log success
+      const duration = Date.now() - startTime;
+      db.prepare(`
+        INSERT INTO health_logs (check_type, status, message, duration_ms)
+        VALUES (?, ?, ?, ?)
+      `).run('backup_restore', 'success', `Restore test successful. Verified ${userCount.count} users.`, duration);
+      
+      return { success: true, userCount: userCount.count };
+    } catch (e: any) {
+      const duration = Date.now() - startTime;
+      logCriticalAlert('critical', 'backup', 'Falha no teste de restauração de backup', e.message);
+      db.prepare(`
+        INSERT INTO health_logs (check_type, status, message, duration_ms)
+        VALUES (?, ?, ?, ?)
+      `).run('backup_restore', 'failure', e.message, duration);
+      return { success: false, error: e.message };
+    }
+  }
+
+  // Periodic health checks (every 1 hour)
+  setInterval(() => {
+    console.log("[HealthCheck] Running periodic reliability tests...");
+    performRestoreTest().catch(console.error);
+    
+    // Database integrity check
+    try {
+      const checkResult = db.pragma("integrity_check") as any[];
+      if (checkResult[0].integrity_check !== 'ok') {
+        logCriticalAlert('critical', 'database', 'Corrupção detectada na base de dados', JSON.stringify(checkResult));
+      }
+    } catch (e: any) {
+      logCriticalAlert('critical', 'database', 'Falha ao executar integrity_check', e.message);
+    }
+  }, 1000 * 60 * 60);
+
+  // --- API Routes ---
+  app.post("/api/p-venda", (req, res) => {
+    console.log(`[Checkout] RECEIVED POST request at /api/p-venda from ${req.ip}`);
+    res.setHeader('Content-Type', 'application/json');
+    try {
+      const body = req.body;
+      console.log(`[Checkout] Body keys: ${Object.keys(body).join(', ')}`);
       const { 
         establishment_id, seller_id, cash_register_id, total_amount, items, payment_method, 
         cash_received, split_details, client_name, client_nif,
         discount_percent, discount_amount, tax_amount
-      } = req.body;
+      } = body;
 
       if (!establishment_id || !seller_id || !items || !Array.isArray(items)) {
         return res.status(400).json({ error: "Dados da venda incompletos ou inválidos." });
@@ -1538,29 +1468,30 @@ async function startServer() {
       if (!establishment) {
         return res.status(404).json({ error: "Estabelecimento não encontrado." });
       }
-      const owner = db.prepare("SELECT billing_mode FROM users WHERE id = ?").get(establishment.owner_id) as any;
+      const ownerId = establishment.owner_id;
+      const owner = db.prepare("SELECT billing_mode FROM users WHERE id = ?").get(ownerId) as any;
       const billing_mode = (owner?.billing_mode === 'eletronica') ? 'eletronica' : 'tradicional';
       const seriesPrefix = billing_mode === 'eletronica' ? 'E' : 'A';
       
-      // CRITICAL: Ensure no 'E' series is active if we are in traditional mode, and vice-versa
-      db.prepare("UPDATE invoice_series SET status = 'inactive' WHERE establishment_id = ? AND prefix != ? AND status = 'active'").run(establishment_id, seriesPrefix);
-
-      // Find active series for this establishment and prefix
-      let series = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = ? AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id, seriesPrefix) as any;
+        // Find active series for this establishment, prefix and type FR (Fatura Recibo)
+      let series = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = ? AND type = 'FR' AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id, seriesPrefix) as any;
       
+      if (!series && billing_mode === 'tradicional') {
+        const year = new Date().getFullYear();
+        console.log(`[Checkout] Creating automatic traditional series for establishment ${establishment_id}`);
+        db.prepare(`
+          INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, status, agt_status, is_electronic, type, fiscal_year)
+          VALUES (?, ?, ?, ?, ?, ?, 'aprovada', 0, 'FR', ?)
+        `).run(establishment_id, `Série FR Automática ${year}`, 'A', 1, 0, 'active', year);
+        series = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = 'A' AND type = 'FR' AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id) as any;
+      }
+
       if (!series) {
-        // Create a default series if none exists
-        const seriesName = billing_mode === 'eletronica' ? 'Série Eletrónica' : 'Série Tradicional';
-        const info = db.prepare(`
-          INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, status, agt_status, is_electronic)
-          VALUES (?, ?, ?, 1, 0, 'active', 'aprovada', ?)
-        `).run(
-          establishment_id, 
-          seriesName, 
-          seriesPrefix,
-          billing_mode === 'eletronica' ? 1 : 0
-        );
-        series = db.prepare("SELECT * FROM invoice_series WHERE id = ?").get(info.lastInsertRowid) as any;
+        console.error(`[Checkout] No active series found for establishment ${establishment_id}, prefix ${seriesPrefix}`);
+        const errorMsg = billing_mode === 'eletronica' 
+          ? "Faturação Eletrónica: Nenhuma série (prefixo 'E') ativa e aprovada foi encontrada. Por favor, solicite a aprovação de uma série nas definições."
+          : "Não existe uma série ativa para Fatura Recibo (FR). Por favor, crie uma série em Definições.";
+        return res.status(403).json({ error: errorMsg });
       }
 
       if (billing_mode === 'eletronica' && series.agt_status !== 'aprovada') {
@@ -1600,13 +1531,14 @@ async function startServer() {
 
       const info = db.prepare(`
         INSERT INTO transactions (
-          establishment_id, seller_id, cash_register_id, total_amount, items, payment_method, 
+          establishment_id, owner_id, seller_id, cash_register_id, total_amount, items, payment_method, 
           cash_received, split_details, client_name, client_nif,
           discount_percent, discount_amount, tax_amount, invoice_number, agt_status, billing_mode,
           hash, signature, prev_signature, key_version_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         establishment_id, 
+        ownerId,
         seller_id, 
         cash_register_id || null,
         total_amount, 
@@ -1625,7 +1557,7 @@ async function startServer() {
         signatureData.hash,
         signatureData.signature,
         signatureData.prev_signature,
-        signatureData.key_version_id
+        signatureData.keyVersionId
       );
       
       // Update stock
@@ -1718,8 +1650,37 @@ async function startServer() {
     }
   });
 
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+  // --- Reliability API ---
+  app.get("/api/admin/reliability/alerts", (req, res) => {
+    try {
+      const alerts = db.prepare("SELECT * FROM critical_alerts ORDER BY created_at DESC LIMIT 50").all();
+      res.json(alerts);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/admin/reliability/health-logs", (req, res) => {
+    try {
+      const logs = db.prepare("SELECT * FROM health_logs ORDER BY created_at DESC LIMIT 50").all();
+      res.json(logs);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/admin/reliability/restore-test", async (req, res) => {
+    const result = await performRestoreTest();
+    res.json(result);
+  });
+
+  app.post("/api/admin/reliability/alerts/:id/read", (req, res) => {
+    try {
+      db.prepare("UPDATE critical_alerts SET is_read = 1 WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // Auth (Mock for now)
@@ -1839,6 +1800,7 @@ async function startServer() {
         name: user.name, 
         role: user.role, 
         establishment_id: establishmentId,
+        owner_id: ownerId,
         role_id: user.role_id,
         custom_permissions: user.custom_permissions,
         permissions: effectivePermissions,
@@ -1922,11 +1884,18 @@ async function startServer() {
       if (establishment) ownerId = establishment.owner_id;
     }
 
+    if (userId) {
+      const user = db.prepare("SELECT role FROM users WHERE id = ?").get(userId) as any;
+      if (user?.role === 'admin') {
+        return next();
+      }
+    }
+
     if (ownerId) {
       const owner = db.prepare("SELECT status, billing_mode FROM users WHERE id = ?").get(ownerId) as any;
       
       // If it's the checkout route and billing mode is electronic, we bypass the suspension/license check (simulation mode)
-      if (req.path.includes('process-checkout') && owner?.billing_mode === 'eletronica') {
+      if (req.path.includes('p-venda') && owner?.billing_mode === 'eletronica') {
         return next();
       }
 
@@ -1938,8 +1907,12 @@ async function startServer() {
       // But if they are accessing a specific establishment, check that establishment's license
       if (currentEstablishmentId) {
         const establishment = db.prepare("SELECT license_status, license_expiry FROM establishments WHERE id = ?").get(currentEstablishmentId) as any;
-        if (establishment && (establishment.license_status === 'expired' || (establishment.license_expiry && new Date(establishment.license_expiry) < new Date()))) {
+        if (establishment && establishment.license_status === 'expired') {
           return res.status(403).json({ error: "Licença expirada para este estabelecimento. Por favor, renove a sua subscrição." });
+        }
+        if (establishment && establishment.license_expiry && new Date(establishment.license_expiry) < new Date()) {
+           // Allow a small grace period or just be more descriptive
+           return res.status(403).json({ error: "A licença deste estabelecimento expirou em " + new Date(establishment.license_expiry).toLocaleDateString() });
         }
       } else {
         // Global check for owner: must have at least one active license or be in trial
@@ -1950,10 +1923,14 @@ async function startServer() {
         `).get(ownerId);
         
         if (!activeLicense) {
-          // Check if they have any establishments at all (if new user, allow)
+          // Check if they have any establishments at all
           const establishmentCount = db.prepare("SELECT count(*) as count FROM establishments WHERE owner_id = ?").get(ownerId) as any;
-          if (establishmentCount.count > 0) {
-            return res.status(403).json({ error: "A sua licença expirou. Por favor, contacte o suporte para renovar." });
+          // Only block if they have many establishments and none are active
+          // For now, let's just log and continue if it's a dashboard view without specific establishment
+          if (establishmentCount.count > 0 && req.path.includes('/api/owner/establishments')) {
+            // Allow listing establishments even if license is questionable
+          } else if (establishmentCount.count > 5 && !activeLicense) {
+             return res.status(403).json({ error: "A sua licença expirou. Por favor, contacte o suporte para renovar." });
           }
         }
       }
@@ -1997,9 +1974,13 @@ async function startServer() {
         id: user.id, 
         role: user.role, 
         status: user.status, 
+        owner_id: ownerId,
         fiscal_regime: owner?.fiscal_regime || 'geral',
         billing_mode: owner?.billing_mode || 'tradicional',
-        hasActiveLicense: !!activeLicense 
+        license: {
+          status: activeLicense ? 'active' : 'expired',
+          expiry_date: activeLicense ? (activeLicense as any).expiry_date : null
+        }
       });
     } catch (e: any) {
       console.error("Error in user-status:", e);
@@ -2573,24 +2554,29 @@ async function startServer() {
           AND status = 'active'
         `).run(ownerId);
 
-        // 5. Create new series for each establishment
-        const establishments = db.prepare("SELECT id FROM establishments WHERE owner_id = ?").all(ownerId) as any[];
-        const year = new Date().getFullYear();
-        const prefix = billing_mode === 'tradicional' ? 'A' : 'E';
-        
-        for (const establishment of establishments) {
-          db.prepare(`
-            INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, status, agt_status, is_electronic)
-            VALUES (?, ?, ?, ?, ?, ?, 'aprovada', ?)
-          `).run(
-            establishment.id, 
-            `Série ${prefix} ${year}`, 
-            prefix, 
-            1, 
-            0, 
-            'active',
-            billing_mode === 'eletronica' ? 1 : 0
-          );
+        // 5. Create new series for each establishment for essential types (ONLY for Traditional mode)
+        if (billing_mode === 'tradicional') {
+          const establishments = db.prepare("SELECT id FROM establishments WHERE owner_id = ?").all(ownerId) as any[];
+          const year = new Date().getFullYear();
+          const prefix = 'A';
+          const docTypes = ['FR', 'FT', 'NC', 'ND', 'PP', 'RE'];
+          
+          for (const establishment of establishments) {
+            for (const type of docTypes) {
+              db.prepare(`
+                INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, status, agt_status, is_electronic, type)
+                VALUES (?, ?, ?, ?, ?, ?, 'aprovada', 0, ?)
+              `).run(
+                establishment.id, 
+                `Série ${type} ${prefix}${year}`, 
+                prefix, 
+                1, 
+                0, 
+                'active',
+                type
+              );
+            }
+          }
         }
 
         // 6. Log history
@@ -2764,25 +2750,60 @@ async function startServer() {
 
   // Helper to get establishment IDs and effective owner ID based on user role
   const getContextData = (rawUserId: string | number) => {
-    if (!rawUserId || rawUserId === 'undefined') return { establishmentIds: [], ownerId: null };
+    if (!rawUserId || rawUserId === 'undefined' || rawUserId === 'null') return { establishmentIds: [], ownerId: null };
     const userId = Number(rawUserId);
     if (isNaN(userId)) return { establishmentIds: [], ownerId: null };
 
-    const userResult = db.prepare("SELECT role, establishment_id FROM users WHERE id = ?").get(userId) as any;
-    if (!userResult) return { establishmentIds: [], ownerId: null };
-    
-    if (userResult.role === 'owner') {
-      const establishments = db.prepare("SELECT id FROM establishments WHERE owner_id = ?").all(userId) as any[];
-      return { 
-        establishmentIds: establishments.map(e => e.id), 
-        ownerId: userId 
-      };
-    } else if (userResult.role === 'manager' && userResult.establishment_id) {
-      const est = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(userResult.establishment_id) as any;
-      return { 
-        establishmentIds: [userResult.establishment_id], 
-        ownerId: est?.owner_id || null 
-      };
+    try {
+      const userResult = db.prepare("SELECT id, role, establishment_id, owner_id FROM users WHERE id = ?").get(userId) as any;
+      if (!userResult) return { establishmentIds: [], ownerId: null };
+      
+      if (userResult.role === 'admin') {
+        const establishments = db.prepare("SELECT id FROM establishments").all() as any[];
+        return { 
+          establishmentIds: establishments.map(e => e.id), 
+          ownerId: userId 
+        };
+      }
+
+      if (userResult.role === 'owner') {
+        const establishments = db.prepare("SELECT id FROM establishments WHERE owner_id = ?").all(userId) as any[];
+        return { 
+          establishmentIds: establishments.map(e => e.id), 
+          ownerId: userId 
+        };
+      }
+
+      // If user has owner_id directly set, use it (crucial for HR employees without direct establishment assignment)
+      if (userResult.owner_id) {
+        const ests = db.prepare("SELECT id FROM establishments WHERE owner_id = ?").all(userResult.owner_id) as { id: number }[];
+        return { 
+          establishmentIds: ests.map(e => e.id), 
+          ownerId: userResult.owner_id 
+        };
+      }
+
+      if (userResult.role === 'seller' || userResult.role === 'manager') {
+        let establishment_id = userResult.establishment_id;
+        
+        if (!establishment_id) {
+          // Check staff table as fallback
+          const staffEntry = db.prepare("SELECT establishment_id FROM staff WHERE user_id = ? LIMIT 1").get(userResult.id) as any;
+          if (staffEntry) {
+            establishment_id = staffEntry.establishment_id;
+          }
+        }
+
+        if (establishment_id) {
+          const est = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
+          return { 
+            establishmentIds: [establishment_id], 
+            ownerId: est?.owner_id || null 
+          };
+        }
+      }
+    } catch (err) {
+      console.error(`[Context] Error getting context for user ${userId}:`, err);
     }
     return { establishmentIds: [], ownerId: null };
   };
@@ -2814,33 +2835,22 @@ async function startServer() {
       const today = new Date().toISOString().split('T')[0];
       const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
 
-      // Stats
-      const todayStats = db.prepare(`
-        SELECT 
-          (
-            COALESCE((SELECT SUM(total_amount) FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?), 0) +
-            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?), 0)
-          ) as today_sales,
-          (
-            COALESCE((SELECT COUNT(*) FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?), 0) +
-            COALESCE((SELECT COUNT(*) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?), 0)
-          ) as today_count,
-          COALESCE((SELECT SUM(amount) FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND date(date) = ?), 0) as today_expense
-      `).get(
-        ...establishmentIds, today, 
-        ...establishmentIds, today, 
-        ...establishmentIds, today,
-        ...establishmentIds, today,
-        ...establishmentIds, today
-      ) as any;
+      // Break down the big stats query to avoid "Too many parameter values" if there are many establishments
+      const salesRes = db.prepare(`SELECT SUM(total_amount) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?`).get(...establishmentIds, today) as any;
+      const creditRes = db.prepare(`SELECT SUM(total_amount) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
+      
+      const countSalesRes = db.prepare(`SELECT COUNT(*) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?`).get(...establishmentIds, today) as any;
+      const countCreditRes = db.prepare(`SELECT COUNT(*) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
 
-      const monthlySales = db.prepare(`
-        SELECT 
-          (
-            COALESCE((SELECT SUM(total_amount) FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ?), 0) +
-            COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) >= ?), 0)
-          ) as monthly_sales
-      `).get(...establishmentIds, monthStart, ...establishmentIds, monthStart) as any;
+      const expenseRes = db.prepare(`SELECT SUM(amount) as total FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND date(date) = ?`).get(...establishmentIds, today) as any;
+
+      const monthlySalesRes = db.prepare(`SELECT SUM(total_amount) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ?`).get(...establishmentIds, monthStart) as any;
+      const monthlyCreditRes = db.prepare(`SELECT SUM(total_amount) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) >= ?`).get(...establishmentIds, monthStart) as any;
+
+      const todaySales = (salesRes?.total || 0) + (creditRes?.total || 0);
+      const todayCount = (countSalesRes?.total || 0) + (countCreditRes?.total || 0);
+      const todayExpense = expenseRes?.total || 0;
+      const monthlySales = (monthlySalesRes?.total || 0) + (monthlyCreditRes?.total || 0);
 
       const lowStockCount = db.prepare(`SELECT COUNT(*) as count FROM products WHERE establishment_id IN (${placeholders}) AND stock <= min_stock`).get(...establishmentIds) as any;
       const staffCount = db.prepare(`SELECT COUNT(*) as count FROM staff WHERE establishment_id IN (${placeholders})`).get(...establishmentIds) as any;
@@ -2848,12 +2858,12 @@ async function startServer() {
       
       // Financial Health check (Salaries vs Income)
       const salarySettings = db.prepare("SELECT financial_reminder_enabled FROM owner_settings WHERE owner_id = ?").get(resolvedOwnerId) as any;
-      let financialHealth = { enabled: !!salarySettings?.financial_reminder_enabled, enoughForSalaries: false, totalSalaries: 0, monthlyIncome: monthlySales.monthly_sales };
+      let financialHealth = { enabled: !!salarySettings?.financial_reminder_enabled, enoughForSalaries: false, totalSalaries: 0, monthlyIncome: monthlySales };
       
       if (financialHealth.enabled) {
         const totalSalaries = db.prepare(`SELECT SUM(salary) as total FROM staff WHERE establishment_id IN (${placeholders})`).get(...establishmentIds) as any;
         financialHealth.totalSalaries = totalSalaries?.total || 0;
-        financialHealth.enoughForSalaries = (monthlySales.monthly_sales || 0) >= financialHealth.totalSalaries;
+        financialHealth.enoughForSalaries = (monthlySales || 0) >= financialHealth.totalSalaries;
       }
 
       const topProducts = db.prepare(`
@@ -2936,10 +2946,10 @@ async function startServer() {
       `).all(...establishmentIds, ...establishmentIds);
 
       res.json({
-        todaySales: todayStats.today_sales,
-        todayCount: todayStats.today_count,
-        todayExpense: todayStats.today_expense,
-        monthlySales: monthlySales.monthly_sales,
+        todaySales,
+        todayCount,
+        todayExpense,
+        monthlySales,
         lowStockCount: lowStockCount.count,
         staffCount: staffCount.count,
         topProducts,
@@ -4058,70 +4068,90 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  app.get("/api/owner/active-series/:establishmentId", (req, res) => {
+    try {
+      const { establishmentId } = req.params;
+      const series = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND status = 'active'").all(establishmentId);
+      res.json(series);
+    } catch (error) {
+      console.error("Error fetching active series:", error);
+      res.status(500).json({ error: "Erro ao buscar séries ativas." });
+    }
+  });
+
   app.get("/api/owner/establishment-details/:establishmentId", (req, res) => {
-    const establishmentId = req.params.establishmentId;
+    const { establishmentId } = req.params;
+    console.log(`[API] Fetching establishment details for ID: ${establishmentId}`);
     
-    const establishment = db.prepare("SELECT * FROM establishments WHERE id = ?").get(establishmentId) as any;
-    if (!establishment) return res.status(404).json({ error: "Estabelecimento não encontrado." });
-
-    const ownerId = establishment.owner_id;
-    
-    // Unified sales calculation (PDV transactions + Admin Invoices)
-    const stats = db.prepare(`
-      SELECT 
-        (SELECT COUNT(*) FROM transactions WHERE establishment_id = ? AND date(timestamp) = date('now')) +
-        (SELECT COUNT(*) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR', 'NC', 'ND')) as total_transactions,
-        
-        COALESCE((SELECT SUM(total_amount) FROM transactions WHERE establishment_id = ? AND date(timestamp) = date('now')), 0) +
-        COALESCE((SELECT SUM(total_amount) FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = date('now') AND doc_type IN ('FT', 'FR', 'ND')), 0) as total_revenue,
-        
-        (SELECT COUNT(DISTINCT seller_id) FROM transactions WHERE establishment_id = ? AND date(timestamp) = date('now')) as active_sellers
-    `).get(establishmentId, establishmentId, establishmentId, establishmentId, establishmentId, establishmentId) as any;
-
-    const lowStock = db.prepare("SELECT count(*) as count FROM products WHERE establishment_id = ? AND stock <= min_stock").get(establishmentId) as any;
-    const staffCount = db.prepare("SELECT count(*) as count FROM staff WHERE establishment_id = ?").get(establishmentId) as any;
-
-    // Financial health for reminder
-    const ownerSettings = db.prepare("SELECT financial_reminder_enabled FROM owner_settings WHERE owner_id = ?").get(ownerId) as any;
-    
-    // Get monthly financial summary for the reminder
-    const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-
-    const financialSummary = db.prepare(`
-      SELECT 
-        SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
-        SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
-      FROM financial_transactions 
-      WHERE owner_id = ? AND date(date) >= ? AND date(date) <= ?
-    `).get(ownerId, firstDay, lastDay) as any;
-
-    const totalSalaries = db.prepare(`
-      SELECT SUM(salary) as total FROM staff WHERE establishment_id IN (SELECT id FROM establishments WHERE owner_id = ?)
-    `).get(ownerId) as any;
-
-    const monthlyIncome = (financialSummary?.income || 0);
-    const neededForSalaries = (totalSalaries?.total || 0);
-    const enoughForSalaries = monthlyIncome >= neededForSalaries;
-
-    res.json({
-      establishment,
-      dashboard: {
-        todaySales: stats?.total_transactions || 0,
-        todayRevenue: stats?.total_revenue || 0,
-        activeSellers: stats?.active_sellers || 0,
-        lowStockCount: lowStock?.count || 0,
-        staffCount: staffCount?.count || 0,
-        financialReminder: {
-          enabled: ownerSettings?.financial_reminder_enabled === 1,
-          enoughForSalaries,
-          monthlyIncome,
-          neededForSalaries,
-          daysUntilMonthEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate()
-        }
+    try {
+      const establishment = db.prepare("SELECT * FROM establishments WHERE id = ?").get(establishmentId) as any;
+      if (!establishment) {
+        console.warn(`[API] Establishment ${establishmentId} not found`);
+        return res.status(404).json({ error: "Estabelecimento não encontrado." });
       }
-    });
+
+      const ownerId = establishment.owner_id;
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Breakdown queries for stability
+      const countTrans = db.prepare("SELECT COUNT(*) as count FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
+      const countCredit = db.prepare("SELECT COUNT(*) as count FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
+      const totalTrans = db.prepare("SELECT SUM(total_amount) as total FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
+      const totalCredit = db.prepare("SELECT SUM(total_amount) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
+      const totalNC = db.prepare("SELECT SUM(total_amount) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type = 'NC'").get(establishmentId, today) as any;
+      const sellers = db.prepare("SELECT COUNT(DISTINCT seller_id) as count FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
+
+      const stats = {
+        total_transactions: (countTrans?.count || 0) + (countCredit?.count || 0),
+        total_revenue: (totalTrans?.total || 0) + (totalCredit?.total || 0) - (totalNC?.total || 0),
+        active_sellers: sellers?.count || 0
+      };
+
+      console.log(`[API] Stats for establishment ${establishmentId}:`, stats);
+
+      const lowStock = db.prepare("SELECT count(*) as count FROM products WHERE establishment_id = ? AND stock <= min_stock").get(establishmentId) as any;
+      const staffCountResult = db.prepare("SELECT count(*) as count FROM staff WHERE establishment_id = ?").get(establishmentId) as any;
+
+      // Financial health for reminder
+      let financialReminder = { enabled: false };
+      try {
+        const ownerSettings = db.prepare("SELECT financial_reminder_enabled FROM owner_settings WHERE owner_id = ?").get(ownerId) as any;
+        if (ownerSettings) financialReminder.enabled = ownerSettings.financial_reminder_enabled === 1;
+      } catch (err) {}
+      
+      // Get monthly financial summary
+      const now = new Date();
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      const financialSummary = db.prepare(`
+        SELECT 
+          SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
+          SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
+        FROM financial_transactions 
+        WHERE establishment_id = ? AND date >= ?
+      `).get(establishmentId, firstDay) as any;
+
+      res.json({
+        establishment: {
+          ...establishment,
+          bank_accounts: establishment.bank_accounts 
+            ? (typeof establishment.bank_accounts === 'string' ? JSON.parse(establishment.bank_accounts) : (establishment.bank_accounts || [])) 
+            : []
+        },
+        dashboard: {
+          ...stats,
+          lowStockCount: lowStock?.count || 0,
+          staffCount: staffCountResult?.count || 0,
+          financialReminder,
+          financialSummary: {
+            income: financialSummary?.income || 0,
+            expense: financialSummary?.expense || 0
+          }
+        }
+      });
+    } catch (error) {
+      console.error(`[API] Exception in establishment-details for ${establishmentId}:`, error);
+      res.status(500).json({ error: "Erro interno ao buscar detalhes do estabelecimento." });
+    }
   });
 
   app.get("/api/owner/staff/:establishmentId", (req, res) => {
@@ -4438,9 +4468,10 @@ async function startServer() {
   });
 
   app.get("/api/owner/hr/employees/:ownerId", (req, res) => {
-    const { establishmentIds } = getContextData(req.params.ownerId);
-    if (establishmentIds.length === 0) return res.json([]);
-    const placeholders = establishmentIds.map(() => '?').join(',');
+    const { establishmentIds, ownerId } = getContextData(req.params.ownerId);
+    
+    // Even if no establishments, an owner might have orphaned staff
+    const placeholders = establishmentIds.length > 0 ? establishmentIds.map(() => '?').join(',') : 'NULL';
 
     const employees = db.prepare(`
       SELECT u.*, r.name as role_name, s.base_salary, s.bonuses, s.discounts, st.name as establishment_name
@@ -4448,53 +4479,85 @@ async function startServer() {
       LEFT JOIN hr_roles r ON u.role_id = r.id
       LEFT JOIN hr_salaries s ON u.id = s.user_id
       LEFT JOIN establishments st ON u.establishment_id = st.id
-      WHERE u.role IN ('seller', 'manager', 'none') AND (u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) OR u.establishment_id IN (${placeholders}))
-    `).all(...[...establishmentIds, ...establishmentIds]);
+      WHERE u.role IN ('seller', 'manager', 'none') 
+      AND (
+        u.owner_id = ? 
+        OR u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) 
+        OR u.establishment_id IN (${placeholders})
+      )
+    `).all(...[ownerId, ...establishmentIds, ...establishmentIds]);
     res.json(employees);
   });
 
   app.post("/api/owner/hr/employees", (req, res) => {
-    const { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, cash_register_id, bi_number, address } = req.body;
+    let { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, cash_register_id, bi_number, address, owner_id: bodyOwnerId } = req.body;
+    
+    // Normalize empty strings to null
+    const normEmail = (email && email.trim() !== '') ? email.trim() : null;
+    const normUsername = (username && username.trim() !== '') ? username.trim() : null;
+    const normEstId = (establishment_id && establishment_id !== '') ? Number(establishment_id) : null;
+    const normRoleId = (role_id && role_id !== '') ? Number(role_id) : null;
+    const normRegId = (cash_register_id && cash_register_id !== '') ? Number(cash_register_id) : null;
+
     try {
+      // Resolve the real owner ID from the person making the request
+      const { ownerId: resolvedOwnerId } = getContextData(bodyOwnerId);
+      if (!resolvedOwnerId) throw new Error("Não foi possível determinar o proprietário.");
+
+      // Check for existing email or username
+      if (normEmail) {
+        const existingEmail = db.prepare("SELECT id FROM users WHERE email = ?").get(normEmail);
+        if (existingEmail) throw new Error("Este email já está a ser utilizado.");
+      }
+      if (normUsername) {
+        const existingUsername = db.prepare("SELECT id FROM users WHERE username = ?").get(normUsername);
+        if (existingUsername) throw new Error("Este nome de utilizador já está a ser utilizado.");
+      }
+
       db.transaction(() => {
         let finalRole = bodyRole || 'seller';
-        if (role_id) {
-          const hrRole = db.prepare("SELECT base_role FROM hr_roles WHERE id = ?").get(role_id) as any;
+        if (normRoleId) {
+          const hrRole = db.prepare("SELECT base_role FROM hr_roles WHERE id = ?").get(normRoleId) as any;
           if (hrRole) finalRole = hrRole.base_role;
         }
 
-        const result = db.prepare("INSERT INTO users (name, email, username, password, role, establishment_id, role_id, custom_permissions, status, cash_register_id, bi_number, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-          name, email, username, password, finalRole, establishment_id, role_id, JSON.stringify(custom_permissions), 'active', cash_register_id, bi_number, address
+        const result = db.prepare("INSERT INTO users (name, email, username, password, role, establishment_id, role_id, custom_permissions, status, cash_register_id, bi_number, address, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+          name, normEmail, normUsername, password, finalRole, normEstId, normRoleId, JSON.stringify(custom_permissions || []), 'active', normRegId, bi_number || null, address || null, resolvedOwnerId
         );
         const userId = result.lastInsertRowid;
         const salary = Number(base_salary) || 0;
         db.prepare("INSERT OR REPLACE INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(userId, salary);
-        if (establishment_id) {
-          db.prepare("INSERT OR REPLACE INTO staff (establishment_id, user_id, salary) VALUES (?, ?, ?)").run(establishment_id, userId, salary);
+        if (normEstId) {
+          db.prepare("INSERT OR REPLACE INTO staff (establishment_id, user_id, salary) VALUES (?, ?, ?)").run(normEstId, userId, salary);
         }
       })();
       res.json({ success: true });
     } catch (error: any) {
+      console.error("Error creating employee:", error);
       res.status(500).json({ error: error.message });
     }
   });
 
   app.put("/api/owner/hr/employees/:id", (req, res) => {
     const { name, email, username, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, status, cash_register_id, bi_number, address } = req.body;
+    
+    // Normalize empty strings to null
+    const normEmail = (email && email.trim() !== '') ? email.trim() : null;
+    const normUsername = (username && username.trim() !== '') ? username.trim() : null;
+    const estId = (establishment_id === '' || establishment_id === undefined) ? null : Number(establishment_id);
+    const rId = (role_id === '' || role_id === undefined) ? null : Number(role_id);
+    const crId = (cash_register_id === '' || cash_register_id === undefined) ? null : Number(cash_register_id);
+
     try {
       db.transaction(() => {
         let finalRole = bodyRole || 'seller';
-        if (role_id && role_id !== '') {
-          const hrRole = db.prepare("SELECT base_role FROM hr_roles WHERE id = ?").get(role_id) as any;
+        if (rId) {
+          const hrRole = db.prepare("SELECT base_role FROM hr_roles WHERE id = ?").get(rId) as any;
           if (hrRole) finalRole = hrRole.base_role;
         }
 
-        const estId = (establishment_id === '' || establishment_id === undefined) ? null : Number(establishment_id);
-        const rId = (role_id === '' || role_id === undefined) ? null : Number(role_id);
-        const crId = (cash_register_id === '' || cash_register_id === undefined) ? null : Number(cash_register_id);
-
         db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, establishment_id = ?, role_id = ?, custom_permissions = ?, status = ?, cash_register_id = ?, bi_number = ?, address = ? WHERE id = ?").run(
-          name, email || null, username || null, finalRole, estId, rId, JSON.stringify(custom_permissions), status, crId, bi_number || null, address || null, req.params.id
+          name, normEmail, normUsername, finalRole, estId, rId, JSON.stringify(custom_permissions || []), status, crId, bi_number || null, address || null, req.params.id
         );
         const salary = Number(base_salary) || 0;
         db.prepare("INSERT OR REPLACE INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(req.params.id, salary);
@@ -6182,19 +6245,50 @@ async function startServer() {
   app.post("/api/owner/proforma", (req, res) => {
     const { establishment_id, owner_id, client_name = 'Consumidor Final', client_nif, client_address, total_amount, items } = req.body;
     try {
-      // Fetch establishment bank accounts to include in the proforma
-      const establishment = db.prepare("SELECT bank_accounts FROM establishments WHERE id = ?").get(establishment_id) as any;
-      const bank_accounts = establishment?.bank_accounts || "[]";
+      // Get Billing Mode and Series
+      const establishmentData = db.prepare("SELECT owner_id, bank_accounts FROM establishments WHERE id = ?").get(establishment_id) as any;
+      if (!establishmentData) {
+        return res.status(404).json({ error: "Estabelecimento não encontrado." });
+      }
+      const owner = db.prepare("SELECT billing_mode FROM users WHERE id = ?").get(establishmentData.owner_id) as any;
+      const billing_mode = (owner?.billing_mode === 'eletronica') ? 'eletronica' : 'tradicional';
+      const seriesPrefix = billing_mode === 'eletronica' ? 'E' : 'A';
+      const bank_accounts = establishmentData.bank_accounts || "[]";
+
+      // Find active series for Proforma (PP or FP)
+      let series = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = ? AND type IN ('PP', 'FP') AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id, seriesPrefix) as any;
+      
+      if (!series && billing_mode === 'tradicional') {
+        const year = new Date().getFullYear();
+        db.prepare(`
+          INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, status, agt_status, is_electronic, type, fiscal_year)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(establishment_id, `Série PP ${year}`, 'A', 1, 0, 'active', 'aprovada', 0, 'PP', year);
+        series = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = 'A' AND type = 'PP' AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id) as any;
+      }
+
+      if (!series) {
+        const errorMsg = billing_mode === 'eletronica'
+          ? "Faturação Eletrónica: Nenhuma série de Fatura Proforma (prefixo 'E') ativa e aprovada encontrada. Solicite-a nas definições."
+          : `Não existe uma série ativa para Fatura Proforma (PP/FP). Por favor, crie uma série nas configurações.`;
+        return res.status(403).json({ error: errorMsg });
+      }
+
+      if (billing_mode === 'eletronica' && series.agt_status !== 'aprovada') {
+        return res.status(403).json({ error: "A série de faturação eletrónica ainda não foi aprovada pela AGT." });
+      }
 
       // Generate invoice number
       const year = new Date().getFullYear();
-      const count = db.prepare("SELECT count(*) as count FROM proforma_invoices WHERE establishment_id = ? AND strftime('%Y', created_at) = ?").get(establishment_id, year.toString()) as any;
-      const invoice_number = `PF ${year}/${(count.count + 1).toString().padStart(3, '0')}`;
-      const doc_type = 'PP';
+      const nextNum = (series.current_number || 0) + 1;
+      const doc_type = series.type;
+      const invoice_number = `${doc_type} ${series.prefix}${series.fiscal_year || year}/${nextNum.toString().padStart(3, '0')}`;
+      
+      // Update series
+      db.prepare("UPDATE invoice_series SET current_number = ? WHERE id = ?").run(nextNum, series.id);
 
       // Digital Signature
-      const owner = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
-      const signatureData = DigitalSignatureService.signDocument(owner.owner_id, establishment_id, {
+      const signatureData = DigitalSignatureService.signDocument(establishmentData.owner_id, establishment_id, {
         invoice_number,
         doc_type,
         client_name,
@@ -6210,7 +6304,7 @@ async function startServer() {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         establishment_id, owner_id, client_name, client_nif, client_address, total_amount, JSON.stringify(items), bank_accounts, invoice_number,
-        signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.key_version_id
+        signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.keyVersionId
       );
       
       const newProforma = db.prepare("SELECT * FROM proforma_invoices WHERE id = ?").get(result.lastInsertRowid) as any;
@@ -6254,24 +6348,33 @@ async function startServer() {
         const billing_mode = (ownerInfo?.billing_mode === 'eletronica') ? 'eletronica' : 'tradicional';
         const seriesPrefix = billing_mode === 'eletronica' ? 'E' : 'A';
 
-        // Ensure we find the active series for the current mode
-        let activeSeries = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = ? AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id, seriesPrefix) as any;
+        // Ensure we find the active series for the current mode and document type
+        let activeSeries = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = ? AND type = ? AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id, seriesPrefix, doc_type) as any;
         
+        if (!activeSeries && billing_mode === 'tradicional') {
+          const year = new Date().getFullYear();
+          console.log(`[CreditInvoice] Creating automatic traditional series for establishment ${establishment_id}, type ${doc_type}`);
+          db.prepare(`
+            INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, status, agt_status, is_electronic, type, fiscal_year)
+            VALUES (?, ?, ?, ?, ?, ?, 'aprovada', 0, ?, ?)
+          `).run(establishment_id, `Série ${doc_type} Automática ${year}`, 'A', 1, 0, 'active', doc_type, year);
+          activeSeries = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = 'A' AND type = ? AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id, doc_type) as any;
+        }
+
         if (!activeSeries) {
-          // Create a default series if none active
-          const seriesName = billing_mode === 'eletronica' ? 'Série Eletrónica' : 'Série Tradicional';
-          const info = db.prepare(`
-            INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, status, agt_status, is_electronic)
-            VALUES (?, ?, ?, 1, 0, 'active', 'aprovada', ?)
-          `).run(
-            establishment_id, seriesName, seriesPrefix, billing_mode === 'eletronica' ? 1 : 0
-          );
-          activeSeries = db.prepare("SELECT * FROM invoice_series WHERE id = ?").get(info.lastInsertRowid) as any;
+          const errorMsg = billing_mode === 'eletronica'
+            ? `Faturação Eletrónica: Nenhuma série de ${doc_type} (prefixo 'E') ativa e aprovada encontrada. Solicite-a nas definições.`
+            : `Não existe uma série activa para o documento ${doc_type}. Por favor, active uma série em Definições.`;
+          throw new Error(errorMsg);
+        }
+
+        if (billing_mode === 'eletronica' && activeSeries.agt_status !== 'aprovada') {
+          throw new Error("A série de faturação eletrónica ainda não foi aprovada pela AGT.");
         }
 
         const year = new Date().getFullYear();
-        const nextNum = Math.max(activeSeries.current_number + 1, activeSeries.start_number);
-        const finalNumber = `${doc_type} ${activeSeries.prefix}/${year}/${nextNum.toString().padStart(4, '0')}`;
+        const nextNum = Math.max((activeSeries.current_number || 0) + 1, activeSeries.start_number || 1);
+        const finalNumber = `${doc_type} ${activeSeries.prefix}${activeSeries.fiscal_year || year}/${nextNum.toString().padStart(4, '0')}`;
         const finalSeries = activeSeries.name;
 
         // Update active series
@@ -6290,20 +6393,20 @@ async function startServer() {
 
         const result = db.prepare(`
           INSERT INTO credit_invoices (
-            establishment_id, client_nif, client_name, address, country, 
+            establishment_id, owner_id, client_nif, client_name, address, country, 
             doc_type, series, invoice_number, invoice_date, 
             currency, total_amount, tax_amount, items, seller_id,
             payment_method, parent_invoice_id, reason, note_category,
             adjustment_amount, observations, due_date, service_designation,
             hash, signature, prev_signature, key_version_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
-          establishment_id, client_nif, client_name, address, country, 
+          establishment_id, establishment.owner_id, client_nif, client_name, address, country, 
           doc_type, finalSeries, finalNumber, invoice_date, 
           currency, total_amount, tax_amount, JSON.stringify(items), seller_id || null,
           payment_method || 'cash', parent_invoice_id || null, reason || null, 
           note_category || null, adjustment_amount || 0, observations || null, req.body.due_date || null, req.body.service_designation || null,
-          signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.key_version_id
+          signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.keyVersionId
         );
 
         const invoiceId = result.lastInsertRowid;
@@ -6409,6 +6512,7 @@ async function startServer() {
         res.status(500).json({ error: "Failed to create invoice" });
       }
     } catch (e: any) {
+      console.error("[CreditInvoice] Error creating credit invoice:", e);
       res.status(400).json({ error: e.message });
     }
   });
@@ -6689,7 +6793,18 @@ async function startServer() {
 
   // Global Error Handler
   app.use((err: any, req: any, res: any, next: any) => {
-    console.error("Global Error Handler:", err);
+    console.error("Global Error Handler detected error:", err);
+    
+    // Always return JSON if it's an API request
+    if (req.path.startsWith('/api')) {
+      const statusCode = err.status || (res.statusCode >= 400 ? res.statusCode : 500);
+      return res.status(statusCode).json({ 
+        error: err.message || "Erro interno do servidor (API).",
+        path: req.path,
+        method: req.method
+      });
+    }
+
     res.status(err.status || 500).json({ 
       error: err.message || "Erro interno do servidor.",
       path: req.path,
@@ -6713,6 +6828,9 @@ async function startServer() {
   } else {
     app.use(express.static(path.join(__dirname, "dist")));
     app.get("*", (req, res) => {
+      if (req.path.startsWith('/api')) {
+        return res.status(404).json({ error: `Rota API não encontrada: ${req.method} ${req.path}` });
+      }
       res.sendFile(path.join(__dirname, "dist", "index.html"));
     });
   }

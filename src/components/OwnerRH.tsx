@@ -197,13 +197,13 @@ export const OwnerRH = ({ user }: { user: User }) => {
     try {
       const payload = {
         ...employeeForm,
-        email: employeeForm.is_system_user ? employeeForm.email : null,
-        username: employeeForm.is_system_user ? employeeForm.username : null,
-        password: employeeForm.is_system_user ? employeeForm.password : null,
+        email: (employeeForm.is_system_user && employeeForm.email.trim() !== '') ? employeeForm.email.trim() : null,
+        username: (employeeForm.is_system_user && employeeForm.username.trim() !== '') ? employeeForm.username.trim() : null,
+        password: (employeeForm.is_system_user && employeeForm.password.trim() !== '') ? employeeForm.password.trim() : null,
         custom_permissions: employeeForm.is_system_user ? employeeForm.custom_permissions : [],
         base_salary: Number(employeeForm.base_salary) || 0,
-        bi_number: employeeForm.bi_number,
-        address: employeeForm.address,
+        bi_number: employeeForm.bi_number?.trim() || null,
+        address: employeeForm.address?.trim() || null,
         owner_id: user.id
       };
 
@@ -212,13 +212,19 @@ export const OwnerRH = ({ user }: { user: User }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      
+      const data = await res.json();
+      
       if (res.ok) {
         setIsEmployeeModalOpen(false);
         setEditingEmployee(null);
-        fetchData();
+        await fetchData();
+      } else {
+        alert(data.error || "Ocorreu um erro ao guardar o funcionário.");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error saving employee:", error);
+      alert("Ocorreu um erro inesperado.");
     }
   };
 
@@ -697,12 +703,12 @@ export const OwnerRH = ({ user }: { user: User }) => {
                             </div>
                           </td>
                           <td className="px-6 py-4">
-                            <p className="text-sm font-bold text-zinc-900">Kz {sal.base_salary.toLocaleString()}</p>
+                            <p className="text-sm font-bold text-zinc-900">Kz {(sal.base_salary || 0).toLocaleString()}</p>
                           </td>
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-2">
-                              <span className="text-xs text-emerald-600 font-bold">+{sal.bonuses.toLocaleString()}</span>
-                              <span className="text-xs text-rose-600 font-bold">-{sal.discounts.toLocaleString()}</span>
+                              <span className="text-xs text-emerald-600 font-bold">+{(sal.bonuses || 0).toLocaleString()}</span>
+                              <span className="text-xs text-rose-600 font-bold">-{(sal.discounts || 0).toLocaleString()}</span>
                             </div>
                           </td>
                           <td className="px-6 py-4">
@@ -1295,7 +1301,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
           <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
             <p className="text-xs font-bold text-zinc-400 uppercase mb-1">Funcionário</p>
             <p className="font-bold text-zinc-900">{selectedSalary?.employee_name}</p>
-            <p className="text-xs text-zinc-500">Salário Base: Kz {selectedSalary?.base_salary.toLocaleString()}</p>
+            <p className="text-xs text-zinc-500">Salário Base: Kz {(selectedSalary?.base_salary || 0).toLocaleString()}</p>
           </div>
 
           {salaryError && (
