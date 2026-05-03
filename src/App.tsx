@@ -67,6 +67,7 @@ import {
   UserPlus,
   Check,
   ArrowRightLeft,
+  Shield,
   ShieldCheck,
   LifeBuoy,
   Monitor,
@@ -105,6 +106,7 @@ import { OwnerReports } from './components/OwnerReports';
 import { OwnerSettings } from './components/OwnerSettings';
 import { OwnerWarehouses } from './components/OwnerWarehouses';
 import { OwnerFinance } from './components/OwnerFinance';
+import AdminAuditLogs from './components/AdminAuditLogs';
 
 // --- Utilities ---
 function cn(...inputs: ClassValue[]) {
@@ -704,7 +706,11 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             {user.role === 'manager' && (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Painel Administrativo" to="/manager" onClick={closeSidebar} />
-                <SidebarItem icon={Store} label="Gerir Unidades" to="/manager/establishments" onClick={closeSidebar} />
+                {user.establishment_id ? (
+                  <SidebarItem icon={Store} label="Gerir Unidade" to={`/manager/establishments/${user.establishment_id}`} onClick={closeSidebar} />
+                ) : (
+                  <SidebarItem icon={Store} label="Gerir Unidades" to="/manager/establishments" onClick={closeSidebar} />
+                )}
                 {hasPermission(user, 'pos_access') && <SidebarItem icon={ShoppingCart} label="Vendas (PDV)" to="/seller" onClick={closeSidebar} />}
                 {hasPermission(user, 'pos_close_cashier') && <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />}
                 {hasPermission(user, 'suppliers_manage') && <SidebarItem icon={ShoppingBag} label="Compras" to="/manager/purchases" onClick={closeSidebar} />}
@@ -914,6 +920,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
     price: 0,
     max_establishments: 1,
     max_products: 100,
+    description: '',
     features: { reports: true, multi_establishment: false }
   });
 
@@ -1368,6 +1375,13 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
             <span className="font-bold text-sm">Relatórios</span>
           </button>
           <button 
+            onClick={() => { setActiveTab('audit'); setIsSidebarOpen(false); }}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'audit' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
+          >
+            <Shield size={20} />
+            <span className="font-bold text-sm">Auditoria</span>
+          </button>
+          <button 
             onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all", activeTab === 'settings' ? "bg-black text-white" : "text-zinc-500 hover:bg-zinc-100")}
           >
@@ -1408,6 +1422,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                 {activeTab === 'support' && 'Centro de Suporte'}
                 {activeTab === 'monitoring' && 'Monitoramento'}
                 {activeTab === 'reports' && 'Relatórios'}
+                {activeTab === 'audit' && 'Auditoria e Logs'}
                 {activeTab === 'settings' && 'Configurações'}
               </h2>
               <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">
@@ -2630,11 +2645,17 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               </div>
 
               <div className="flex justify-end gap-4">
-                <button className="flex items-center gap-2 px-6 py-3 border border-zinc-200 rounded-xl font-bold text-sm hover:bg-zinc-50 transition-all">
+                <button 
+                  onClick={() => window.open('/api/admin/reports/export/csv', '_blank')}
+                  className="flex items-center gap-2 px-6 py-3 border border-zinc-200 rounded-xl font-bold text-sm hover:bg-zinc-50 transition-all"
+                >
                   <FileText size={18} />
                   Exportar CSV
                 </button>
-                <button className="flex items-center gap-2 px-6 py-3 bg-black text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-black/10">
+                <button 
+                  onClick={() => window.open('/api/admin/reports/export/pdf', '_blank')}
+                  className="flex items-center gap-2 px-6 py-3 bg-black text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-black/10"
+                >
                   <FilePieChart size={18} />
                   Gerar Relatório PDF
                 </button>
@@ -2642,22 +2663,35 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
             </div>
           )}
 
+          {activeTab === 'audit' && (
+            <AdminAuditLogs />
+          )}
+
           {activeTab === 'settings' && (
             <div className="max-w-4xl space-y-8">
               <Card>
                 <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
                   <h3 className="font-bold">Planos de Subscrição</h3>
-                  <button 
-                    onClick={() => {
-                      setSelectedPlan(null);
-                      setPlanFormData({ name: '', price: 0, max_establishments: 1, max_products: 100, features: { reports: true, multi_establishment: false } });
-                      setIsPlanModalOpen(true);
-                    }}
-                    className="px-4 py-2 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition-all flex items-center gap-2"
-                  >
-                    <Plus size={16} />
-                    Novo Plano
-                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => window.open('/api/admin/reports/plans/pdf', '_blank')}
+                      className="px-4 py-2 border border-zinc-200 text-zinc-700 rounded-xl text-xs font-bold hover:bg-zinc-50 transition-all flex items-center gap-2"
+                    >
+                      <FilePieChart size={16} />
+                      Gerar Guia de Planos
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setSelectedPlan(null);
+                        setPlanFormData({ name: '', price: 0, max_establishments: 1, max_products: 100, description: '', features: { reports: true, multi_establishment: false } });
+                        setIsPlanModalOpen(true);
+                      }}
+                      className="px-4 py-2 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition-all flex items-center gap-2"
+                    >
+                      <Plus size={16} />
+                      Novo Plano
+                    </button>
+                  </div>
                 </div>
                 <div className="p-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2677,6 +2711,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                                   price: plan.price, 
                                   max_establishments: plan.max_establishments, 
                                   max_products: plan.max_products, 
+                                  description: plan.description || '',
                                   features: typeof plan.features === 'string' ? JSON.parse(plan.features) : plan.features 
                                 });
                                 setIsPlanModalOpen(true);
@@ -2711,6 +2746,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                               price: plan.price, 
                               max_establishments: plan.max_establishments, 
                               max_products: plan.max_products, 
+                              description: plan.description || '',
                               features: typeof plan.features === 'string' ? JSON.parse(plan.features) : plan.features 
                             });
                             setIsPlanModalOpen(true);
@@ -2749,6 +2785,16 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                         value={systemSettings.system_name || ''}
                         onChange={(e) => handleUpdateSetting('system_name', e.target.value)}
                         className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Email de Notificação (Tickets)</label>
+                      <input 
+                        type="email" 
+                        value={systemSettings.support_notification_email || ''}
+                        onChange={(e) => handleUpdateSetting('support_notification_email', e.target.value)}
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                        placeholder="Ex: suporte@fatur.com"
                       />
                     </div>
                   </div>
@@ -2848,6 +2894,15 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                 onChange={(e) => setPlanFormData({ ...planFormData, max_products: Number(e.target.value) })}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
                 required
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Descrição</label>
+              <textarea 
+                value={planFormData.description}
+                onChange={(e) => setPlanFormData({ ...planFormData, description: e.target.value })}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all min-h-[100px]"
+                placeholder="Descreva as vantagens deste plano..."
               />
             </div>
           </div>
@@ -8795,8 +8850,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     const userHasOpenSession = cashRegisters.some(r => r.session_status === 'open' && r.seller_id === user.id);
 
     return (
-      <div className="flex-1 flex flex-col h-full bg-zinc-50 overflow-hidden">
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 max-w-6xl mx-auto w-full custom-scrollbar">
+      <div className="flex-1 h-screen bg-zinc-50 overflow-hidden">
+        <div className="h-full overflow-y-auto p-4 md:p-8 space-y-8 max-w-6xl mx-auto w-full custom-scrollbar pb-32">
           <div className="text-center space-y-2">
             <div className="w-20 h-20 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-4">
             <Wallet size={40} />
@@ -8812,7 +8867,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="flex-1 overflow-y-auto px-1 custom-scrollbar pb-32" style={{ maxHeight: 'calc(100vh - 350px)' }}>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {cashRegisters.map(register => {
             const isOpenedByMe = register.session_status === 'open' && register.seller_id === user.id;
             const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id;
@@ -8891,6 +8947,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               </Card>
             );
           })}
+          </div>
         </div>
       </div>
     </div>
@@ -11727,7 +11784,11 @@ export default function App() {
             {user.role === 'manager' && (
               <>
                 <Route path="/manager" element={<OwnerOverview user={user} />} />
-                <Route path="/manager/establishments" element={<MyEstablishments user={user} />} />
+                <Route path="/manager/establishments" element={
+                  user.role === 'manager' && user.establishment_id ? 
+                  <Navigate to={`/manager/establishments/${user.establishment_id}`} replace /> : 
+                  <MyEstablishments user={user} />
+                } />
                 <Route path="/manager/establishments/:establishmentId" element={<EstablishmentAdmin user={user} />} />
                 <Route path="/manager/rh" element={<OwnerRH user={user} />} />
                 <Route path="/manager/purchases" element={<OwnerPurchases user={user} />} />

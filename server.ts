@@ -443,6 +443,60 @@ const DigitalSignatureService = {
   }
 };
 
+// Digital Signature Service ... (placeholder for visual confirmation)
+
+  const logAction = (params: {
+    userId?: number | string | null;
+    ownerId?: number | string | null;
+    establishmentId?: number | string | null;
+    module: string;
+    actionType: string;
+    severity?: 'info' | 'warning' | 'critical';
+    description?: string;
+    entityType?: string;
+    entityId?: string | number | null;
+    oldValue?: any;
+    newValue?: any;
+    status?: 'success' | 'failure';
+    req?: express.Request;
+  }) => {
+    try {
+      const {
+        userId, ownerId, establishmentId, module, actionType,
+        severity = 'info', description, entityType, entityId,
+        oldValue, newValue, status = 'success', req
+      } = params;
+
+      const ipAddress = req?.ip || req?.headers['x-forwarded-for'] || null;
+      const userAgent = req?.headers['user-agent'] || null;
+
+      db.prepare(`
+        INSERT INTO system_logs (
+          user_id, owner_id, establishment_id, module, action_type,
+          severity, description, entity_type, entity_id,
+          old_value, new_value, ip_address, user_agent, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        userId || null,
+        ownerId || null,
+        establishmentId || null,
+        module,
+        actionType,
+        severity,
+        description || null,
+        entityType || null,
+        entityId?.toString() || null,
+        oldValue ? JSON.stringify(oldValue) : null,
+        newValue ? JSON.stringify(newValue) : null,
+        Array.isArray(ipAddress) ? ipAddress[0] : ipAddress,
+        userAgent,
+        status
+      );
+    } catch (err) {
+      console.error("[LOG] Failed to record system log:", err);
+    }
+  };
+
 // Initialize Database function
 function initializeDatabase() {
   console.log("[DB] Initializing database...");
@@ -563,6 +617,28 @@ function initializeDatabase() {
         establishment_id INTEGER,
         FOREIGN KEY(invoice_id) REFERENCES transactions(id),
         FOREIGN KEY(requested_by) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS system_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        owner_id INTEGER,
+        establishment_id INTEGER,
+        module TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        severity TEXT DEFAULT 'info',
+        description TEXT,
+        entity_type TEXT,
+        entity_id TEXT,
+        old_value TEXT,
+        new_value TEXT,
+        ip_address TEXT,
+        user_agent TEXT,
+        status TEXT DEFAULT 'success',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (owner_id) REFERENCES users(id),
+        FOREIGN KEY (establishment_id) REFERENCES establishments(id)
       );
 
       CREATE TABLE IF NOT EXISTS products (
@@ -859,11 +935,26 @@ function initializeDatabase() {
         FOREIGN KEY(user_id) REFERENCES users(id)
       );
 
+      CREATE TABLE IF NOT EXISTS hr_roles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        name TEXT,
+        base_role TEXT,
+        permissions TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
       CREATE TABLE IF NOT EXISTS system_settings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         key TEXT UNIQUE,
         value TEXT
       );
+
+      INSERT OR IGNORE INTO system_settings (key, value) VALUES ('support_notification_email', 'lazivaniomulazaeren@gmail.com');
+      INSERT OR IGNORE INTO system_settings (key, value) VALUES ('expiration_notice', 'true');
+      INSERT OR IGNORE INTO system_settings (key, value) VALUES ('weekly_reports', 'false');
+      INSERT OR IGNORE INTO system_settings (key, value) VALUES ('system_name', 'Fatu-R');
 
       CREATE TABLE IF NOT EXISTS system_plans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -871,8 +962,21 @@ function initializeDatabase() {
         price REAL,
         max_establishments INTEGER,
         max_products INTEGER,
-        features TEXT
+        features TEXT,
+        description TEXT
       );
+
+      // Ensure description column exists in system_plans
+      try {
+        const columns = db.prepare("PRAGMA table_info(system_plans)").all() as any[];
+        const hasDescription = columns.some(c => c.name === 'description');
+        if (!hasDescription) {
+          db.prepare("ALTER TABLE system_plans ADD COLUMN description TEXT").run();
+          console.log("[DB] Added description column to system_plans");
+        }
+      } catch (e) {
+        console.error("[DB] Error checking/adding description column to system_plans:", e);
+      }
 
       CREATE TABLE IF NOT EXISTS system_payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1044,16 +1148,6 @@ function initializeDatabase() {
         notes TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id)
-      );
-
-      CREATE TABLE IF NOT EXISTS hr_roles (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        owner_id INTEGER,
-        name TEXT,
-        base_role TEXT,
-        permissions TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(owner_id) REFERENCES users(id)
       );
 
       CREATE TABLE IF NOT EXISTS generated_files (
@@ -1366,6 +1460,142 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
   const PORT = 3000;
+
+  /**
+   * API ENDPOINTS FOR AUDIT LOGS
+   */
+
+  // Platform Admin: Get all logs with advanced filtering
+  app.get("/api/platform/logs", (req, res) => {
+    const { 
+      page = 1, 
+      limit = 20, 
+      startDate, 
+      endDate, 
+      userId, 
+      ownerId, 
+      module, 
+      actionType, 
+      severity, 
+      search,
+      entityType
+    } = req.query;
+
+    const offset = (Number(page) - 1) * Number(limit);
+    let query = "SELECT l.*, u.name as user_name, o.name as owner_name FROM system_logs l LEFT JOIN users u ON l.user_id = u.id LEFT JOIN users o ON l.owner_id = o.id WHERE 1=1";
+    const params: any[] = [];
+
+    if (startDate) {
+      query += " AND l.created_at >= ?";
+      params.push(startDate);
+    }
+    if (endDate) {
+      query += " AND l.created_at <= ?";
+      params.push(endDate);
+    }
+    if (userId) {
+      query += " AND l.user_id = ?";
+      params.push(userId);
+    }
+    if (ownerId) {
+      query += " AND l.owner_id = ?";
+      params.push(ownerId);
+    }
+    if (module) {
+      query += " AND l.module = ?";
+      params.push(module);
+    }
+    if (actionType) {
+      query += " AND l.action_type = ?";
+      params.push(actionType);
+    }
+    if (severity) {
+      query += " AND l.severity = ?";
+      params.push(severity);
+    }
+    if (entityType) {
+      query += " AND l.entity_type = ?";
+      params.push(entityType);
+    }
+    if (search) {
+      query += " AND (l.description LIKE ? OR l.entity_id LIKE ?)";
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const countQuery = query.replace("SELECT l.*, u.name as user_name, o.name as owner_name", "SELECT COUNT(*) as total");
+    const total = (db.prepare(countQuery).get(...params) as any).total;
+
+    query += " ORDER BY l.created_at DESC LIMIT ? OFFSET ?";
+    params.push(Number(limit), offset);
+
+    const logs = db.prepare(query).all(...params);
+    res.json({ logs, total, page: Number(page), limit: Number(limit) });
+  });
+
+  // Export logs to XLSX
+  app.get("/api/platform/logs/export", (req, res) => {
+    try {
+      const { startDate, endDate, ownerId } = req.query;
+      let query = "SELECT l.*, u.name as user_name, o.name as owner_name FROM system_logs l LEFT JOIN users u ON l.user_id = u.id LEFT JOIN users o ON l.owner_id = o.id WHERE 1=1";
+      const params: any[] = [];
+
+      if (startDate) { query += " AND l.created_at >= ?"; params.push(startDate); }
+      if (endDate) { query += " AND l.created_at <= ?"; params.push(endDate); }
+      if (ownerId) { query += " AND l.owner_id = ?"; params.push(ownerId); }
+
+      query += " ORDER BY l.created_at DESC LIMIT 5000"; // Limit export for safety
+
+      const logs = db.prepare(query).all(...params) as any[];
+
+      const data = logs.map(l => ({
+        "Data": l.created_at,
+        "Utilizador": l.user_name || "Sistema",
+        "Empresa": l.owner_name || "N/A",
+        "Módulo": l.module,
+        "Ação": l.action_type,
+        "Severidade": l.severity,
+        "Descrição": l.description,
+        "Entidade": l.entity_type,
+        "ID Recurso": l.entity_id,
+        "Status": l.status,
+        "IP": l.ip_address
+      }));
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(data);
+      XLSX.utils.book_append_sheet(wb, ws, "Auditoria");
+      const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", "attachment; filename=auditoria.xlsx");
+      res.send(buf);
+    } catch (err) {
+      console.error("Export error:", err);
+      res.status(500).send("Erro ao exportar");
+    }
+  });
+
+  // Owner: Get their own logs
+  app.get("/api/owner/logs/:ownerId", (req, res) => {
+    const ownerId = req.params.ownerId;
+    const { page = 1, limit = 20, module, actionType } = req.query;
+
+    const offset = (Number(page) - 1) * Number(limit);
+    let query = "SELECT l.*, u.name as user_name FROM system_logs l LEFT JOIN users u ON l.user_id = u.id WHERE l.owner_id = ?";
+    const params: any[] = [ownerId];
+
+    if (module) { query += " AND l.module = ?"; params.push(module); }
+    if (actionType) { query += " AND l.action_type = ?"; params.push(actionType); }
+
+    const countQuery = query.replace("SELECT l.*, u.name as user_name", "SELECT COUNT(*) as total");
+    const total = (db.prepare(countQuery).get(...params) as any).total;
+
+    query += " ORDER BY l.created_at DESC LIMIT ? OFFSET ?";
+    params.push(Number(limit), offset);
+
+    const logs = db.prepare(query).all(...params);
+    res.json({ logs, total });
+  });
 
   // --- Reliability Utilities ---
   function logCriticalAlert(level: string, source: string, message: string, details?: string) {
@@ -1689,12 +1919,22 @@ async function startServer() {
     const identifier = email?.trim();
     const pass = password;
     
-    // Try to find user by email or username
-    const user = db.prepare("SELECT * FROM users WHERE (email = ? OR username = ?) AND password = ?").get(identifier, identifier, pass) as any;
+    // Try to find user by email or username (case-insensitive)
+    const lowerIdentifier = identifier?.toLowerCase();
+    const user = db.prepare("SELECT * FROM users WHERE (LOWER(email) = ? OR LOWER(username) = ?) AND password = ?").get(lowerIdentifier, lowerIdentifier, pass) as any;
     
     if (user) {
       // Check if user is suspended
       if (user.status === 'suspended') {
+        logAction({
+          userId: user.id,
+          module: 'AUTH',
+          actionType: 'LOGIN_FAILURE',
+          severity: 'warning',
+          description: `Tentativa de login em conta suspensa: ${user.email}`,
+          status: 'failure',
+          req
+        });
         return res.status(403).json({ error: "A sua conta está suspensa. Contacte o administrador." });
       }
 
@@ -1711,6 +1951,14 @@ async function startServer() {
           const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishmentId) as any;
           if (establishment) ownerId = establishment.owner_id;
         } else if (user.role === 'seller') {
+          logAction({
+            userId: user.id,
+            module: 'AUTH',
+            actionType: 'LOGIN_FAILURE',
+            description: `Vendedor sem estabelecimento vinculado: ${user.email}`,
+            status: 'failure',
+            req
+          });
           return res.status(403).json({ error: "Esta conta de vendedor foi desativada ou não está vinculada a nenhum estabelecimento." });
         }
       }
@@ -1719,6 +1967,16 @@ async function startServer() {
       if (user.role !== 'admin') {
         const owner = db.prepare("SELECT status FROM users WHERE id = ?").get(ownerId) as any;
         if (owner && owner.status === 'suspended') {
+          logAction({
+            userId: user.id,
+            ownerId,
+            module: 'AUTH',
+            actionType: 'LOGIN_FAILURE',
+            severity: 'warning',
+            description: `Acesso negado devido à suspensão do proprietário: ${user.email}`,
+            status: 'failure',
+            req
+          });
           return res.status(403).json({ error: "O acesso está suspenso. Contacte o administrador." });
         }
 
@@ -1730,6 +1988,17 @@ async function startServer() {
         `).get(ownerId);
 
         if (!activeLicense) {
+          logAction({
+            userId: user.id,
+            ownerId,
+            module: 'AUTH',
+            actionType: 'LOGIN_FAILURE',
+            severity: 'warning',
+            description: `Tentativa de login sem licença ativa: ${user.email}`,
+            status: 'failure',
+            req
+          });
+
           // Check if they have any establishments. If they do, and no active license, block.
           const establishmentCount = db.prepare("SELECT count(*) as count FROM establishments WHERE owner_id = ?").get(ownerId) as any;
           if (establishmentCount.count > 0) {
@@ -1737,6 +2006,16 @@ async function startServer() {
           }
         }
       }
+
+      logAction({
+        userId: user.id,
+        ownerId: (user.role === 'owner' || user.role === 'admin') ? user.id : ownerId,
+        establishmentId,
+        module: 'AUTH',
+        actionType: 'LOGIN_SUCCESS',
+        description: `Utilizador ${user.name} (${user.role}) iniciou sessão`,
+        req
+      });
       
       // Get effective permissions
       let effectivePermissions: string[] = [];
@@ -2148,6 +2427,20 @@ async function startServer() {
     res.json(history);
   });
 
+  app.get("/api/admin/system/settings", (req, res) => {
+    const settings = db.prepare("SELECT * FROM system_settings").all();
+    res.json(settings);
+  });
+
+  app.post("/api/admin/system/settings", (req, res) => {
+    const { key, value } = req.body;
+    db.prepare(`
+      INSERT INTO system_settings (key, value)
+      ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value
+    `).run(key, value);
+    res.json({ success: true });
+  });
+
   app.post("/api/admin/licenses", (req, res) => {
     const { user_id, establishment_id, plan_type, start_date, expiry_date, features } = req.body;
     db.prepare(`
@@ -2306,20 +2599,277 @@ async function startServer() {
     });
   });
 
+  app.get("/api/admin/reports/export/csv", (req, res) => {
+    try {
+      const revenueByMonth = db.prepare(`SELECT strftime('%m', timestamp) as month, SUM(total_amount) as total FROM transactions WHERE timestamp >= date('now', '-6 months') GROUP BY month ORDER BY month ASC`).all();
+      const clientGrowth = db.prepare(`SELECT strftime('%m', created_at) as month, COUNT(*) as count FROM users WHERE role = 'owner' AND created_at >= date('now', '-6 months') GROUP BY month ORDER BY month ASC`).all();
+      const licensesByPlan = db.prepare(`SELECT plan_type as name, COUNT(*) as value FROM licenses WHERE status = 'active' GROUP BY plan_type`).all();
+      const ticketsByStatus = db.prepare(`SELECT status as name, COUNT(*) as value FROM support_tickets GROUP BY status`).all();
+
+      const data: any[] = [];
+      revenueByMonth.forEach((r: any) => data.push({ Categoria: "Receita", Item: `Mês ${r.month}`, Valor: r.total }));
+      clientGrowth.forEach((r: any) => data.push({ Categoria: "Crescimento Clientes", Item: `Mês ${r.month}`, Valor: r.count }));
+      licensesByPlan.forEach((r: any) => data.push({ Categoria: "Licenças Ativas", Item: r.name, Valor: r.value }));
+      ticketsByStatus.forEach((r: any) => data.push({ Categoria: "Tickets de Suporte", Item: r.name, Valor: r.value }));
+
+      const ws = XLSX.utils.json_to_sheet(data);
+      const csv = XLSX.utils.sheet_to_csv(ws);
+
+      logAction({
+        module: 'REPORTS',
+        actionType: 'ADMIN_REPORT_EXPORT_CSV',
+        description: 'Exportação de relatório administrativo em CSV',
+        req
+      });
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", "attachment; filename=relatorio_admin.csv");
+      res.send(Buffer.from('\uFEFF' + csv, 'utf-8')); // Add BOM for Excel compatibility
+    } catch (err) {
+      console.error(err);
+      res.status(500).send("Erro ao exportar CSV");
+    }
+  });
+
+  app.get("/api/admin/reports/export/pdf", async (req, res) => {
+    try {
+      const revenueByMonth = db.prepare(`SELECT strftime('%m', timestamp) as month, SUM(total_amount) as total FROM transactions WHERE timestamp >= date('now', '-6 months') GROUP BY month ORDER BY month ASC`).all();
+      const clientGrowth = db.prepare(`SELECT strftime('%m', created_at) as month, COUNT(*) as count FROM users WHERE role = 'owner' AND created_at >= date('now', '-6 months') GROUP BY month ORDER BY month ASC`).all();
+      const licensesByPlan = db.prepare(`SELECT plan_type as name, COUNT(*) as value FROM licenses WHERE status = 'active' GROUP BY plan_type`).all();
+      const ticketsByStatus = db.prepare(`SELECT status as name, COUNT(*) as value FROM support_tickets GROUP BY status`).all();
+
+      const doc = new (PDFDocument as any)({ 
+        margin: 40,
+        bufferPages: true
+      });
+
+      // Handle stream errors
+      doc.on('error', (err: any) => {
+        console.error('PDF Generator Error:', err);
+        if (!res.headersSent) res.status(500).send("Erro interno no gerador de PDF");
+      });
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", "attachment; filename=relatorio_admin.pdf");
+      doc.pipe(res);
+
+      // Colors
+      const orange = "#F97316";
+      const black = "#000000";
+      const white = "#FFFFFF";
+      
+      // Header background
+      doc.rect(0, 0, 595.28, 70).fill(orange);
+      doc.fillColor(black).fontSize(18).text("RELATÓRIO DE ADMINISTRAÇÃO", 40, 25, { align: 'left' });
+      doc.fontSize(8).text(`GERADO POR: SISTEMA DE GESTÃO AUTOMÁTICA`, 40, 48, { align: 'left' });
+      doc.fontSize(8).text(`DATA: ${new Date().toLocaleString('pt-PT')}`, 40, 32, { align: 'right', width: 515 });
+      
+      doc.y = 90;
+      doc.fillColor(black);
+
+      const sections = [
+        { 
+          title: "RECEITA POR MÊS", 
+          headers: ["Mês", "Receita Total"],
+          rows: revenueByMonth.map((r: any) => [
+            `Mês ${r.month || '?'}`, 
+            `${parseFloat(r.total || 0).toLocaleString('pt-PT', { minimumFractionDigits: 2 })} Kz`
+          ])
+        },
+        { 
+          title: "CRESCIMENTO DE CLIENTES", 
+          headers: ["Mês", "Novos Clientes (Owners)"],
+          rows: clientGrowth.map((r: any) => [`Mês ${r.month || '?'}`, `${r.count || 0} Clientes`])
+        },
+        { 
+          title: "LICENÇAS ATIVAS POR PLANO", 
+          headers: ["Tipo de Plano", "Total de Licenças"],
+          rows: licensesByPlan.map((r: any) => [(String(r.name || 'N/A')).toUpperCase(), `${r.value || 0} Ativas`])
+        },
+        { 
+          title: "ESTADO DOS TICKETS DE SUPORTE", 
+          headers: ["Estado", "Quantidade de Ocorrências"],
+          rows: ticketsByStatus.map((r: any) => [(String(r.name || 'N/A')).toUpperCase(), `${r.value || 0} Tickets`])
+        }
+      ];
+
+      for (let i = 0; i < sections.length; i++) {
+        const section = sections[i];
+        // Section Title with indicator
+        doc.x = 40;
+        doc.fillColor(orange).fontSize(10).text(section.title, { characterSpacing: 1.2 });
+        doc.rect(40, doc.y + 1, 515, 0.5).fill("#E4E4E7");
+        doc.moveDown(0.4);
+        doc.fillColor(black);
+        
+        await doc.table({
+          headers: section.headers,
+          rows: section.rows,
+        }, {
+          prepareHeader: () => doc.font("Helvetica-Bold").fontSize(9).fillColor(black),
+          prepareRow: (row: any, i: any) => {
+            doc.font("Helvetica").fontSize(8).fillColor(black);
+          },
+          padding: 6,
+          columnSpacing: 10,
+          hideHeader: false,
+          minRowHeight: 18
+        });
+        
+        if (i < sections.length - 1) {
+          // Only move down if not the last section to avoid triggering a new page
+          doc.moveDown(1);
+        }
+      }
+
+      // Footer
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        
+        // Remove bottom margin temporarily to prevent footer from triggering a new page
+        const oldMargin = (doc.page as any).margins.bottom;
+        (doc.page as any).margins.bottom = 0;
+
+        doc.fontSize(7).fillColor("#A1A1AA").text(
+          `Página ${i + 1} de ${range.count} - Documento Reservado para Administração`,
+          0,
+          doc.page.height - 30, // Positioned safely above the absolute bottom
+          { align: "center", width: doc.page.width, lineBreak: false }
+        );
+
+        // Restore margin
+        (doc.page as any).margins.bottom = oldMargin;
+      }
+
+      logAction({
+        module: 'REPORTS',
+        actionType: 'ADMIN_REPORT_EXPORT_PDF',
+        description: 'Exportação de relatório administrativo em PDF',
+        req
+      });
+
+      doc.end();
+    } catch (err) {
+      console.error(err);
+      if (!res.headersSent) {
+        res.status(500).send("Erro ao gerar PDF");
+      }
+    }
+  });
+
+  app.get("/api/admin/reports/plans/pdf", async (req, res) => {
+    try {
+      const plans = db.prepare("SELECT * FROM system_plans").all() as any[];
+      
+      const doc = new (PDFDocument as any)({ 
+        margin: 50,
+        bufferPages: true
+      });
+
+      // Handle stream errors
+      doc.on('error', (err: any) => {
+        console.error('PDF Generator Error (Plans):', err);
+        if (!res.headersSent) res.status(500).send("Erro interno no gerador de Guia de Planos");
+      });
+      
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", "attachment; filename=planos_sistema.pdf");
+      doc.pipe(res);
+
+      const orange = "#F97316";
+      const black = "#000000";
+      const white = "#FFFFFF";
+
+      // Header
+      doc.rect(0, 0, 595.28, 80).fill(orange);
+      doc.fillColor(black).fontSize(20).text("GUIA DE PLANOS E SERVIÇOS", 40, 30, { align: 'left' });
+      doc.fontSize(9).text(`DOCUMENTO INFORMATIVO DE CONFIGURAÇÃO DE SISTEMA`, 40, 55, { align: 'left' });
+      
+      doc.y = 110;
+      doc.fillColor(black);
+
+      doc.fontSize(12).text("Abaixo estão detalhados os planos disponíveis na plataforma e as suas respetivas características e limitações.", { lineGap: 5 });
+      doc.moveDown(2);
+
+      for (let i = 0; i < plans.length; i++) {
+        const plan = plans[i];
+        const planName = String(plan.name || 'PLANO SEM NOME');
+        doc.fillColor(orange).fontSize(16).text(planName.toUpperCase(), { characterSpacing: 1 });
+        doc.rect(40, doc.y + 2, 515, 1).fill("#E4E4E7");
+        doc.moveDown(1);
+        doc.fillColor(black);
+
+        const planData = [
+          ["Parâmetro", "Descrição"],
+          ["Preço Unitário", `${parseFloat(plan.price || 0).toLocaleString('pt-PT', { minimumFractionDigits: 2 })} Kz`],
+          ["Limite de Estabelecimentos", plan.max_establishments === -1 ? "Ilimitado" : String(plan.max_establishments || 0)],
+          ["Limite de Produtos", plan.max_products === -1 ? "Ilimitado" : String(plan.max_products || 0)],
+          ["Recursos Extra", plan.features || "Configuração Padrão"],
+          ["Descrição", plan.description || "Sem descrição adicional"]
+        ];
+
+        await doc.table({
+          headers: ["Parâmetro", "Valor/Configuração"],
+          rows: planData.slice(1),
+        }, {
+          prepareHeader: () => doc.font("Helvetica-Bold").fontSize(10).fillColor(black),
+          prepareRow: () => doc.font("Helvetica").fontSize(10).fillColor(black),
+          padding: 8,
+          columnSpacing: 15,
+        });
+
+        if (i < plans.length - 1) {
+          doc.moveDown(2);
+        }
+      }
+
+      // Footer
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        
+        const oldMargin = (doc.page as any).margins.bottom;
+        (doc.page as any).margins.bottom = 0;
+
+        doc.fontSize(8).fillColor("#A1A1AA").text(
+          `Página ${i + 1} de ${range.count} - Documento de Referência de Planos`,
+          0,
+          doc.page.height - 30,
+          { align: "center", width: doc.page.width, lineBreak: false }
+        );
+
+        (doc.page as any).margins.bottom = oldMargin;
+      }
+
+      logAction({
+        module: 'SETTINGS',
+        actionType: 'PLAN_GUIDE_EXPORT',
+        description: 'Exportação do guia de planos do sistema',
+        req
+      });
+
+      doc.end();
+    } catch (err) {
+      console.error(err);
+      if (!res.headersSent) res.status(500).send("Erro ao gerar Guia de Planos");
+    }
+  });
+
   app.get("/api/admin/plans", (req, res) => {
     const plans = db.prepare("SELECT * FROM system_plans").all();
     res.json(plans);
   });
 
   app.post("/api/admin/plans", (req, res) => {
-    const { name, price, max_establishments, max_products, features } = req.body;
-    db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run(name, price, max_establishments, max_products, JSON.stringify(features));
+    const { name, price, max_establishments, max_products, features, description } = req.body;
+    db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features, description) VALUES (?, ?, ?, ?, ?, ?)").run(name, price, max_establishments, max_products, JSON.stringify(features), description);
     res.json({ success: true });
   });
 
   app.put("/api/admin/plans/:id", (req, res) => {
-    const { name, price, max_establishments, max_products, features } = req.body;
-    db.prepare("UPDATE system_plans SET name = ?, price = ?, max_establishments = ?, max_products = ?, features = ? WHERE id = ?").run(name, price, max_establishments, max_products, JSON.stringify(features), req.params.id);
+    const { name, price, max_establishments, max_products, features, description } = req.body;
+    db.prepare("UPDATE system_plans SET name = ?, price = ?, max_establishments = ?, max_products = ?, features = ?, description = ? WHERE id = ?").run(name, price, max_establishments, max_products, JSON.stringify(features), description, req.params.id);
     res.json({ success: true });
   });
 
@@ -2587,9 +3137,32 @@ async function startServer() {
       });
 
       transaction();
+
+      logAction({
+        userId: changed_by || ownerId,
+        ownerId: ownerId,
+        module: 'FISCAL',
+        actionType: 'BILLING_MODE_CHANGE',
+        severity: 'critical',
+        description: `Mudança de modo de faturação de ${oldMode} para ${billing_mode}`,
+        oldValue: { billing_mode: oldMode },
+        newValue: { billing_mode: billing_mode },
+        req
+      });
+
       res.json({ success: true });
     } catch (e) {
       console.error(e);
+      logAction({
+        userId: changed_by || ownerId,
+        ownerId: ownerId,
+        module: 'FISCAL',
+        actionType: 'BILLING_MODE_CHANGE_FAILURE',
+        severity: 'critical',
+        description: `Falha ao mudar modo de faturação: ${String(e)}`,
+        status: 'failure',
+        req
+      });
       res.status(500).json({ error: "Erro ao processar mudança de modo de faturação." });
     }
   });
@@ -2599,11 +3172,38 @@ async function startServer() {
     const trimmedUsername = username?.trim();
     const trimmedEmail = email?.trim();
     
+    const oldUser = db.prepare("SELECT * FROM users WHERE id = ?").get(req.params.id) as any;
+
     try {
       if (password) {
         db.prepare("UPDATE users SET name = ?, email = ?, username = ?, phone = ?, nif = ?, address = ?, company_name = ?, fiscal_regime = ?, password = ? WHERE id = ?").run(name, trimmedEmail || null, trimmedUsername || null, phone, nif, address, company_name, fiscal_regime, password, req.params.id);
       } else {
         db.prepare("UPDATE users SET name = ?, email = ?, username = ?, phone = ?, nif = ?, address = ?, company_name = ?, fiscal_regime = ? WHERE id = ?").run(name, trimmedEmail || null, trimmedUsername || null, phone, nif, address, company_name, fiscal_regime, req.params.id);
+      }
+
+      logAction({
+        userId: req.params.id,
+        ownerId: (oldUser?.role === 'owner' || oldUser?.role === 'admin') ? req.params.id : oldUser?.owner_id,
+        module: 'PROFILE',
+        actionType: 'PROFILE_UPDATE',
+        description: `Perfil atualizado para ${name}`,
+        oldValue: { fiscal_regime: oldUser.fiscal_regime, name: oldUser.name },
+        newValue: { fiscal_regime, name },
+        req
+      });
+
+      if (oldUser && oldUser.fiscal_regime !== fiscal_regime) {
+        logAction({
+          userId: req.params.id,
+          ownerId: (oldUser?.role === 'owner' || oldUser?.role === 'admin') ? req.params.id : oldUser?.owner_id,
+          module: 'FISCAL',
+          actionType: 'FISCAL_REGIME_CHANGE',
+          severity: 'critical',
+          description: `Regime fiscal alterado de ${oldUser.fiscal_regime} para ${fiscal_regime}`,
+          oldValue: { fiscal_regime: oldUser.fiscal_regime },
+          newValue: { fiscal_regime },
+          req
+        });
       }
 
       // Se o regime for exclusão, aplicar automaticamente as regras
@@ -2653,6 +3253,18 @@ async function startServer() {
         VALUES (?, ?, 'generate_internal', ?, ?, ?)
       `).run(ownerId, userId, oldKey?.id || null, newKey.id, `Nova chave gerada internamente (Versão ${newKey.version})`);
       
+      logAction({
+        userId,
+        ownerId,
+        module: 'FISCAL',
+        actionType: 'KEY_ROTATION',
+        severity: 'critical',
+        description: `Chave de assinatura digital rotacionada para versão ${newKey.version}`,
+        entityType: 'KEY',
+        entityId: String(newKey.id),
+        req
+      });
+
       res.json({ success: true, key: newKey });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -2774,33 +3386,31 @@ async function startServer() {
         };
       }
 
-      // If user has owner_id directly set, use it (crucial for HR employees without direct establishment assignment)
+      // 1. Check for specific establishment assignment first for non-owners
+      let establishment_id = userResult.establishment_id;
+      if (!establishment_id && (userResult.role === 'seller' || userResult.role === 'manager')) {
+        // Check staff table as fallback
+        const staffEntry = db.prepare("SELECT establishment_id FROM staff WHERE user_id = ? LIMIT 1").get(userResult.id) as any;
+        if (staffEntry) {
+          establishment_id = staffEntry.establishment_id;
+        }
+      }
+
+      if (establishment_id) {
+        const est = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
+        return { 
+          establishmentIds: [establishment_id], 
+          ownerId: est?.owner_id || userResult.owner_id || null 
+        };
+      }
+
+      // 2. If no specific establishment, check for owner_id (backwards compatibility or HR managers)
       if (userResult.owner_id) {
         const ests = db.prepare("SELECT id FROM establishments WHERE owner_id = ?").all(userResult.owner_id) as { id: number }[];
         return { 
           establishmentIds: ests.map(e => e.id), 
           ownerId: userResult.owner_id 
         };
-      }
-
-      if (userResult.role === 'seller' || userResult.role === 'manager') {
-        let establishment_id = userResult.establishment_id;
-        
-        if (!establishment_id) {
-          // Check staff table as fallback
-          const staffEntry = db.prepare("SELECT establishment_id FROM staff WHERE user_id = ? LIMIT 1").get(userResult.id) as any;
-          if (staffEntry) {
-            establishment_id = staffEntry.establishment_id;
-          }
-        }
-
-        if (establishment_id) {
-          const est = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
-          return { 
-            establishmentIds: [establishment_id], 
-            ownerId: est?.owner_id || null 
-          };
-        }
       }
     } catch (err) {
       console.error(`[Context] Error getting context for user ${userId}:`, err);
@@ -3672,6 +4282,17 @@ async function startServer() {
       const fileName = `SAFT_AO_${new Date().toISOString().replace(/[:.]/g, '-')}.xml`;
       db.prepare("INSERT INTO generated_files (owner_id, name, type, generated_by, file_data) VALUES (?, ?, ?, ?, ?)").run(owner_id, fileName, 'SAFT', user_name, Buffer.from(xml));
       
+      logAction({
+        ownerId: owner_id,
+        module: 'FISCAL',
+        actionType: 'SAFT_GENERATION',
+        severity: 'info',
+        description: `Arquivo SAFT gerado por ${user_name}: ${fileName}`,
+        entityType: 'FILE',
+        entityId: fileName,
+        req
+      });
+
       res.json({ success: true, fileName });
     } catch (e: any) {
       console.error("Error generating SAFT:", e);
@@ -4024,6 +4645,32 @@ async function startServer() {
     }
   });
 
+  app.get("/api/owner/profile-details/:id", (req, res) => {
+    try {
+      const clientId = req.params.id;
+      const client = db.prepare("SELECT * FROM users WHERE id = ?").get(clientId) as any;
+      if (!client) return res.status(404).json({ error: "Client not found" });
+
+      const establishments = db.prepare("SELECT * FROM establishments WHERE owner_id = ?").all(clientId);
+      const licenses = db.prepare(`
+        SELECT l.*, s.name as establishment_name 
+        FROM licenses l 
+        LEFT JOIN establishments s ON l.establishment_id = s.id 
+        WHERE l.user_id = ? 
+        ORDER BY l.expiry_date DESC
+      `).all(clientId);
+
+      res.json({
+        client,
+        establishments,
+        licenses
+      });
+    } catch (e: any) {
+      console.error("Error fetching owner profile:", e);
+      res.status(500).json({ error: "Erro interno" });
+    }
+  });
+
   // --- Owner Support Endpoints ---
   app.get("/api/owner/support/:userId", (req, res) => {
     const tickets = db.prepare(`
@@ -4037,12 +4684,35 @@ async function startServer() {
   });
 
   app.post("/api/owner/support", (req, res) => {
-    const { user_id, subject, description, priority } = req.body;
-    const result = db.prepare(`
-      INSERT INTO support_tickets (user_id, subject, description, priority, status)
-      VALUES (?, ?, ?, ?, 'open')
-    `).run(user_id, subject, description, priority || 'medium');
-    res.json({ success: true, ticketId: result.lastInsertRowid });
+    try {
+      const { user_id, subject, description, priority } = req.body;
+      const result = db.prepare(`
+        INSERT INTO support_tickets (user_id, subject, description, priority, status)
+        VALUES (?, ?, ?, ?, 'open')
+      `).run(user_id, subject, description, priority || 'medium');
+
+      // Notify Administrator (Simulated Email)
+      let adminEmail = 'lazivaniomulazaeren@gmail.com';
+      try {
+        const notificationEmail = db.prepare("SELECT value FROM system_settings WHERE key = 'support_notification_email'").get() as any;
+        if (notificationEmail?.value) adminEmail = notificationEmail.value;
+      } catch (e) {
+        console.error("Error fetching notification email:", e);
+      }
+      
+      console.log(`[NOTIFICATION_EMAIL_SENT]`);
+      console.log(`Destinatário: ${adminEmail}`);
+      console.log(`Assunto: [NOVA SOLICITAÇÃO #${result.lastInsertRowid}] ${subject}`);
+      console.log(`Mensagem: Olá Administrador, existe uma nova solicitação pendente no sistema. Por favor, aceda à sua conta para consultar os detalhes.`);
+      console.log(`---`);
+      console.log(`Assunto Original: ${subject}`);
+      console.log(`Descrição: ${description}`);
+      
+      res.json({ success: true, ticketId: result.lastInsertRowid, notificationSentTo: adminEmail });
+    } catch (e: any) {
+      console.error("Error creating support ticket:", e);
+      res.status(500).json({ error: "Erro ao criar ticket de suporte" });
+    }
   });
 
   app.get("/api/owner/support/ticket/:id/messages", (req, res) => {
@@ -4481,20 +5151,19 @@ async function startServer() {
       LEFT JOIN establishments st ON u.establishment_id = st.id
       WHERE u.role IN ('seller', 'manager', 'none') 
       AND (
-        u.owner_id = ? 
-        OR u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders})) 
-        OR u.establishment_id IN (${placeholders})
+        u.establishment_id IN (${placeholders}) 
+        OR u.id IN (SELECT user_id FROM staff WHERE establishment_id IN (${placeholders}))
       )
-    `).all(...[ownerId, ...establishmentIds, ...establishmentIds]);
+    `).all(...[...establishmentIds, ...establishmentIds]);
     res.json(employees);
   });
 
   app.post("/api/owner/hr/employees", (req, res) => {
     let { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, cash_register_id, bi_number, address, owner_id: bodyOwnerId } = req.body;
     
-    // Normalize empty strings to null
-    const normEmail = (email && email.trim() !== '') ? email.trim() : null;
-    const normUsername = (username && username.trim() !== '') ? username.trim() : null;
+    // Normalize empty strings to null and lowercase for comparison
+    const normEmail = (email && email.trim() !== '') ? email.trim().toLowerCase() : null;
+    const normUsername = (username && username.trim() !== '') ? username.trim().toLowerCase() : null;
     const normEstId = (establishment_id && establishment_id !== '') ? Number(establishment_id) : null;
     const normRoleId = (role_id && role_id !== '') ? Number(role_id) : null;
     const normRegId = (cash_register_id && cash_register_id !== '') ? Number(cash_register_id) : null;
@@ -4504,14 +5173,14 @@ async function startServer() {
       const { ownerId: resolvedOwnerId } = getContextData(bodyOwnerId);
       if (!resolvedOwnerId) throw new Error("Não foi possível determinar o proprietário.");
 
-      // Check for existing email or username
+      // Check for existing email or username (ensure they don't collide with ANY identifier used at login)
       if (normEmail) {
-        const existingEmail = db.prepare("SELECT id FROM users WHERE email = ?").get(normEmail);
-        if (existingEmail) throw new Error("Este email já está a ser utilizado.");
+        const existingEmail = db.prepare("SELECT id FROM users WHERE LOWER(email) = ? OR LOWER(username) = ?").get(normEmail, normEmail);
+        if (existingEmail) throw new Error("Este email já está a ser utilizado por outro utilizador (como email ou nome de utilizador).");
       }
       if (normUsername) {
-        const existingUsername = db.prepare("SELECT id FROM users WHERE username = ?").get(normUsername);
-        if (existingUsername) throw new Error("Este nome de utilizador já está a ser utilizado.");
+        const existingUsername = db.prepare("SELECT id FROM users WHERE LOWER(username) = ? OR LOWER(email) = ?").get(normUsername, normUsername);
+        if (existingUsername) throw new Error("Este nome de utilizador já está a ser utilizado por outro utilizador (como nome de utilizador ou email).");
       }
 
       db.transaction(() => {
@@ -4539,16 +5208,26 @@ async function startServer() {
   });
 
   app.put("/api/owner/hr/employees/:id", (req, res) => {
-    const { name, email, username, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, status, cash_register_id, bi_number, address } = req.body;
+    const { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, status, cash_register_id, bi_number, address } = req.body;
     
-    // Normalize empty strings to null
-    const normEmail = (email && email.trim() !== '') ? email.trim() : null;
-    const normUsername = (username && username.trim() !== '') ? username.trim() : null;
+    // Normalize empty strings to null and lowercase for comparison
+    const normEmail = (email && email.trim() !== '') ? email.trim().toLowerCase() : null;
+    const normUsername = (username && username.trim() !== '') ? username.trim().toLowerCase() : null;
     const estId = (establishment_id === '' || establishment_id === undefined) ? null : Number(establishment_id);
     const rId = (role_id === '' || role_id === undefined) ? null : Number(role_id);
     const crId = (cash_register_id === '' || cash_register_id === undefined) ? null : Number(cash_register_id);
 
     try {
+      // Check for existing email or username conflicts with other users
+      if (normEmail) {
+        const conflict = db.prepare("SELECT id FROM users WHERE (LOWER(email) = ? OR LOWER(username) = ?) AND id != ?").get(normEmail, normEmail, req.params.id);
+        if (conflict) throw new Error("Este email já está a ser utilizado por outro utilizador.");
+      }
+      if (normUsername) {
+        const conflict = db.prepare("SELECT id FROM users WHERE (LOWER(username) = ? OR LOWER(email) = ?) AND id != ?").get(normUsername, normUsername, req.params.id);
+        if (conflict) throw new Error("Este nome de utilizador já está a ser utilizado por outro utilizador.");
+      }
+
       db.transaction(() => {
         let finalRole = bodyRole || 'seller';
         if (rId) {
@@ -4559,6 +5238,10 @@ async function startServer() {
         db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, establishment_id = ?, role_id = ?, custom_permissions = ?, status = ?, cash_register_id = ?, bi_number = ?, address = ? WHERE id = ?").run(
           name, normEmail, normUsername, finalRole, estId, rId, JSON.stringify(custom_permissions || []), status, crId, bi_number || null, address || null, req.params.id
         );
+
+        if (password && password.trim() !== '') {
+          db.prepare("UPDATE users SET password = ? WHERE id = ?").run(password, req.params.id);
+        }
         const salary = Number(base_salary) || 0;
         db.prepare("INSERT OR REPLACE INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(req.params.id, salary);
         if (estId) {
@@ -4601,15 +5284,32 @@ async function startServer() {
   });
 
   app.delete("/api/owner/hr/employees/:id", (req, res) => {
+    const employeeId = req.params.id;
+    const employee = db.prepare("SELECT * FROM users WHERE id = ?").get(employeeId) as any;
+
     try {
       db.transaction(() => {
-        db.prepare("DELETE FROM staff WHERE user_id = ?").run(req.params.id);
-        db.prepare("DELETE FROM hr_salary_payments WHERE salary_id IN (SELECT id FROM hr_salaries WHERE user_id = ?)").run(req.params.id);
-        db.prepare("DELETE FROM hr_salaries WHERE user_id = ?").run(req.params.id);
-        db.prepare("DELETE FROM hr_attendance WHERE user_id = ?").run(req.params.id);
-        db.prepare("DELETE FROM hr_vacations WHERE user_id = ?").run(req.params.id);
-        db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
+        db.prepare("DELETE FROM staff WHERE user_id = ?").run(employeeId);
+        db.prepare("DELETE FROM hr_salary_payments WHERE salary_id IN (SELECT id FROM hr_salaries WHERE user_id = ?)").run(employeeId);
+        db.prepare("DELETE FROM hr_salaries WHERE user_id = ?").run(employeeId);
+        db.prepare("DELETE FROM hr_attendance WHERE user_id = ?").run(employeeId);
+        db.prepare("DELETE FROM hr_vacations WHERE user_id = ?").run(employeeId);
+        db.prepare("DELETE FROM users WHERE id = ?").run(employeeId);
       })();
+
+      logAction({
+        userId: req.query.ownerId as string, // Assuming ownerId is passed or we get it from auth
+        ownerId: employee?.owner_id,
+        module: 'HR',
+        actionType: 'EMPLOYEE_DELETE',
+        severity: 'warning',
+        description: `Funcionário removido: ${employee?.name || employeeId}`,
+        entityType: 'USER',
+        entityId: employeeId,
+        oldValue: employee,
+        req
+      });
+
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -5415,36 +6115,40 @@ async function startServer() {
 
   // Client Routes
   app.get("/api/owner/clients/:establishmentId", (req, res) => {
-    const { userId } = req.query;
-    const establishmentId = req.params.establishmentId;
+    try {
+      const { userId } = req.query;
+      const establishmentId = req.params.establishmentId;
 
-    if (userId) {
       const { establishmentIds } = getContextData(userId as string);
-      if (establishmentId !== 'all' && !establishmentIds.includes(Number(establishmentId))) {
-        return res.status(403).json({ error: "Acesso negado para este estabelecimento." });
+      
+      let whereClause = "c.establishment_id = ?";
+      let params: any[] = [establishmentId];
+
+      if (establishmentId === 'all') {
+        if (establishmentIds.length === 0) return res.json([]);
+        const placeholders = establishmentIds.map(() => '?').join(',');
+        whereClause = `c.establishment_id IN (${placeholders})`;
+        params = [...establishmentIds];
+      } else {
+        // Security check for single establishment
+        if (!establishmentIds.includes(Number(establishmentId))) {
+          return res.status(403).json({ error: "Acesso negado para este estabelecimento." });
+        }
       }
+
+      const clients = db.prepare(`
+        SELECT c.*,
+          (SELECT COUNT(*) FROM transactions t WHERE t.client_nif = c.nif) as total_purchases,
+          (SELECT SUM(total_amount) FROM transactions t WHERE t.client_nif = c.nif) as total_spent
+        FROM clients c 
+        WHERE ${whereClause}
+        ORDER BY name ASC
+      `).all(...params);
+      res.json(clients);
+    } catch (e: any) {
+      console.error("Error fetching clients:", e);
+      res.status(500).json({ error: "Erro ao buscar clientes" });
     }
-
-    let whereClause = "c.establishment_id = ?";
-    let params: any[] = [establishmentId];
-
-    if (establishmentId === 'all') {
-      const { establishmentIds } = getContextData(userId as string);
-      if (establishmentIds.length === 0) return res.json([]);
-      const placeholders = establishmentIds.map(() => '?').join(',');
-      whereClause = `c.establishment_id IN (${placeholders})`;
-      params = [...establishmentIds];
-    }
-
-    const clients = db.prepare(`
-      SELECT c.*,
-        (SELECT COUNT(*) FROM transactions t WHERE t.client_nif = c.nif) as total_purchases,
-        (SELECT SUM(total_amount) FROM transactions t WHERE t.client_nif = c.nif) as total_spent
-      FROM clients c 
-      WHERE ${whereClause}
-      ORDER BY name ASC
-    `).all(...params);
-    res.json(clients);
   });
 
   app.post("/api/owner/clients", (req, res) => {
@@ -5466,9 +6170,14 @@ async function startServer() {
 
   // Supplier Routes
   app.get("/api/owner/suppliers/:ownerId", (req, res) => {
-    const { ownerId: effectiveOwnerId } = getContextData(req.params.ownerId);
-    const suppliers = db.prepare("SELECT * FROM suppliers WHERE owner_id = ? ORDER BY name ASC").all(effectiveOwnerId);
-    res.json(suppliers);
+    try {
+      const { ownerId: effectiveOwnerId } = getContextData(req.params.ownerId);
+      const suppliers = db.prepare("SELECT * FROM suppliers WHERE owner_id = ? ORDER BY name ASC").all(effectiveOwnerId);
+      res.json(suppliers);
+    } catch (e: any) {
+      console.error("Error fetching suppliers:", e);
+      res.status(500).json({ error: "Erro ao buscar fornecedores" });
+    }
   });
 
   app.post("/api/owner/suppliers", (req, res) => {
@@ -5537,20 +6246,25 @@ async function startServer() {
   });
 
   app.get("/api/owner/suppliers/:ownerId/report", (req, res) => {
-    const { ownerId: effectiveOwnerId } = getContextData(req.params.ownerId);
-    const report = db.prepare(`
-      SELECT s.id, s.name, s.nif,
-        COUNT(p.id) as total_purchases,
-        IFNULL(SUM(p.total_amount), 0) as total_spent,
-        IFNULL(SUM(p.paid_amount), 0) as total_paid,
-        IFNULL((SUM(p.total_amount) - SUM(p.paid_amount)), 0) as total_debt
-      FROM suppliers s
-      LEFT JOIN purchases p ON s.id = p.supplier_id
-      WHERE s.owner_id = ?
-      GROUP BY s.id
-      ORDER BY total_spent DESC
-    `).all(effectiveOwnerId);
-    res.json(report);
+    try {
+      const { ownerId: effectiveOwnerId } = getContextData(req.params.ownerId);
+      const report = db.prepare(`
+        SELECT s.id, s.name, s.nif,
+          COUNT(p.id) as total_purchases,
+          IFNULL(SUM(p.total_amount), 0) as total_spent,
+          IFNULL(SUM(p.paid_amount), 0) as total_paid,
+          IFNULL((SUM(p.total_amount) - SUM(p.paid_amount)), 0) as total_debt
+        FROM suppliers s
+        LEFT JOIN purchases p ON s.id = p.supplier_id
+        WHERE s.owner_id = ?
+        GROUP BY s.id
+        ORDER BY total_spent DESC
+      `).all(effectiveOwnerId);
+      res.json(report);
+    } catch (e: any) {
+      console.error("Error generating supplier report:", e);
+      res.status(500).json({ error: "Erro ao gerar relatório de fornecedores" });
+    }
   });
 
   app.post("/api/owner/purchases", (req, res) => {

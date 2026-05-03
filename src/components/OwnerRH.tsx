@@ -99,6 +99,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
   const [vacations, setVacations] = useState<HRVacation[]>([]);
   const [establishments, setEstablishments] = useState<EstablishmentType[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   // Modals
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
@@ -191,9 +192,12 @@ export const OwnerRH = ({ user }: { user: User }) => {
 
   const handleSaveEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
+
     const url = editingEmployee ? `/api/owner/hr/employees/${editingEmployee.id}` : '/api/owner/hr/employees';
     const method = editingEmployee ? 'PUT' : 'POST';
     
+    setSaving(true);
     try {
       const payload = {
         ...employeeForm,
@@ -225,6 +229,8 @@ export const OwnerRH = ({ user }: { user: User }) => {
     } catch (error: any) {
       console.error("Error saving employee:", error);
       alert("Ocorreu um erro inesperado.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1180,9 +1186,10 @@ export const OwnerRH = ({ user }: { user: User }) => {
             </button>
             <button 
               type="submit"
-              className="px-8 py-2 bg-black text-white text-sm font-bold rounded-xl hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
+              disabled={saving}
+              className="px-8 py-2 bg-black text-white text-sm font-bold rounded-xl hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200 disabled:opacity-50"
             >
-              Salvar Funcionário
+              {saving ? 'A guardar...' : 'Salvar Funcionário'}
             </button>
           </div>
         </form>

@@ -69,7 +69,11 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isRenewing, setIsRenewing] = useState(false);
+  const [renewalPeriod, setRenewalPeriod] = useState<'semestral' | 'anual' | null>(null);
+  const [showRenewalOptions, setShowRenewalOptions] = useState(false);
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
+  const [licenses, setLicenses] = useState<any[]>([]);
   
   // Invoice Series State
   const [series, setSeries] = useState<any[]>([]);
@@ -157,7 +161,7 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
     setIsLoading(true);
     try {
       if (activeTab === 'profile') {
-        const res = await fetch(`/api/admin/clients/${user.id}/details`);
+        const res = await fetch(`/api/owner/profile-details/${user.id}`);
         const data = await res.json();
         setFormData(prev => ({
           ...prev,
@@ -171,6 +175,7 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
           // unless it's the first load and we need the server value
           fiscal_regime: user.fiscal_regime || data.client.fiscal_regime || 'geral'
         }));
+        setLicenses(Array.isArray(data.licenses) ? data.licenses : []);
       } else if (activeTab === 'series') {
         const [seriesRes, establishmentsRes] = await Promise.all([
           fetch(`/api/owner/invoice-series/${user.id}`),
@@ -240,6 +245,49 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
       setNotification({ type: 'error', message: "Erro de conexão ao atualizar perfil" });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+   const handleRenewLicense = async () => {
+    // Direct action for better UX in iframe environments
+    if (!renewalPeriod) {
+      window.alert("Por favor, selecione um período de renovação.");
+      return;
+    }
+
+    setIsRenewing(true);
+    try {
+      const res = await fetch('/api/owner/support', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: user.id,
+          subject: 'Solicitação de Renovação de Licença',
+          description: `O utilizador ${user.name} solicitou a renovação da licença para a empresa ${formData.company_name || 'N/A'}. 
+                         NIF: ${formData.nif || 'N/A'}
+                         Plano Atual: ${licenses[0]?.plan_type || 'Profissional'}
+                         Expiração Atual: ${licenses[0]?.expiry_date ? new Date(licenses[0].expiry_date).toLocaleDateString() : 'N/A'}
+                         Tipo de Renovação Solicitada: ${renewalPeriod === 'anual' ? 'Anual' : 'Semestral'}
+                         Por favor, entrar em contacto para confirmar o faturamento.`,
+          priority: 'high'
+        })
+      });
+
+      if (res.ok) {
+        setNotification({ type: 'success', message: `Solicitação de renovação ${renewalPeriod === 'anual' ? 'Anual' : 'Semestral'} enviada com sucesso! O suporte entrará em contacto em breve.` });
+        window.alert("Solicitação enviada com sucesso! O administrador recebeu uma notificação e entrará em contacto em breve.");
+        setShowRenewalOptions(false);
+        setRenewalPeriod(null);
+      } else {
+        setNotification({ type: 'error', message: "Erro ao enviar solicitação de renovação." });
+        window.alert("Erro ao enviar solicitação. Por favor, tente novamente mais tarde.");
+      }
+    } catch (e) {
+      console.error(e);
+      setNotification({ type: 'error', message: "Erro de conexão ao solicitar renovação." });
+      window.alert("Erro de ligação ao servidor.");
+    } finally {
+      setIsRenewing(false);
     }
   };
 
@@ -1026,21 +1074,104 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
           </div>
 
           <div className="space-y-6">
-            <Card className="p-6 bg-black text-white">
-              <h3 className="font-bold mb-4">Estado da Subscrição</h3>
+            <Card className="p-6 bg-white border border-zinc-200 shadow-sm">
+              <h3 className="font-black text-black mb-4 uppercase tracking-wider text-xs">Estado da Subscrição</h3>
               <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-zinc-400">Plano Actual</span>
-                  <span className="font-bold bg-white/10 px-2 py-1 rounded text-xs uppercase">Profissional</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-zinc-400">Expira em</span>
-                  <span className="font-bold">31/12/2026</span>
-                </div>
-                <div className="pt-4 border-t border-white/10">
-                  <button className="w-full py-3 bg-white text-black rounded-xl font-bold text-sm hover:bg-zinc-100 transition-all">
-                    Renovar Subscrição
-                  </button>
+                {licenses.length > 0 ? (
+                  <>
+                    <div className="flex justify-between items-center py-2 border-b border-zinc-100">
+                      <span className="text-sm font-black text-black">Plano Actual</span>
+                      <span className="font-black text-black px-2 py-1 rounded text-xs uppercase">
+                        {licenses[0]?.plan_type || 'Profissional'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-zinc-100">
+                      <span className="text-sm font-black text-black">Expira em</span>
+                      <span className={cn(
+                        "font-black text-black",
+                        new Date(licenses[0]?.expiry_date) < new Date() ? "text-rose-600" : ""
+                      )}>
+                        {new Date(licenses[0]?.expiry_date).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-center py-2 border-b border-zinc-100">
+                      <span className="text-sm font-black text-black">Plano Actual</span>
+                      <span className="font-black text-black px-2 py-1 rounded text-xs uppercase">Trial / Base</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-zinc-100">
+                      <span className="text-sm font-black text-black">Expira em</span>
+                      <span className="font-black text-black">N/A</span>
+                    </div>
+                  </>
+                )}
+                <div className="pt-2 space-y-4">
+                  {!showRenewalOptions ? (
+                    <button 
+                      type="button"
+                      onClick={() => setShowRenewalOptions(true)}
+                      className="w-full py-4 bg-black text-white rounded-xl font-black text-sm hover:bg-zinc-800 transition-all flex items-center justify-center gap-2 shadow-lg shadow-black/10"
+                    >
+                      <RefreshCw size={18} />
+                      Solicitar Renovação
+                    </button>
+                  ) : (
+                    <div className="space-y-4 animate-in slide-in-from-top-2 duration-300">
+                      <div className="space-y-2">
+                        <p className="text-[10px] uppercase font-black text-black tracking-widest">Escolha o Período</p>
+                        <div className="flex gap-2">
+                          <button 
+                            type="button"
+                            onClick={() => setRenewalPeriod('semestral')}
+                            className={cn(
+                              "flex-1 py-3 text-xs font-black rounded-xl border transition-all flex flex-col items-center justify-center gap-0.5",
+                              renewalPeriod === 'semestral' ? "bg-zinc-100 border-black text-black shadow-inner" : "bg-white text-black border-zinc-200 hover:bg-zinc-50"
+                            )}
+                          >
+                            <span>Semestral</span>
+                            <span className="text-[9px] font-bold text-zinc-500">6 Meses</span>
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => setRenewalPeriod('anual')}
+                            className={cn(
+                              "flex-1 py-3 text-xs font-black rounded-xl border transition-all flex flex-col items-center justify-center gap-0.5",
+                              renewalPeriod === 'anual' ? "bg-zinc-100 border-black text-black shadow-inner" : "bg-white text-black border-zinc-200 hover:bg-zinc-50"
+                            )}
+                          >
+                            <span>Anual</span>
+                            <span className="text-[9px] font-bold text-zinc-500">12 Meses</span>
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="flex gap-2">
+                        <button 
+                          type="button"
+                          onClick={() => setShowRenewalOptions(false)}
+                          className="flex-1 py-3 border border-zinc-300 text-black rounded-xl font-black text-xs hover:bg-zinc-50 transition-all"
+                        >
+                          Cancelar
+                        </button>
+                        <button 
+                          type="button"
+                          disabled={isRenewing}
+                          onClick={handleRenewLicense}
+                          className={cn(
+                            "flex-[2] py-3 rounded-xl font-black text-xs transition-all disabled:opacity-50 flex items-center justify-center gap-2 border",
+                            renewalPeriod 
+                              ? "bg-zinc-100 text-black border-black hover:bg-zinc-200" 
+                              : "bg-white text-zinc-300 border-zinc-100 cursor-not-allowed"
+                          )}
+                        >
+                          {isRenewing ? <RefreshCw size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                          {renewalPeriod ? `Confirmar ${renewalPeriod === 'anual' ? 'Anual' : 'Semestral'}` : 'Confirmar'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </Card>
