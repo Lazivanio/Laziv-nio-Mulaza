@@ -40,6 +40,7 @@ export interface User {
   name: string;
   role: UserRole;
   establishment_id?: number | null;
+  owner_id?: number | null;
   role_id?: number | null;
   cash_register_id?: number | null;
   cash_register_name?: string | null;

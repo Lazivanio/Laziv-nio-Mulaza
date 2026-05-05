@@ -3,7 +3,7 @@ import {
   Search, Filter, Calendar, User, Building, Shield, Activity, 
   ChevronLeft, ChevronRight, Download, Eye, FileText, Info,
   AlertTriangle, AlertCircle, CheckCircle, Database, Globe, Smartphone,
-  X, BarChart3, Clock
+  X, BarChart3, Clock, ShieldAlert
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
@@ -16,12 +16,15 @@ interface SystemLog {
   establishment_id: number;
   module: string;
   action_type: string;
-  severity: 'info' | 'warning' | 'critical';
+  severity: 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
   description: string;
   entity_type: string;
   entity_id: string;
-  old_value: string;
-  new_value: string;
+  old_values: string;
+  new_values: string;
+  metadata: string;
+  actor_role: string;
+  session_id: string;
   ip_address: string;
   user_agent: string;
   status: 'success' | 'failure';
@@ -47,7 +50,9 @@ const AdminAuditLogs: React.FC = () => {
     actionType: '',
     severity: '',
     search: '',
-    entityType: ''
+    entityType: '',
+    actorRole: '',
+    sessionId: ''
   });
 
   const [selectedLog, setSelectedLog] = useState<SystemLog | null>(null);
@@ -89,19 +94,21 @@ const AdminAuditLogs: React.FC = () => {
   };
 
   const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'critical': return 'text-red-600 bg-red-100';
-      case 'warning': return 'text-amber-600 bg-amber-100';
-      case 'info': return 'text-blue-600 bg-blue-100';
-      default: return 'text-gray-600 bg-gray-100';
+    switch (severity?.toUpperCase()) {
+      case 'CRITICAL': return 'text-red-700 bg-red-100 border-red-200';
+      case 'ERROR': return 'text-rose-600 bg-rose-50 border-rose-100';
+      case 'WARNING': return 'text-amber-600 bg-amber-100 border-amber-200';
+      case 'INFO': return 'text-blue-600 bg-blue-100 border-blue-200';
+      default: return 'text-gray-600 bg-gray-100 border-gray-200';
     }
   };
 
   const getSeverityIcon = (severity: string) => {
-    switch (severity) {
-      case 'critical': return AlertCircle;
-      case 'warning': return AlertTriangle;
-      case 'info': return Info;
+    switch (severity?.toUpperCase()) {
+      case 'CRITICAL': return ShieldAlert;
+      case 'ERROR': return AlertCircle;
+      case 'WARNING': return AlertTriangle;
+      case 'INFO': return Info;
       default: return Activity;
     }
   };
@@ -116,11 +123,13 @@ const AdminAuditLogs: React.FC = () => {
     try {
       if (!oldVal && !newVal) return <span className="text-gray-400 italic">Sem alterações detalhadas</span>;
       
-      const oldObj = oldVal ? JSON.parse(oldVal) : {};
-      const newObj = newVal ? JSON.parse(newVal) : {};
+      const oldObj = oldVal ? (typeof oldVal === 'string' ? JSON.parse(oldVal) : oldVal) : {};
+      const newObj = newVal ? (typeof newVal === 'string' ? JSON.parse(newVal) : newVal) : {};
       
       const keys = Array.from(new Set([...Object.keys(oldObj), ...Object.keys(newObj)]));
       
+      if (keys.length === 0) return <span className="text-gray-400 italic font-medium">Nenhum campo modificado.</span>;
+
       return (
         <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
           {keys.map(key => {
@@ -133,14 +142,14 @@ const AdminAuditLogs: React.FC = () => {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-red-50 p-3 rounded-lg border border-red-100">
                     <div className="text-[10px] text-red-400 font-bold mb-1">ANTES</div>
-                    <pre className="text-xs text-red-700 whitespace-pre-wrap font-mono">
-                      {oldObj[key] === undefined ? '(nulo)' : JSON.stringify(oldObj[key], null, 2)}
+                    <pre className="text-xs text-red-700 whitespace-pre-wrap font-mono break-all">
+                      {oldObj[key] === undefined ? '(nulo)' : (typeof oldObj[key] === 'object' ? JSON.stringify(oldObj[key], null, 2) : String(oldObj[key]))}
                     </pre>
                   </div>
                   <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100">
                     <div className="text-[10px] text-emerald-400 font-bold mb-1">DEPOIS</div>
-                    <pre className="text-xs text-emerald-700 whitespace-pre-wrap font-mono">
-                      {newObj[key] === undefined ? '(nulo)' : JSON.stringify(newObj[key], null, 2)}
+                    <pre className="text-xs text-emerald-700 whitespace-pre-wrap font-mono break-all">
+                      {newObj[key] === undefined ? '(nulo)' : (typeof newObj[key] === 'object' ? JSON.stringify(newObj[key], null, 2) : String(newObj[key]))}
                     </pre>
                   </div>
                 </div>
@@ -152,8 +161,8 @@ const AdminAuditLogs: React.FC = () => {
     } catch (e) {
       return (
         <div className="grid grid-cols-2 gap-4">
-          <pre className="p-3 bg-gray-50 rounded-lg text-xs">{oldVal || '(vazio)'}</pre>
-          <pre className="p-3 bg-gray-50 rounded-lg text-xs">{newVal || '(vazio)'}</pre>
+          <pre className="p-3 bg-gray-50 rounded-lg text-xs break-all">{typeof oldVal === 'string' ? oldVal : JSON.stringify(oldVal)}</pre>
+          <pre className="p-3 bg-gray-50 rounded-lg text-xs break-all">{typeof newVal === 'string' ? newVal : JSON.stringify(newVal)}</pre>
         </div>
       );
     }
@@ -244,10 +253,38 @@ const AdminAuditLogs: React.FC = () => {
                     onChange={e => setFilters({...filters, severity: e.target.value})}
                   >
                     <option value="">Todas</option>
-                    <option value="info">Informativo</option>
-                    <option value="warning">Aviso</option>
-                    <option value="critical">Crítico / Sensível</option>
+                    <option value="INFO">Informativo</option>
+                    <option value="WARNING">Aviso</option>
+                    <option value="ERROR">Erro</option>
+                    <option value="CRITICAL">Crítico / Sensível</option>
                   </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-zinc-400 uppercase">Papel do Ator</label>
+                  <select 
+                    className="w-full px-4 py-2 border border-zinc-200 rounded-xl text-sm focus:ring-2 focus:ring-zinc-900 outline-none bg-white font-medium"
+                    value={filters.actorRole}
+                    onChange={e => setFilters({...filters, actorRole: e.target.value})}
+                  >
+                    <option value="">Todos</option>
+                    <option value="Admin">Administrador</option>
+                    <option value="Owner">Proprietário</option>
+                    <option value="Gerente">Gerente</option>
+                    <option value="Caixa">Caixa</option>
+                    <option value="Sistema">Sistema</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-zinc-400 uppercase">ID da Sessão</label>
+                  <input 
+                    type="text" 
+                    placeholder="Sessão..." 
+                    className="w-full px-4 py-2 border border-zinc-200 rounded-xl text-sm focus:ring-2 focus:ring-zinc-900 outline-none"
+                    value={filters.sessionId}
+                    onChange={e => setFilters({...filters, sessionId: e.target.value})}
+                  />
                 </div>
 
                 <div className="space-y-1.5">
@@ -265,7 +302,8 @@ const AdminAuditLogs: React.FC = () => {
                     onClick={() => {
                       setFilters({
                         startDate: '', endDate: '', userId: '', ownerId: '',
-                        module: '', actionType: '', severity: '', search: '', entityType: ''
+                        module: '', actionType: '', severity: '', search: '', entityType: '',
+                        actorRole: '', sessionId: ''
                       });
                       setPage(1);
                     }}
@@ -362,13 +400,8 @@ const AdminAuditLogs: React.FC = () => {
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                              <Globe className="w-3 h-3" />
-                              {log.ip_address || '---'}
-                            </div>
-                            <div className={`inline-flex w-fit px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${getStatusBadge(log.status)}`}>
-                              {log.status === 'success' ? 'Sucesso' : 'Falha'}
-                            </div>
+                            <span className="text-sm font-bold text-zinc-700">{log.actor_role || 'SISTEMA'}</span>
+                            <span className="text-[10px] text-zinc-400 font-mono">Sessão: {log.session_id ? log.session_id.substring(0, 8) + '...' : 'N/A'}</span>
                           </div>
                         </td>
                         <td className="px-6 py-4 text-right">
@@ -470,9 +503,17 @@ const AdminAuditLogs: React.FC = () => {
                     </div>
                     <div className="flex flex-col">
                       <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-1.5">
-                        <User className="w-3 h-3" /> Utilizador
+                        <User className="w-3 h-3" /> Ator / Papel
                       </span>
-                      <span className="text-sm font-bold text-zinc-800">{selectedLog.user_name || 'Sistema (Automático)'}</span>
+                      <span className="text-sm font-bold text-zinc-800">
+                        {selectedLog.user_name || 'Sistema'} ({selectedLog.actor_role || 'Automático'})
+                      </span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-1.5">
+                        <Activity className="w-3 h-3" /> ID da Sessão
+                      </span>
+                      <span className="text-sm font-bold text-zinc-800 font-mono">{selectedLog.session_id || 'N/A'}</span>
                     </div>
                   </div>
 
@@ -516,6 +557,25 @@ const AdminAuditLogs: React.FC = () => {
 
                 <div className="h-px bg-zinc-100 w-full" />
 
+                {/* Technical Context / Metadata */}
+                {selectedLog.metadata && (
+                  <div className="space-y-3">
+                    <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                       <Database className="w-3 h-3" /> Contexto Técnico (Metadata)
+                    </h4>
+                    <div className="bg-zinc-900 rounded-2xl p-4 overflow-x-auto border border-zinc-800">
+                      <pre className="text-xs text-zinc-300 font-mono">
+                        {typeof selectedLog.metadata === 'string' ? (
+                          (() => {
+                            try { return JSON.stringify(JSON.parse(selectedLog.metadata), null, 2); }
+                            catch (e) { return selectedLog.metadata; }
+                          })()
+                        ) : JSON.stringify(selectedLog.metadata, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+
                 {/* Device Info */}
                 <div className="bg-zinc-50 rounded-2xl p-4 flex items-start gap-3 border border-zinc-100">
                   <Smartphone className="w-5 h-5 text-zinc-400 mt-0.5" />
@@ -534,7 +594,7 @@ const AdminAuditLogs: React.FC = () => {
                     </h4>
                   </div>
                   
-                  {renderDiff(selectedLog.old_value, selectedLog.new_value)}
+                  {renderDiff(selectedLog.old_values, selectedLog.new_values)}
                 </div>
               </div>
 

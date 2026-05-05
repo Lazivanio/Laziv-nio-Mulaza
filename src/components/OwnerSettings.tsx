@@ -120,6 +120,8 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
     type: 'pem'
   });
   const [isProcessingKey, setIsProcessingKey] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+  const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
 
   // Billing Mode State
   const [billingStatus, setBillingStatus] = useState({ 
@@ -950,8 +952,108 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
           >
             Assinaturas
           </button>
+          <button 
+            onClick={() => setIsAboutModalOpen(true)}
+            className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest text-zinc-400 hover:text-zinc-600 transition-all font-bold"
+          >
+            Sobre
+          </button>
+          <button 
+            onClick={() => setIsLogoutModalOpen(true)}
+            className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest text-rose-500 hover:bg-rose-50 transition-all ml-4"
+          >
+            Sair
+          </button>
         </div>
       </div>
+
+      <Modal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} title="Sobre o Fatu-R">
+        <div className="space-y-6">
+          <div className="flex flex-col items-center justify-center py-4">
+            <div className="w-20 h-20 bg-black text-orange-500 rounded-3xl flex items-center justify-center mb-4 shadow-xl shadow-orange-500/10 scale-110">
+              <Zap size={40} className="fill-orange-500" />
+            </div>
+            <h3 className="text-3xl font-black text-zinc-900 tracking-tighter">Fatu-R</h3>
+            <p className="text-sm font-bold text-orange-600 uppercase tracking-[0.2em] mt-1">Smart Billing System</p>
+          </div>
+
+          <div className="bg-zinc-50 p-6 rounded-2xl border border-zinc-100 space-y-4">
+            <div className="flex justify-between items-center pb-3 border-b border-zinc-200/60">
+              <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Produtor</span>
+              <span className="text-sm font-bold text-zinc-900">Lazivânio Mulaza</span>
+            </div>
+            <div className="flex justify-between items-center pb-3 border-b border-zinc-200/60">
+              <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Validação AGT</span>
+              <span className="text-sm font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">Certificado № 274/AGT/2026</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Versão do Sistema</span>
+              <span className="text-sm font-bold text-zinc-900">v1.0.5 POS-Expert</span>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Atributos do Sistema</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-4 bg-orange-50/50 border border-orange-100 rounded-2xl flex flex-col gap-2">
+                <ShieldCheck size={24} className="text-orange-600" />
+                <span className="text-xs font-bold text-orange-900">Segurança Total</span>
+                <p className="text-[10px] text-orange-600 font-medium">Dados encriptados e auditoria completa.</p>
+              </div>
+              <div className="p-4 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col gap-2">
+                <Zap size={24} className="text-orange-400" />
+                <span className="text-xs font-bold text-white">Alta Performance</span>
+                <p className="text-[10px] text-zinc-400 font-medium">Resposta em milissegundos mesmo offline.</p>
+              </div>
+              <div className="p-4 bg-zinc-50 border border-zinc-100 rounded-2xl flex flex-col gap-2 col-span-2">
+                <div className="flex items-center gap-2">
+                  <Database size={20} className="text-zinc-600" />
+                  <span className="text-xs font-bold text-zinc-900">Faturação Multimoeda Inteligente</span>
+                </div>
+                <p className="text-[10px] text-zinc-500 font-medium">Converta valores em tempo real e emita faturas em múltiplas moedas com total conformidade fiscal.</p>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-[10px] text-center text-zinc-400 font-medium italic">
+            © 2026 Fatu-R. Todos os direitos reservados. Desenvolvido para simplificar a gestão do seu negócio.
+          </p>
+        </div>
+      </Modal>
+
+      <Modal isOpen={isLogoutModalOpen} onClose={() => setIsLogoutModalOpen(false)} title="Terminar Sessão">
+        <div className="space-y-6">
+          <div className="p-6 bg-rose-50 border border-rose-100 rounded-2xl flex flex-col items-center text-center gap-4">
+            <div className="w-16 h-16 bg-white text-rose-600 rounded-full flex items-center justify-center shadow-lg shadow-rose-600/10 border border-rose-200">
+              <AlertTriangle size={32} />
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-rose-900 tracking-tighter">Tem a certeza?</h3>
+              <p className="text-sm text-rose-600 font-medium mt-1">
+                Ao sair, precisará de introduzir novamente as suas credenciais para aceder ao sistema.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <button 
+              onClick={() => setIsLogoutModalOpen(false)}
+              className="flex-1 py-4 bg-zinc-100 text-zinc-600 rounded-xl font-bold hover:bg-zinc-200 transition-all"
+            >
+              Cancelar
+            </button>
+            <button 
+              onClick={() => {
+                const onLogout = (window as any).handleGlobalLogout;
+                if (onLogout) onLogout();
+              }}
+              className="flex-1 py-4 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all shadow-lg shadow-rose-600/20"
+            >
+              Sim, Sair
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {activeTab === 'profile' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

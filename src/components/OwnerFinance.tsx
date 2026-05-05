@@ -18,10 +18,12 @@ import {
   ChevronRight,
   PieChart as PieChartIcon,
   Download,
-  FileText
+  FileText,
+  Coins
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Establishment, FinancialTransaction, AccountReceivable, AccountPayable } from '../types';
+import { OwnerCurrencies } from './OwnerCurrencies';
 
 interface OwnerFinanceProps {
   user: User;
@@ -35,7 +37,7 @@ interface FinancialSummary {
 }
 
 export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
-  const [activeTab, setActiveTab] = useState<'summary' | 'incomes' | 'expenses' | 'receivable' | 'payable'>('summary');
+  const [activeTab, setActiveTab] = useState<'summary' | 'incomes' | 'expenses' | 'receivable' | 'payable' | 'currencies'>('summary');
   const [summary, setSummary] = useState<FinancialSummary | null>(null);
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
   const [receivables, setReceivables] = useState<AccountReceivable[]>([]);
@@ -599,6 +601,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
         <TabButton active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} icon={TrendingDown} label="Saídas" />
         <TabButton active={activeTab === 'receivable'} onClick={() => setActiveTab('receivable')} icon={ArrowUpCircle} label="A Receber" />
         <TabButton active={activeTab === 'payable'} onClick={() => setActiveTab('payable')} icon={ArrowDownCircle} label="A Pagar" />
+        <TabButton active={activeTab === 'currencies'} onClick={() => setActiveTab('currencies')} icon={Coins} label="Moedas" />
       </div>
 
       {/* Content */}
@@ -615,6 +618,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
           {activeTab === 'expenses' && renderTransactions('expense')}
           {activeTab === 'receivable' && renderReceivables()}
           {activeTab === 'payable' && renderPayables()}
+          {activeTab === 'currencies' && <OwnerCurrencies user={user} />}
         </motion.div>
       </AnimatePresence>
 

@@ -85,11 +85,14 @@ import {
   CheckCircle2,
   CheckCircle,
   Receipt,
+  ReceiptText,
+  BadgeDollarSign,
   CloudUpload,
   Warehouse,
   ClipboardList,
   Loader2,
   RefreshCcw,
+  Coins,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
@@ -104,6 +107,7 @@ import { OwnerOverview } from './components/OwnerOverview';
 import { MyEstablishments } from './components/MyEstablishments';
 import { OwnerReports } from './components/OwnerReports';
 import { OwnerSettings } from './components/OwnerSettings';
+import { OwnerCurrencies } from './components/OwnerCurrencies';
 import { OwnerWarehouses } from './components/OwnerWarehouses';
 import { OwnerFinance } from './components/OwnerFinance';
 import AdminAuditLogs from './components/AdminAuditLogs';
@@ -631,10 +635,42 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
   };
 
   const closeSidebar = () => setIsSidebarOpen(false);
+  const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
 
   return (
     <div className="h-screen bg-zinc-50 flex overflow-hidden relative">
       <ReliabilityMonitor />
+      
+      <Modal isOpen={isLogoutConfirmOpen} onClose={() => setIsLogoutConfirmOpen(false)} title="Terminar Sessão">
+        <div className="space-y-6">
+          <div className="p-6 bg-rose-50 border border-rose-100 rounded-2xl flex flex-col items-center text-center gap-4">
+            <div className="w-16 h-16 bg-white text-rose-600 rounded-full flex items-center justify-center shadow-lg shadow-rose-600/10 border border-rose-200">
+              <AlertTriangle size={32} />
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-rose-900 tracking-tighter">Terminar Sessão?</h3>
+              <p className="text-sm text-rose-600 font-medium mt-1">
+                Deseja realmente sair do sistema? Quaisquer alterações não guardadas poderão ser perdidas.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <button 
+              onClick={() => setIsLogoutConfirmOpen(false)}
+              className="flex-1 py-4 bg-zinc-100 text-zinc-600 rounded-xl font-bold hover:bg-zinc-200 transition-all"
+            >
+              Cancelar
+            </button>
+            <button 
+              onClick={handleLogout}
+              className="flex-1 py-4 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all shadow-lg shadow-rose-600/20"
+            >
+              Sair Agora
+            </button>
+          </div>
+        </div>
+      </Modal>
       {/* Sidebar Overlay */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -726,6 +762,16 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             )}
           </nav>
 
+          <div className="pt-2">
+            <button 
+              onClick={() => setIsLogoutConfirmOpen(true)}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-rose-500 hover:bg-rose-50"
+            >
+              <LogOut size={20} />
+              <span className="font-bold text-sm">Terminar Sessão</span>
+            </button>
+          </div>
+
           <div className="pt-4 border-t border-zinc-100">
             <div className="flex items-center gap-3 px-4 py-3 mb-4">
               <div className="w-10 h-10 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600">
@@ -736,13 +782,6 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
                 <p className="text-xs text-zinc-500 truncate capitalize">{user.role}</p>
               </div>
             </div>
-            <button 
-              onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-4 py-3 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-            >
-              <LogOut size={20} />
-              <span className="font-medium">Sair</span>
-            </button>
           </div>
         </div>
       </aside>
@@ -820,6 +859,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
 
 const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [financeSubTab, setFinanceSubTab] = useState<'payments' | 'saas'>('payments');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [dashboardData, setDashboardData] = useState<any>({
     stats: { totalClients: 0, activeClients: 0, totalEstablishments: 0, pendingSupport: 0, expiredLicenses: 0, expiringSoon: 0 },
@@ -914,6 +954,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
     system_name: 'Fatu-R'
   });
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
   const [planFormData, setPlanFormData] = useState({
     name: '',
@@ -922,6 +963,32 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
     max_products: 100,
     description: '',
     features: { reports: true, multi_establishment: false }
+  });
+
+  // System Finance States (SaaS)
+  const [systemInvoices, setSystemInvoices] = useState<any[]>([]);
+  const [systemAuditLogs, setSystemAuditLogs] = useState<any[]>([]);
+  const [isSystemInvoiceModalOpen, setIsSystemInvoiceModalOpen] = useState(false);
+  const [systemInvoiceFormData, setSystemInvoiceFormData] = useState<any>({
+    doc_type: 'FT',
+    owner_id: '',
+    total_amount: 0,
+    tax_amount: 0,
+    tax_percentage: 14,
+    items: [{ description: '', amount: 0 }],
+    payment_method: 'bank_transfer'
+  });
+  const [isSystemInvoicePreviewOpen, setIsSystemInvoicePreviewOpen] = useState(false);
+  const [selectedSystemInvoice, setSelectedSystemInvoice] = useState<any>(null);
+  const [isLiquidating, setIsLiquidating] = useState(false);
+
+  // Integrated Payment States
+  const [isSystemPaymentModalOpen, setIsSystemPaymentModalOpen] = useState(false);
+  const [systemPaymentFormData, setSystemPaymentFormData] = useState({
+    owner_id: '',
+    payment_method: 'bank_transfer',
+    payments: [] as {ft_id: number, amount: number, invoice_number: string, balance: number}[],
+    total_amount: 0
   });
 
   const fetchData = async () => {
@@ -937,7 +1004,9 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
         '/api/admin/plans',
         '/api/admin/reports',
         '/api/admin/settings',
-        '/api/admin/finance'
+        '/api/admin/finance',
+        '/api/admin/system/invoices',
+        '/api/admin/system/audit-logs'
       ];
 
       const responses = await Promise.all(endpoints.map(url => fetch(url)));
@@ -947,7 +1016,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
         throw new Error(`Failed to fetch ${failed.url}: ${failed.statusText}`);
       }
 
-      const [dashData, clientsData, licensesData, ticketsData, monitoringData, plansData, reportsData, settingsData, financeData] = await Promise.all(
+      const [dashData, clientsData, licensesData, ticketsData, monitoringData, plansData, reportsData, settingsData, financeData, systemInvoicesData, auditLogsData] = await Promise.all(
         responses.map(r => r.json())
       );
 
@@ -960,6 +1029,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       setReportsData(reportsData || { revenueByMonth: [], clientGrowth: [], licensesByPlan: [], ticketsByStatus: [] });
       setSystemSettings(settingsData || {});
       setFinanceData(financeData || { payments: [], stats: {}, pendingPayments: [], reports: {}, methods: [] });
+      setSystemInvoices(Array.isArray(systemInvoicesData) ? systemInvoicesData : []);
+      setSystemAuditLogs(Array.isArray(auditLogsData) ? auditLogsData : []);
     } catch (e: any) {
       console.error("Error fetching admin data", e);
       setError(e.message);
@@ -1191,6 +1262,90 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
     }
   };
 
+  const handleCreateSystemInvoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const response = await fetch('/api/admin/system/invoices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(systemInvoiceFormData)
+      });
+      if (response.ok) {
+        setIsSystemInvoiceModalOpen(false);
+        fetchData();
+        setSystemInvoiceFormData({
+          doc_type: 'FT',
+          owner_id: '',
+          total_amount: 0,
+          tax_amount: 0,
+          items: [{ description: '', amount: 0 }],
+          payment_method: 'bank_transfer'
+        });
+      } else {
+        const err = await response.json();
+        alert(err.error || "Erro ao emitir documento");
+      }
+    } catch (e) {
+      alert("Erro na comunicação com o servidor");
+    }
+  };
+
+  const handleLiquidateSystemInvoice = async (id: number, paymentMethod: string) => {
+    setIsLiquidating(true);
+    try {
+      const response = await fetch(`/api/admin/system/invoices/${id}/liquidate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_method: paymentMethod })
+      });
+      if (response.ok) {
+        fetchData();
+      } else {
+        const err = await response.json();
+        alert(err.error || "Erro ao liquidar fatura");
+      }
+    } catch (e) {
+      alert("Erro na comunicação com o servidor");
+    } finally {
+      setIsLiquidating(false);
+    }
+  };
+
+  const handleLiquidateMultiple = async () => {
+    if (!systemPaymentFormData.owner_id || systemPaymentFormData.payments.length === 0) return;
+    
+    setIsLiquidating(true);
+    try {
+      const res = await fetch('/api/admin/system/liquidate-multiple', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          owner_id: parseInt(systemPaymentFormData.owner_id),
+          payments: systemPaymentFormData.payments.map(p => ({ ft_id: p.ft_id, amount: p.amount })),
+          payment_method: systemPaymentFormData.payment_method,
+          total_amount: systemPaymentFormData.total_amount
+        })
+      });
+      if (res.ok) {
+        setIsSystemPaymentModalOpen(false);
+        fetchData();
+        setSystemPaymentFormData({
+            owner_id: '',
+            payment_method: 'bank_transfer',
+            payments: [],
+            total_amount: 0
+        });
+      } else {
+        const data = await res.json();
+        alert(data.error || "Erro ao processar pagamento.");
+      }
+    } catch (e) {
+      alert("Falha na comunicação com o servidor.");
+    } finally {
+      setIsLiquidating(false);
+    }
+  };
+
   const handleSavePlan = async (e: FormEvent) => {
     e.preventDefault();
     try {
@@ -1388,6 +1543,13 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
             <Settings2 size={20} />
             <span className="font-bold text-sm">Configurações</span>
           </button>
+          <button 
+            onClick={() => setIsLogoutModalOpen(true)}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-rose-500 hover:bg-rose-50"
+          >
+            <LogOut size={20} />
+            <span className="font-bold text-sm">Terminar Sessão</span>
+          </button>
         </nav>
 
         <div className="p-4 border-t border-zinc-100">
@@ -1399,12 +1561,40 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               <p className="text-xs font-bold truncate">{user.name}</p>
               <p className="text-[10px] text-zinc-400 truncate">{user.email}</p>
             </div>
-            <button onClick={onLogout} className="text-zinc-400 hover:text-rose-500 transition-colors">
-              <LogOut size={18} />
-            </button>
           </div>
         </div>
       </aside>
+
+      <Modal isOpen={isLogoutModalOpen} onClose={() => setIsLogoutModalOpen(false)} title="Terminar Sessão">
+        <div className="space-y-6">
+          <div className="p-6 bg-rose-50 border border-rose-100 rounded-2xl flex flex-col items-center text-center gap-4">
+            <div className="w-16 h-16 bg-white text-rose-600 rounded-full flex items-center justify-center shadow-lg shadow-rose-600/10 border border-rose-200">
+              <AlertTriangle size={32} />
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-rose-900 tracking-tighter">Sair do Painel Admin?</h3>
+              <p className="text-sm text-rose-600 font-medium mt-1">
+                Tem a certeza que deseja encerrar a sua sessão administrativa? Todas as janelas de gestão serão fechadas.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <button 
+              onClick={() => setIsLogoutModalOpen(false)}
+              className="flex-1 py-4 bg-zinc-100 text-zinc-600 rounded-xl font-bold hover:bg-zinc-200 transition-all"
+            >
+              Cancelar
+            </button>
+            <button 
+              onClick={onLogout}
+              className="flex-1 py-4 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all shadow-lg shadow-rose-600/20"
+            >
+              Sair Agora
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto min-w-0">
@@ -1525,199 +1715,298 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
 
           {activeTab === 'finance' && (
             <div className="space-y-8">
-              {/* 1️⃣ Resumo Financeiro */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <StatCard label="Total Ganho Hoje" value={`Kz ${(financeData.stats.totalToday || 0).toLocaleString()}`} icon={DollarSign} color="emerald" />
-                <StatCard label="Total Ganho no Mês" value={`Kz ${(financeData.stats.totalMonth || 0).toLocaleString()}`} icon={TrendingUp} color="blue" />
-                <StatCard label="Total Ganho no Ano" value={`Kz ${(financeData.stats.totalYear || 0).toLocaleString()}`} icon={Activity} color="indigo" />
-                <StatCard label="Pagamentos Recebidos" value={financeData.stats.count} icon={CreditCard} color="amber" />
+              {/* Seletor de Sub-Abas Financeiras */}
+              <div className="flex bg-zinc-100 p-1 rounded-2xl w-fit">
+                <button
+                  onClick={() => setFinanceSubTab('payments')}
+                  className={cn(
+                    "px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                    financeSubTab === 'payments' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+                  )}
+                >
+                  Pagamentos Clientes
+                </button>
+                <button
+                  onClick={() => setFinanceSubTab('saas')}
+                  className={cn(
+                    "px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                    financeSubTab === 'saas' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+                  )}
+                >
+                  Faturação SaaS
+                </button>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* 2️⃣ Receitas do Mês */}
-                <Card className="lg:col-span-2">
-                  <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
-                    <h3 className="font-bold">Receitas do Mês</h3>
+              {financeSubTab === 'payments' ? (
+                <div className="space-y-8">
+                  {/* 1️⃣ Resumo Financeiro Clientes */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <StatCard label="Total Ganho Hoje" value={`Kz ${(financeData.stats.totalToday || 0).toLocaleString()}`} icon={DollarSign} color="emerald" />
+                    <StatCard label="Total Ganho no Mês" value={`Kz ${(financeData.stats.totalMonth || 0).toLocaleString()}`} icon={TrendingUp} color="blue" />
+                    <StatCard label="Total Ganho no Ano" value={`Kz ${(financeData.stats.totalYear || 0).toLocaleString()}`} icon={Activity} color="indigo" />
+                    <StatCard label="Pagamentos Recebidos" value={financeData.stats.count} icon={CreditCard} color="amber" />
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                      <thead>
-                        <tr className="border-b border-zinc-50">
-                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Valor</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano/Licença</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-50">
-                        {financeData.payments.filter((p: any) => p.timestamp.startsWith(new Date().toISOString().substring(0, 7))).map((payment: any) => (
-                          <tr key={`fin-rec-pay-${payment.id}`} className="hover:bg-zinc-50/50 transition-colors">
-                            <td className="px-6 py-4">
-                              <p className="text-sm font-bold">{payment.client_name}</p>
-                            </td>
-                            <td className="px-6 py-4 text-sm font-black text-emerald-600">Kz {payment.amount.toLocaleString()}</td>
-                            <td className="px-6 py-4">
-                              <span className="px-2 py-1 bg-zinc-100 rounded-lg text-[10px] font-bold text-zinc-600 uppercase">
-                                {payment.plan_name}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-sm text-zinc-500">{new Date(payment.timestamp).toLocaleDateString()}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </Card>
 
-                {/* 4️⃣ Pagamentos Pendentes & Licenças a Expirar */}
-                <Card>
-                  <div className="p-6 border-b border-zinc-100">
-                    <h3 className="font-bold">Pagamentos Pendentes</h3>
-                  </div>
-                  <div className="p-6 space-y-4">
-                    {financeData.pendingPayments.length === 0 ? (
-                      <p className="text-sm text-zinc-400 text-center py-4">Nenhum pagamento pendente.</p>
-                    ) : (
-                      financeData.pendingPayments.map((pending: any) => (
-                        <div key={`fin-pending-${pending.establishment_id}`} className="p-4 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-3">
-                          <AlertTriangle className="text-amber-600 mt-0.5" size={18} />
-                          <div>
-                            <p className="text-sm font-bold text-amber-900">{pending.client_name}</p>
-                            <p className="text-[10px] text-amber-600 mt-1">Licença expira em: {new Date(pending.license_expiry).toLocaleDateString()}</p>
-                          </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    {/* 2️⃣ Receitas do Mês */}
+                    <Card className="lg:col-span-2">
+                      <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+                        <h3 className="font-bold">Receitas do Mês</h3>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                          <thead>
+                            <tr className="border-b border-zinc-50">
+                              <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente</th>
+                              <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Valor</th>
+                              <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano/Licença</th>
+                              <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-50">
+                            {financeData.payments.filter((p: any) => p.timestamp.startsWith(new Date().toISOString().substring(0, 7))).map((payment: any) => (
+                              <tr key={`fin-rec-pay-${payment.id}`} className="hover:bg-zinc-50/50 transition-colors">
+                                <td className="px-6 py-4">
+                                  <p className="text-sm font-bold">{payment.client_name}</p>
+                                </td>
+                                <td className="px-6 py-4 text-sm font-black text-emerald-600">Kz {payment.amount.toLocaleString()}</td>
+                                <td className="px-6 py-4">
+                                  <span className="px-2 py-1 bg-zinc-100 rounded-lg text-[10px] font-bold text-zinc-600 uppercase">
+                                    {payment.plan_name}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 text-sm text-zinc-500">{new Date(payment.timestamp).toLocaleDateString()}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </Card>
+
+                    {/* 4️⃣ Pagamentos Pendentes & Licenças a Expirar */}
+                    <Card>
+                      <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+                        <h3 className="font-bold">Dívidas Pendentes</h3>
+                        <div className="w-8 h-8 bg-rose-50 text-rose-600 rounded-lg flex items-center justify-center">
+                          <AlertTriangle size={18} />
                         </div>
-                      ))
-                    )}
-                    <button onClick={() => setActiveTab('licenses')} className="w-full py-3 bg-black text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-all">
-                      Cobrar Clientes
-                    </button>
-                  </div>
-                </Card>
-              </div>
-
-              {/* 5️⃣ Relatório de Receitas */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <Card className="p-6">
-                  <h3 className="font-bold mb-6">Receita por Mês</h3>
-                  <div className="h-[250px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={financeData.reports.byMonth.slice().reverse()}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
-                        <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
-                        <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
-                        <Area type="monotone" dataKey="total" stroke="#10b981" fill="#10b981" fillOpacity={0.1} strokeWidth={3} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                </Card>
-
-                <Card className="p-6">
-                  <h3 className="font-bold mb-6">Receita por Plano</h3>
-                  <div className="h-[250px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={financeData.reports.byPlan}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={60}
-                          outerRadius={80}
-                          paddingAngle={5}
-                          dataKey="total"
-                          nameKey="plan_name"
+                      </div>
+                      <div className="p-6 space-y-4">
+                        {financeData.pendingPayments.length === 0 ? (
+                          <p className="text-sm text-zinc-400 text-center py-4">Nenhuma dívida pendente.</p>
+                        ) : (
+                          financeData.pendingPayments.map((pending: any) => (
+                            <div key={`fin-pending-${pending.establishment_id}`} className="p-4 bg-zinc-50 border border-zinc-100 rounded-xl">
+                              <div className="flex justify-between items-start mb-2">
+                                <div>
+                                  <p className="text-sm font-bold text-zinc-900">{pending.client_name}</p>
+                                  <p className="text-[10px] text-zinc-400 font-bold uppercase">{pending.invoice_number}</p>
+                                </div>
+                                <span className="text-sm font-black text-rose-600">Kz {pending.balance.toLocaleString()}</span>
+                              </div>
+                              <div className="flex justify-between items-center text-[10px] text-zinc-400">
+                                <span>Total: Kz {pending.amount.toLocaleString()}</span>
+                                <span className={cn("px-2 py-0.5 rounded font-black uppercase", pending.paid > 0 ? "bg-amber-100 text-amber-700" : "bg-zinc-100 text-zinc-400")}>
+                                  {pending.paid > 0 ? 'Parcial' : 'Pendente'}
+                                </span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                        <button 
+                          onClick={() => setIsSystemPaymentModalOpen(true)}
+                          className="w-full py-3 bg-black text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-all flex items-center justify-center gap-2 shadow-lg shadow-black/10"
                         >
-                          {financeData.reports.byPlan.map((entry: any, index: number) => (
-                            <Cell key={`cell-${index}`} fill={['#10b981', '#3b82f6', '#f59e0b'][index % 3]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                        <Legend verticalAlign="bottom" height={36}/>
-                      </PieChart>
-                    </ResponsiveContainer>
+                          <CreditCard size={18} /> Liquidar Dívidas
+                        </button>
+                      </div>
+                    </Card>
                   </div>
-                </Card>
 
-                <Card className="p-6">
-                  <h3 className="font-bold mb-6">Métodos de Pagamento</h3>
-                  <div className="space-y-4">
-                    {financeData.methods.map((method: any) => (
-                      <div key={method.payment_method} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-zinc-600 shadow-sm">
-                            {method.payment_method === 'Dinheiro' && <DollarSign size={16} />}
-                            {method.payment_method === 'Transferência' && <ArrowRightLeft size={16} />}
-                            {method.payment_method === 'Multicaixa' && <CreditCard size={16} />}
-                            {method.payment_method === 'Outros' && <Wallet size={16} />}
-                          </div>
-                          <div>
-                            <p className="text-xs font-bold">{method.payment_method}</p>
-                            <p className="text-[10px] text-zinc-400">{method.count} pagamentos</p>
-                          </div>
-                        </div>
-                        <p className="text-sm font-black">Kz {method.total.toLocaleString()}</p>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <Card className="p-6">
+                      <h3 className="font-bold mb-6">Receita por Mês</h3>
+                      <div className="h-[250px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={financeData.reports.byMonth.slice().reverse()}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
+                            <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                            <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
+                            <Area type="monotone" dataKey="total" stroke="#10b981" fill="#10b981" fillOpacity={0.1} strokeWidth={3} />
+                          </AreaChart>
+                        </ResponsiveContainer>
                       </div>
-                    ))}
+                    </Card>
+
+                    <Card className="p-6">
+                      <h3 className="font-bold mb-6">Receita por Plano</h3>
+                      <div className="h-[250px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={financeData.reports.byPlan}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={60}
+                              outerRadius={80}
+                              paddingAngle={5}
+                              dataKey="total"
+                              nameKey="plan_name"
+                            >
+                              {financeData.reports.byPlan.map((entry: any, index: number) => (
+                                <Cell key={`cell-${index}`} fill={['#10b981', '#3b82f6', '#f59e0b'][index % 3]} />
+                              ))}
+                            </Pie>
+                            <Tooltip />
+                            <Legend verticalAlign="bottom" height={36}/>
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </Card>
+
+                    <Card className="p-6">
+                      <h3 className="font-bold mb-6">Métodos de Pagamento</h3>
+                      <div className="space-y-4">
+                        {financeData.methods.map((method: any) => (
+                          <div key={method.payment_method} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-zinc-600 shadow-sm">
+                                {method.payment_method === 'Dinheiro' && <DollarSign size={16} />}
+                                {method.payment_method === 'Transferência' && <ArrowRightLeft size={16} />}
+                                {method.payment_method === 'Multicaixa' && <CreditCard size={16} />}
+                                {method.payment_method === 'Outros' && <Wallet size={16} />}
+                              </div>
+                              <div>
+                                <p className="text-xs font-bold">{method.payment_method}</p>
+                                <p className="text-[10px] text-zinc-400">{method.count} pagamentos</p>
+                              </div>
+                            </div>
+                            <p className="text-sm font-black">Kz {method.total.toLocaleString()}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
                   </div>
-                </Card>
-              </div>
-
-              {/* 3️⃣ Histórico de Pagamentos */}
-              <Card>
-                <div className="p-6 border-b border-zinc-100">
-                  <h3 className="font-bold">Histórico de Pagamentos</h3>
                 </div>
-                <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="border-b border-zinc-50">
-                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Valor</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Método</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {financeData.payments.map((payment: any) => (
-                        <tr key={`fin-pay-hist-desk-${payment.id}`} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="px-6 py-4">
-                            <p className="text-sm font-bold">{payment.client_name}</p>
-                          </td>
-                          <td className="px-6 py-4 text-sm font-black text-zinc-900">Kz {payment.amount.toLocaleString()}</td>
-                          <td className="px-6 py-4">
-                            <span className="text-xs text-zinc-500 font-medium">{payment.payment_method}</span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className="px-2 py-1 bg-zinc-100 rounded-lg text-[10px] font-bold text-zinc-600 uppercase">
-                              {payment.plan_name}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-sm text-zinc-500">{new Date(payment.timestamp).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              ) : (
+                <div className="space-y-8">
+                  {/* Resumo SaaS */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <StatCard label="Total Faturado (SaaS)" value={`Kz ${systemInvoices.filter(i => i.doc_type !== 'RC').reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`} icon={BadgeDollarSign} color="blue" />
+                    <StatCard label="Recebido" value={`Kz ${systemInvoices.filter(i => i.status === 'paid' && i.doc_type !== 'RC').reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`} icon={CheckCircle2} color="emerald" />
+                    <StatCard label="Pendente" value={`Kz ${systemInvoices.filter(i => i.status === 'pending').reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`} icon={Clock} color="amber" />
+                    <StatCard label="Logs de Auditoria" value={systemAuditLogs.length} icon={Shield} color="zinc" />
+                  </div>
 
-                <div className="md:hidden divide-y divide-zinc-100">
-                  {financeData.payments.map((payment: any) => (
-                    <div key={`fin-pay-hist-mob-${payment.id}`} className="p-4 space-y-3">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <p className="text-sm font-bold">{payment.client_name}</p>
-                          <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">{payment.plan_name}</p>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <Card className="lg:col-span-2">
+                       <div className="p-6 border-b border-zinc-100 flex items-center justify-between font-bold">
+                        <h3>Gestão de Faturação SaaS</h3>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={async () => {
+                              const res = await fetch('/api/admin/system/generate-recurring', { method: 'POST' });
+                              const data = await res.json();
+                              alert(`Processamento concluído: ${data.generated} geradas, ${data.skipped} ignoradas.`);
+                              fetchData();
+                            }}
+                            className="px-4 py-2 border border-zinc-200 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-50 transition-all flex items-center gap-2"
+                          >
+                            <RefreshCw size={16} /> Cobranças Recorrentes
+                          </button>
+                          <button onClick={() => setIsSystemInvoiceModalOpen(true)} className="px-4 py-2 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition-all flex items-center gap-2">
+                            <Plus size={16} /> Novo Documento
+                          </button>
                         </div>
-                        <p className="text-sm font-black text-zinc-900">Kz {payment.amount.toLocaleString()}</p>
                       </div>
-                      <div className="flex justify-between items-center text-[10px]">
-                        <span className="px-2 py-0.5 bg-zinc-100 rounded text-zinc-500 font-bold uppercase">{payment.payment_method}</span>
-                        <span className="text-zinc-400">{new Date(payment.timestamp).toLocaleString()}</span>
+                      <div className="overflow-x-auto text-xs">
+                        <table className="w-full text-left">
+                          <thead>
+                            <tr className="border-b border-zinc-50">
+                              <th className="px-6 py-4 font-black text-zinc-400 uppercase tracking-widest">Documento</th>
+                              <th className="px-6 py-4 font-black text-zinc-400 uppercase tracking-widest">Cliente</th>
+                              <th className="px-6 py-4 font-black text-zinc-400 uppercase tracking-widest text-right">Total</th>
+                              <th className="px-6 py-4 font-black text-zinc-400 uppercase tracking-widest text-right">Liquidado</th>
+                              <th className="px-6 py-4 font-black text-zinc-400 uppercase tracking-widest">Estado</th>
+                              <th className="px-6 py-4 font-black text-zinc-400 uppercase tracking-widest text-right">Acções</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-50">
+                            {systemInvoices.map((inv) => (
+                              <tr key={`sys-inv-fin-${inv.id}`} className="hover:bg-zinc-50/50 transition-colors">
+                                <td className="px-6 py-4">
+                                  <p className="font-bold">{inv.invoice_number}</p>
+                                  <p className="text-[10px] text-zinc-400 uppercase font-black">{inv.doc_type}</p>
+                                </td>
+                                <td className="px-6 py-4 font-bold">{inv.owner_name}</td>
+                                <td className="px-6 py-4 font-black text-right text-sm">Kz {inv.total_amount.toLocaleString()}</td>
+                                <td className="px-6 py-4 text-right">
+                                  <p className="text-sm font-bold text-emerald-600">Kz {(inv.paid_amount || 0).toLocaleString()}</p>
+                                  {inv.total_amount - (inv.paid_amount || 0) > 0 && (
+                                    <p className="text-[10px] text-rose-500 font-bold">Falta Kz {(inv.total_amount - (inv.paid_amount || 0)).toLocaleString()}</p>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4">
+                                  <span className={cn(
+                                    "px-2 py-1 rounded-full text-[10px] font-black uppercase", 
+                                    inv.status === 'paid' ? "bg-emerald-100 text-emerald-700" : 
+                                    inv.status === 'partial' ? "bg-amber-100 text-amber-700" :
+                                    "bg-zinc-100 text-zinc-700"
+                                  )}>
+                                    {inv.status === 'paid' ? 'Liquidado' : inv.status === 'partial' ? 'Parcial' : 'Pendente'}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 text-right">
+                                  <div className="flex items-center justify-end gap-2">
+                                    <button onClick={() => { setSelectedSystemInvoice(inv); setIsSystemInvoicePreviewOpen(true); }} className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg">
+                                      <Eye size={16} />
+                                    </button>
+                                    {inv.status !== 'paid' && inv.doc_type === 'FT' && (
+                                      <button 
+                                        onClick={() => {
+                                          setSystemPaymentFormData({
+                                            owner_id: inv.owner_id.toString(),
+                                            payment_method: 'bank_transfer',
+                                            payments: [{ ft_id: inv.id, amount: inv.total_amount - (inv.paid_amount || 0), invoice_number: inv.invoice_number, balance: inv.total_amount - (inv.paid_amount || 0) }],
+                                            total_amount: inv.total_amount - (inv.paid_amount || 0)
+                                          });
+                                          setIsSystemPaymentModalOpen(true);
+                                        }}
+                                        className="p-2 text-zinc-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg"
+                                        title="Liquidar"
+                                      >
+                                        <Wallet size={16} />
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
-                    </div>
-                  ))}
+                    </Card>
+                    <Card className="flex flex-col">
+                      <div className="p-6 border-b border-zinc-100 font-bold">
+                        <h3>Log de Atividade SaaS</h3>
+                      </div>
+                      <div className="flex-1 overflow-y-auto max-h-[500px] p-6 space-y-6">
+                        {systemAuditLogs.map((log) => (
+                          <div key={log.id} className="relative pl-6 border-l-2 border-zinc-100 pb-2">
+                            <div className="absolute -left-[9px] top-0 w-4 h-4 bg-white border-2 border-zinc-200 rounded-full" />
+                            <div className="mb-1 flex items-center justify-between">
+                              <p className="text-[10px] font-black text-black uppercase">{log.action}</p>
+                              <span className="text-[10px] text-zinc-400 font-bold">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                            </div>
+                            <p className="text-xs text-zinc-500 leading-relaxed">{log.details}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+                  </div>
                 </div>
-              </Card>
+              )}
             </div>
           )}
 
@@ -2490,8 +2779,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       <h3 className="font-bold">Alertas do Sistema</h3>
                     </div>
                     <div className="p-6 space-y-4">
-                      {monitoring.systemAlerts.map((alert: any) => (
-                        <div key={alert.message} className={cn(
+                      {monitoring.systemAlerts.map((alert: any, idx: number) => (
+                        <div key={`system-alert-${idx}`} className={cn(
                           "p-4 rounded-xl border flex gap-3",
                           alert.level === 'danger' ? "bg-rose-50 border-rose-100 text-rose-700" : "bg-amber-50 border-amber-100 text-amber-700"
                         )}>
@@ -2737,6 +3026,11 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                             <ShieldCheck size={16} className="text-emerald-500" />
                             Até {plan.max_products} produtos
                           </li>
+                          {plan.description && (
+                            <li className="flex items-start gap-2 text-xs text-zinc-400 mt-2 italic font-medium">
+                              <span>— {plan.description}</span>
+                            </li>
+                          )}
                         </ul>
                         <button 
                           onClick={() => {
@@ -3377,6 +3671,391 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Create SaaS Invoice Modal */}
+      <AnimatePresence>
+        {isSystemInvoiceModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setIsSystemInvoiceModalOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden relative z-10"
+            >
+              <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-black text-white">
+                <h3 className="text-xl font-black">Emitir Documento SaaS</h3>
+                <button onClick={() => setIsSystemInvoiceModalOpen(false)} className="p-2 hover:bg-zinc-800 rounded-full transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              <form onSubmit={handleCreateSystemInvoice} className="p-6 space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Tipo de Documento</label>
+                    <div className="flex gap-2">
+                      {['FT', 'FR'].map(type => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => setSystemInvoiceFormData({ ...systemInvoiceFormData, doc_type: type })}
+                          className={cn(
+                            "flex-1 py-3 rounded-xl font-bold text-xs transition-all border-2",
+                            systemInvoiceFormData.doc_type === type ? "bg-black text-white border-black" : "bg-white text-zinc-400 border-zinc-100 hover:border-zinc-200"
+                          )}
+                        >
+                          {type === 'FT' ? 'Factura' : 'Factura-Recibo'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Taxa de IVA (%)</label>
+                    <select
+                      value={systemInvoiceFormData.tax_percentage}
+                      onChange={(e) => {
+                        const taxRate = parseFloat(e.target.value) || 0;
+                        const baseAmount = systemInvoiceFormData.items.reduce((sum: number, it: any) => sum + (it.amount || 0), 0);
+                        const taxAmount = (baseAmount * taxRate) / 100;
+                        setSystemInvoiceFormData({ 
+                          ...systemInvoiceFormData, 
+                          tax_percentage: taxRate,
+                          tax_amount: taxAmount,
+                          total_amount: baseAmount + taxAmount
+                        });
+                      }}
+                      className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold"
+                    >
+                      <option value="0">0% (Isento)</option>
+                      <option value="5">5%</option>
+                      <option value="14">14% (Padrão)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente (Owner)</label>
+                  <select
+                    required
+                    value={systemInvoiceFormData.owner_id}
+                    onChange={(e) => setSystemInvoiceFormData({ ...systemInvoiceFormData, owner_id: e.target.value })}
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold"
+                  >
+                    <option value="">Seleccione o destinatário</option>
+                    {clients.map(c => <option key={c.id} value={c.id}>{c.company_name || c.name} ({c.nif})</option>)}
+                  </select>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Itens do Serviço</label>
+                  {systemInvoiceFormData.items.map((item: any, idx: number) => (
+                    <div key={`sys-inv-item-${idx}`} className="flex gap-4">
+                      <input 
+                        type="text"
+                        placeholder="Descrição do serviço"
+                        value={item.description}
+                        onChange={(e) => {
+                          const newItems = [...systemInvoiceFormData.items];
+                          newItems[idx].description = e.target.value;
+                          setSystemInvoiceFormData({ ...systemInvoiceFormData, items: newItems });
+                        }}
+                        className="flex-1 px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold"
+                      />
+                      <input 
+                        type="number"
+                        placeholder="Valor"
+                        value={item.amount || ''}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value) || 0;
+                          const newItems = [...systemInvoiceFormData.items];
+                          newItems[idx].amount = val;
+                          const baseTotal = newItems.reduce((sum, it) => sum + it.amount, 0);
+                          const taxRate = systemInvoiceFormData.tax_percentage || 0;
+                          const taxAmount = (baseTotal * taxRate) / 100;
+                          setSystemInvoiceFormData({ 
+                            ...systemInvoiceFormData, 
+                            items: newItems, 
+                            tax_amount: taxAmount,
+                            total_amount: baseTotal + taxAmount 
+                          });
+                        }}
+                        className="w-32 px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold text-right"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-6 border-t border-zinc-100 flex items-center justify-between">
+                  <div className="flex gap-8">
+                    <div>
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Base</p>
+                      <p className="text-lg font-bold text-zinc-500">Kz {(systemInvoiceFormData.total_amount - systemInvoiceFormData.tax_amount).toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">IVA ({systemInvoiceFormData.tax_percentage}%)</p>
+                      <p className="text-lg font-bold text-zinc-500">Kz {systemInvoiceFormData.tax_amount.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Total a Pagar</p>
+                      <p className="text-2xl font-black">Kz {systemInvoiceFormData.total_amount.toLocaleString()}</p>
+                    </div>
+                  </div>
+                  <button 
+                    type="submit"
+                    disabled={!systemInvoiceFormData.owner_id || systemInvoiceFormData.total_amount <= 0}
+                    className="px-8 py-4 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all disabled:opacity-50"
+                  >
+                    Confirmar Emissão
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isSystemPaymentModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 text-left">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setIsSystemPaymentModalOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden relative z-10"
+            >
+              <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-emerald-600 text-white">
+                <div>
+                  <h3 className="text-xl font-black text-white">Novo Pagamento de Cliente</h3>
+                  <p className="text-xs text-emerald-100 font-medium tracking-wide">Liquidação de faturas pendentes</p>
+                </div>
+                <button onClick={() => setIsSystemPaymentModalOpen(false)} className="p-2 hover:bg-emerald-700 rounded-full transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-6 space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest text-left block">Seleccionar Cliente</label>
+                    <select
+                      value={systemPaymentFormData.owner_id}
+                      onChange={(e) => {
+                        const ownerId = e.target.value;
+                        const clientInvoices = financeData.pendingPayments.filter((p: any) => p.owner_id.toString() === ownerId);
+                        setSystemPaymentFormData({
+                          ...systemPaymentFormData,
+                          owner_id: ownerId,
+                          payments: clientInvoices.map((inv: any) => ({
+                            ft_id: inv.id,
+                            amount: 0,
+                            invoice_number: inv.invoice_number,
+                            balance: inv.balance
+                          })),
+                          total_amount: 0
+                        });
+                      }}
+                      className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold text-sm"
+                    >
+                      <option value="">Seleccione o cliente</option>
+                      {Array.from(new Set(financeData.pendingPayments.map((p: any) => p.owner_id))).map(ownerId => {
+                        const client = financeData.pendingPayments.find((p:any) => p.owner_id === ownerId);
+                        return <option key={`pay-client-${ownerId}`} value={ownerId.toString()}>{client.client_name}</option>
+                      })}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest text-left block">Método de Pagamento</label>
+                    <select
+                      value={systemPaymentFormData.payment_method}
+                      onChange={(e) => setSystemPaymentFormData({ ...systemPaymentFormData, payment_method: e.target.value })}
+                      className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold text-sm"
+                    >
+                      <option value="bank_transfer">Transferência Bancária</option>
+                      <option value="cash">Dinheiro</option>
+                      <option value="multicaixa">Multicaixa / POS</option>
+                    </select>
+                  </div>
+                </div>
+
+                {systemPaymentFormData.payments.length > 0 && (
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest text-left block">Faturas em Aberto</label>
+                    <div className="max-h-[300px] overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                      {systemPaymentFormData.payments.map((pay, idx) => (
+                        <div key={`pay-ft-${pay.ft_id}-${idx}`} className="p-4 bg-zinc-50 rounded-2xl flex items-center justify-between border border-zinc-100">
+                          <div className="text-left">
+                            <p className="text-sm font-bold text-zinc-900">{pay.invoice_number}</p>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Dívida: Kz {pay.balance.toLocaleString()}</p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                             <button 
+                              onClick={() => {
+                                const newPayments = [...systemPaymentFormData.payments];
+                                newPayments[idx].amount = pay.balance;
+                                setSystemPaymentFormData({
+                                  ...systemPaymentFormData,
+                                  payments: newPayments,
+                                  total_amount: newPayments.reduce((sum, p) => sum + p.amount, 0)
+                                });
+                              }}
+                              className="text-[10px] font-black text-emerald-600 hover:bg-emerald-50 px-2 py-1 rounded transition-colors"
+                            >
+                              Pagar Total
+                            </button>
+                            <input 
+                              type="number"
+                              placeholder="Valor"
+                              value={pay.amount || ''}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value) || 0;
+                                const newPayments = [...systemPaymentFormData.payments];
+                                newPayments[idx].amount = val;
+                                setSystemPaymentFormData({
+                                  ...systemPaymentFormData,
+                                  payments: newPayments,
+                                  total_amount: newPayments.reduce((sum, p) => sum + p.amount, 0)
+                                });
+                              }}
+                              className="w-32 px-3 py-2 bg-white border border-zinc-200 rounded-xl outline-none focus:border-emerald-500 transition-all font-bold text-right text-sm"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-6 border-t border-zinc-100 flex items-center justify-between">
+                  <div className="text-left">
+                    <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Total a Receber</p>
+                    <p className="text-2xl font-black text-emerald-600 tracking-tight">Kz {systemPaymentFormData.total_amount.toLocaleString()}</p>
+                  </div>
+                  <button 
+                    onClick={handleLiquidateMultiple}
+                    disabled={isLiquidating || systemPaymentFormData.total_amount === 0}
+                    className="px-10 py-4 bg-black text-white rounded-2xl font-bold flex items-center gap-2 hover:bg-zinc-800 transition-all shadow-xl shadow-black/10 disabled:opacity-50"
+                  >
+                    {isLiquidating ? <RefreshCw className="animate-spin" size={20} /> : <CheckCircle2 size={20} />}
+                    Confirmar Pagamento
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* System Invoice Preview Modal */}
+      <AnimatePresence>
+        {isSystemInvoicePreviewOpen && selectedSystemInvoice && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+             <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setIsSystemInvoicePreviewOpen(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white w-full max-w-3xl h-[90vh] rounded-3xl shadow-2xl overflow-hidden relative z-10 flex flex-col"
+            >
+               <div className="p-6 border-b border-zinc-100 flex items-center justify-between shrink-0">
+                <div>
+                  <h3 className="text-xl font-black">Visualização de Documento SaaS</h3>
+                  <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">{selectedSystemInvoice.invoice_number}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                   <button onClick={() => window.print()} className="p-3 bg-zinc-100 text-zinc-600 rounded-xl hover:bg-zinc-200">
+                    <Printer size={20} />
+                  </button>
+                  <button onClick={() => setIsSystemInvoicePreviewOpen(false)} className="p-3 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100">
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-12 bg-zinc-50/50 print:p-0 print:bg-white" id="printable-system-invoice">
+                <div className="bg-white p-12 border border-zinc-100 shadow-sm print:border-none print:shadow-none min-h-full max-w-[800px] mx-auto">
+                  <div className="flex justify-between items-start mb-16">
+                    <div>
+                      <div className="w-16 h-16 bg-black text-white rounded-2xl flex items-center justify-center mb-6">
+                        <ShieldCheck size={32} />
+                      </div>
+                      <h1 className="text-2xl font-black tracking-tighter">Fatu-R ERP System</h1>
+                      <p className="text-xs text-zinc-400 uppercase font-black tracking-widest">Plataforma SaaS Integrada</p>
+                    </div>
+                    <div className="text-right">
+                      <h2 className="text-3xl font-black uppercase tracking-tighter text-zinc-300 mb-2">{selectedSystemInvoice.doc_type === 'FT' ? 'Factura' : selectedSystemInvoice.doc_type === 'FR' ? 'Factura-Recibo' : 'Recibo'}</h2>
+                      <p className="text-sm font-bold">{selectedSystemInvoice.invoice_number}</p>
+                      <p className="text-xs text-zinc-400">{new Date(selectedSystemInvoice.invoice_date).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-12 mb-16">
+                    <div>
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-4">Entidade Emissora</p>
+                      <p className="font-black text-lg">Fatu-R - Gestão de Software, Lda</p>
+                      <p className="text-sm text-zinc-500 mt-1">Sede Administrativa - Angola</p>
+                      <p className="text-sm text-zinc-500">NIF: 5000000001</p>
+                    </div>
+                    <div className="bg-zinc-50 p-6 rounded-2xl border border-zinc-100">
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-4">Destinatário</p>
+                      <p className="font-black text-lg">{selectedSystemInvoice.owner_name}</p>
+                      <p className="text-sm text-zinc-500 mt-1">NIF: {selectedSystemInvoice.owner_nif}</p>
+                    </div>
+                  </div>
+
+                  <table className="w-full mb-16">
+                    <thead>
+                      <tr className="border-b-2 border-zinc-900">
+                        <th className="py-4 text-left font-black text-xs uppercase tracking-widest">Descrição do Serviço</th>
+                        <th className="py-4 text-right font-black text-xs uppercase tracking-widest">Montante</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-100">
+                      {JSON.parse(selectedSystemInvoice.items).map((item: any, idx: number) => (
+                        <tr key={`inv-prev-item-${idx}`}>
+                          <td className="py-6 font-bold text-zinc-800">{item.description}</td>
+                          <td className="py-6 text-right font-black">Kz {item.amount.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  <div className="border-t-4 border-zinc-900 pt-8 flex justify-end">
+                    <div className="w-64 space-y-4">
+                      <div className="flex justify-between items-center text-zinc-400 font-bold uppercase text-[10px]">
+                        <span>Subtotal</span>
+                        <span>Kz {(selectedSystemInvoice.total_amount - selectedSystemInvoice.tax_amount).toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-zinc-400 font-bold uppercase text-[10px]">
+                        <span>IVA ({selectedSystemInvoice.tax_percentage || 0}%)</span>
+                        <span>Kz {selectedSystemInvoice.tax_amount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-center pt-4 border-t border-zinc-100">
+                         <span className="font-black text-xl tracking-tighter uppercase">Total</span>
+                         <span className="font-black text-2xl tracking-tighter">Kz {selectedSystemInvoice.total_amount.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-24 pt-12 border-t border-dashed border-zinc-200">
+                    <div className="grid grid-cols-2 gap-8 items-end">
+                      <div className="p-4 bg-zinc-50 rounded-xl">
+                        <p className="text-[10px] font-black text-zinc-400 uppercase leading-relaxed">
+                          Processado por programa certificado nº 0/0F. <br/>
+                          Os bens/serviços foram colocados à disposição do adquirente na data do documento.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}
@@ -4283,7 +4962,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         establishment_id: establishmentId,
         total_amount,
         tax_amount,
-        seller_id: user?.id
+        seller_id: user?.id,
+        cash_register_id: user?.cash_register_id
       })
     });
 
@@ -7792,6 +8472,7 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
   const subtotal = invoice.items.reduce((acc: number, item: any) => acc + (item.price * item.quantity), 0);
   const taxTotal = invoice.items.reduce((acc: number, item: any) => acc + (item.price * item.quantity * (item.tax / 100)), 0);
   const total = subtotal + taxTotal + (invoice.adjustment_amount || 0);
+  const currencyCode = invoice.currency || 'Kz';
 
   if (invoice.doc_type === 'PP') {
     return <ProformaInvoice proforma={invoice} establishment={establishment} />;
@@ -7972,18 +8653,22 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
                 <span>Kz {subtotal.toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase tracking-widest">
+                <span>SUBTOTAL</span>
+                <span>{currencyCode} {subtotal.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase tracking-widest">
                 <span>IVA ({invoice.items?.[0]?.tax ?? (establishment.fiscal_regime === 'simplificado' ? 7 : (establishment.fiscal_regime === 'exclusao' ? 0 : 14))}%)</span>
-                <span>Kz {taxTotal.toLocaleString()}</span>
+                <span>{currencyCode} {taxTotal.toLocaleString()}</span>
               </div>
               {invoice.adjustment_amount !== 0 && (
                 <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase tracking-widest">
                   <span>Ajuste</span>
-                  <span>Kz {invoice.adjustment_amount.toLocaleString()}</span>
+                  <span>{currencyCode} {invoice.adjustment_amount.toLocaleString()}</span>
                 </div>
               )}
               <div className="flex justify-between text-lg font-black text-zinc-900 uppercase tracking-tight pt-3 border-t border-zinc-100">
                 <span>Total</span>
-                <span>Kz {total.toLocaleString()}</span>
+                <span>{currencyCode} {total.toLocaleString()}</span>
               </div>
               
               {qrCode && (invoice.billing_mode === 'eletronica' || invoice.doc_type === 'FR') && (
@@ -8106,16 +8791,16 @@ const ProformaInvoice = ({ proforma, establishment }: { proforma: any, establish
           <div className="w-full max-w-[320px] bg-zinc-50 p-6 rounded-2xl space-y-3 border border-zinc-100 shadow-sm">
             <div className="flex justify-between text-xs">
               <span className="text-zinc-500 font-medium">Subtotal</span>
-              <span className="font-bold text-zinc-900">Kz {items.reduce((acc: number, item: any) => acc + (item.price * item.quantity), 0).toLocaleString()}</span>
+              <span className="font-bold text-zinc-900">{proforma.currency || 'Kz'} {items.reduce((acc: number, item: any) => acc + (item.price * item.quantity), 0).toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-xs">
               <span className="text-zinc-500 font-medium">IVA ({items[0]?.tax || 0}%)</span>
-              <span className="font-bold text-zinc-900">Kz {items.reduce((acc: number, item: any) => acc + (item.price * item.quantity * ((item.tax || 0) / 100)), 0).toLocaleString()}</span>
+              <span className="font-bold text-zinc-900">{proforma.currency || 'Kz'} {items.reduce((acc: number, item: any) => acc + (item.price * item.quantity * ((item.tax || 0) / 100)), 0).toLocaleString()}</span>
             </div>
             <div className="pt-4 border-t border-zinc-200">
               <div className="flex justify-between items-baseline">
                 <span className="text-[9px] font-black text-zinc-400 uppercase tracking-[0.2em]">Total Geral</span>
-                <span className="text-2xl font-black text-orange-600">Kz {(items.reduce((acc: number, item: any) => acc + (item.price * item.quantity * (1 + (item.tax || 0) / 100)), 0)).toLocaleString()}</span>
+                <span className="text-2xl font-black text-orange-600">{proforma.currency || 'Kz'} {(items.reduce((acc: number, item: any) => acc + (item.price * item.quantity * (1 + (item.tax || 0) / 100)), 0)).toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -8253,8 +8938,8 @@ const ProformaInvoice = ({ proforma, establishment }: { proforma: any, establish
                         <p className="font-bold">{item.name.toUpperCase()}</p>
                       </td>
                       <td className="py-4 text-center">{item.quantity}</td>
-                      <td className="py-4 text-right">Kz {item.price.toLocaleString()}</td>
-                      <td className="py-4 text-right font-bold">Kz {(item.price * item.quantity).toLocaleString()}</td>
+                      <td className="py-4 text-right">{proforma.currency || 'Kz'} {item.price.toLocaleString()}</td>
+                      <td className="py-4 text-right font-bold">{proforma.currency || 'Kz'} {(item.price * item.quantity).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -8462,25 +9147,32 @@ const Invoice = ({ sale, establishment, user }: { sale: any, establishment: any,
         <div className="space-y-0.5 text-[9px] pt-0.5">
           <div className="flex justify-between">
             <span>SUBTOTAL</span>
-            <span>Kz {(sale.total_amount - sale.tax_amount + sale.discount_amount).toLocaleString()}</span>
+            <span>{sale.currency_code || 'Kz'} {(sale.total_amount - sale.tax_amount + (sale.discount_amount || 0)).toLocaleString()}</span>
           </div>
           {sale.discount_amount > 0 && (
             <div className="flex justify-between text-rose-600">
               <span>DESCONTO</span>
-              <span>- Kz {sale.discount_amount.toLocaleString()}</span>
+              <span>- {sale.currency_code || 'Kz'} {sale.discount_amount.toLocaleString()}</span>
             </div>
           )}
           <div className="flex justify-between">
             <span>IVA ({sale.items?.[0]?.tax_percentage ?? (user?.fiscal_regime === 'exclusao' ? 0 : 14)}%)</span>
-            <span>Kz {sale.tax_amount.toLocaleString()}</span>
+            <span>{sale.currency_code || 'Kz'} {sale.tax_amount.toLocaleString()}</span>
           </div>
           {user.fiscal_regime === 'exclusao' && (
             <p className="text-[7px] text-zinc-500 italic mt-0.5">Isento nos termos do regime de exclusão</p>
           )}
           <div className="flex justify-between text-sm font-black pt-1 border-t-2 border-dashed border-zinc-900 mt-1">
-            <span>TOTAL A PAGAR</span>
-            <span>Kz {sale.total_amount.toLocaleString()}</span>
+            <span>TOTAL ({sale.currency_code || 'Kz'})</span>
+            <span>{sale.currency_code || 'Kz'} {sale.total_amount.toLocaleString()}</span>
           </div>
+
+          {sale.currency_code && sale.currency_code !== 'Kz' && (
+            <div className="flex justify-between text-[10px] font-bold text-zinc-600 mt-1">
+              <span>EQUIV. BASE (Kz)</span>
+              <span>Kz {(sale.total_amount * (sale.exchange_rate || 1)).toLocaleString()}</span>
+            </div>
+          )}
           
           {qrCode && sale.billing_mode === 'eletronica' && (
             <div className="mt-4 flex flex-col items-center gap-1">
@@ -8638,6 +9330,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const [lastSale, setLastSale] = useState<any>(null);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [isFormalInvoiceModalOpen, setIsFormalInvoiceModalOpen] = useState(false);
+  const [formalInvoiceAmount, setFormalInvoiceAmount] = useState(0);
   const [isFormalInvoiceGeneratedModalOpen, setIsFormalInvoiceGeneratedModalOpen] = useState(false);
   const [lastFormalInvoice, setLastFormalInvoice] = useState<any>(null);
   const [defaultTax, setDefaultTax] = useState<any>(null);
@@ -8673,6 +9366,9 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeSeries, setActiveSeries] = useState<any>(null);
+  const [availableCurrencies, setAvailableCurrencies] = useState<any[]>([]);
+  const [selectedCurrencyCode, setSelectedCurrencyCode] = useState('Kz');
+  const [currentExchangeRate, setCurrentExchangeRate] = useState(1.0);
 
   const checkActiveSession = async () => {
     if (!user.cash_register_id) {
@@ -8751,9 +9447,118 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       }
     }).catch(() => {});
 
+    // Fetch currencies
+    fetch(`/api/owner/currencies/${user.role === 'owner' ? user.id : user.owner_id}`).then(res => res.json()).then(data => {
+      if (Array.isArray(data)) {
+        setAvailableCurrencies(data);
+        const base = data.find(c => c.is_base);
+        if (base) setSelectedCurrencyCode(base.code);
+      }
+    }).catch(() => {});
+
     checkActiveSession();
     fetchRegisters();
   }, [user.establishment_id, user.cash_register_id]);
+
+
+  const subtotal = cart.reduce((acc, i) => {
+    let price = i.type === 'product' 
+      ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
+      : i.item.price;
+    
+    // Add fees to the unit price
+    if (i.selectedFees && i.selectedFees.length > 0) {
+      const feesTotal = i.selectedFees.reduce((sum, f) => sum + f.amount, 0);
+      price += feesTotal;
+    }
+    
+    return acc + (price * i.quantity);
+  }, 0);
+  
+  const discountAmount = discount;
+  const taxableAmount = Math.max(0, subtotal - discountAmount);
+  
+  // Calculate tax per item
+  const tax = cart.reduce((acc, i) => {
+    let itemPrice = i.type === 'product' 
+      ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
+      : i.item.price;
+    
+    // Add fees to the unit price for tax calculation
+    if (i.selectedFees && i.selectedFees.length > 0) {
+      const feesTotal = i.selectedFees.reduce((sum, f) => sum + f.amount, 0);
+      itemPrice += feesTotal;
+    }
+    
+    // Use item's tax percentage if available, otherwise use default tax percentage
+    let taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
+      ? i.item.tax_percentage 
+      : (defaultTax ? defaultTax.percentage : 14);
+      
+    if (user.fiscal_regime === 'exclusao') {
+      taxPercentage = 0;
+    }
+      
+    // Apply discount proportionally to each item for tax calculation if needed, 
+    // but here we apply discount to subtotal. 
+    // For simplicity and matching common practice, we'll calculate tax on the discounted subtotal proportionally.
+    const itemSubtotal = itemPrice * i.quantity;
+    const itemProportion = subtotal > 0 ? itemSubtotal / subtotal : 0;
+    const itemDiscountedSubtotal = itemSubtotal - (discountAmount * itemProportion);
+    
+    return acc + (itemDiscountedSubtotal * (taxPercentage / 100));
+  }, 0);
+
+  const total = Math.round((taxableAmount + tax) * 100) / 100;
+
+  const [totalInSelectedCurrency, setTotalInSelectedCurrency] = useState(0);
+
+
+  useEffect(() => {
+    if (selectedCurrencyCode && availableCurrencies.length > 0) {
+      const currency = availableCurrencies.find(c => c.code === selectedCurrencyCode);
+      if (currency) {
+        if (currency.is_base) {
+          setCurrentExchangeRate(1.0);
+          setTotalInSelectedCurrency(total);
+        } else {
+          const ownerId = user.role === 'owner' ? user.id : user.owner_id;
+          fetch(`/api/owner/exchange-rates/latest/${ownerId}/${currency.id}`)
+            .then(res => res.json())
+            .then(data => {
+              const rate = data.rate || 1.0;
+              setCurrentExchangeRate(rate);
+              // If base is Kz and we select USD (rate 850), then USD amount = Kz / 850
+              setTotalInSelectedCurrency(Math.round((total / rate) * 100) / 100);
+            })
+            .catch(() => {
+              setCurrentExchangeRate(1.0);
+              setTotalInSelectedCurrency(total);
+            });
+        }
+      }
+    }
+  }, [selectedCurrencyCode, availableCurrencies, total]);
+
+  useEffect(() => {
+    if (isFormalInvoiceModalOpen && formalInvoiceForm.currency && availableCurrencies.length > 0) {
+      const currency = availableCurrencies.find(c => c.code === formalInvoiceForm.currency);
+      if (currency) {
+        if (currency.is_base) {
+          setFormalInvoiceAmount(total);
+        } else {
+          const ownerId = user.role === 'owner' ? user.id : user.owner_id;
+          fetch(`/api/owner/exchange-rates/latest/${ownerId}/${currency.id}`)
+            .then(res => res.json())
+            .then(data => {
+              const rate = data.rate || 1.0;
+              setFormalInvoiceAmount(Math.round((total / rate) * 100) / 100);
+            })
+            .catch(() => setFormalInvoiceAmount(total));
+        }
+      }
+    }
+  }, [isFormalInvoiceModalOpen, formalInvoiceForm.currency, availableCurrencies, total]);
 
   const handleSelectRegister = async (registerId: number) => {
     const res = await fetch('/api/seller/select-register', {
@@ -8954,56 +9759,6 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   );
 }
 
-  const subtotal = cart.reduce((acc, i) => {
-    let price = i.type === 'product' 
-      ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
-      : i.item.price;
-    
-    // Add fees to the unit price
-    if (i.selectedFees && i.selectedFees.length > 0) {
-      const feesTotal = i.selectedFees.reduce((sum, f) => sum + f.amount, 0);
-      price += feesTotal;
-    }
-    
-    return acc + (price * i.quantity);
-  }, 0);
-  
-  const discountAmount = discount;
-  const taxableAmount = Math.max(0, subtotal - discountAmount);
-  
-  // Calculate tax per item
-  const tax = cart.reduce((acc, i) => {
-    let itemPrice = i.type === 'product' 
-      ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
-      : i.item.price;
-    
-    // Add fees to the unit price for tax calculation
-    if (i.selectedFees && i.selectedFees.length > 0) {
-      const feesTotal = i.selectedFees.reduce((sum, f) => sum + f.amount, 0);
-      itemPrice += feesTotal;
-    }
-    
-    // Use item's tax percentage if available, otherwise use default tax percentage
-    let taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
-      ? i.item.tax_percentage 
-      : (defaultTax ? defaultTax.percentage : 14);
-      
-    if (user.fiscal_regime === 'exclusao') {
-      taxPercentage = 0;
-    }
-      
-    // Apply discount proportionally to each item for tax calculation if needed, 
-    // but here we apply discount to subtotal. 
-    // For simplicity and matching common practice, we'll calculate tax on the discounted subtotal proportionally.
-    const itemSubtotal = itemPrice * i.quantity;
-    const itemProportion = subtotal > 0 ? itemSubtotal / subtotal : 0;
-    const itemDiscountedSubtotal = itemSubtotal - (discountAmount * itemProportion);
-    
-    return acc + (itemDiscountedSubtotal * (taxPercentage / 100));
-  }, 0);
-
-  const total = Math.round((taxableAmount + tax) * 100) / 100;
-
   const handleCheckout = async () => {
     if (!hasPermission(user, 'pos_sell')) {
       alert('Você não tem permissão para realizar vendas.');
@@ -9076,6 +9831,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           establishment_id: establishmentId,
           owner_id: user.id,
           total_amount: total,
+          cash_register_id: user.cash_register_id,
           items: cart.map(i => {
             let taxPercentage = i.item.tax_percentage !== undefined && i.item.tax_percentage !== null 
               ? i.item.tax_percentage 
@@ -9122,14 +9878,14 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       return;
     }
 
-    if (isNaN(total) || total <= 0) {
+    if (isNaN(totalInSelectedCurrency) || totalInSelectedCurrency <= 0) {
       alert('Valor da venda inválido.');
       return;
     }
 
     if (paymentMethod === 'cash') {
       const received = parseFloat(cashReceived);
-      if (isNaN(received) || received < total) {
+      if (isNaN(received) || received < totalInSelectedCurrency - 0.005) {
         alert('Dinheiro insuficiente ou valor inválido!');
         return;
       }
@@ -9138,8 +9894,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     if (paymentMethod === 'split') {
       const cash = parseFloat(splitAmounts.cash) || 0;
       const card = parseFloat(splitAmounts.card) || 0;
-      if (Math.abs((cash + card) - total) > 0.05) { // Allow small rounding difference
-        alert(`A soma dos valores (Kz ${cash + card}) deve ser igual ao total da venda (Kz ${total})!`);
+      if (Math.abs((cash + card) - totalInSelectedCurrency) > 0.05) { // Allow small rounding difference
+        alert(`A soma dos valores (${selectedCurrencyCode} ${cash + card}) deve ser igual ao total da venda (${selectedCurrencyCode} ${totalInSelectedCurrency})!`);
         return;
       }
     }
@@ -9154,14 +9910,16 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           establishment_id: establishmentId,
           seller_id: user.id,
           cash_register_id: user.cash_register_id,
-          total_amount: total,
+          total_amount: totalInSelectedCurrency,
           payment_method: paymentMethod,
           client_name: client.name || 'Consumidor Final',
           client_nif: client.nif || '999999999',
           discount_percent: 0,
           discount_amount: discountAmount,
           tax_amount: tax,
-          cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : (paymentMethod === 'split' ? (parseFloat(splitAmounts.cash) || 0) : total),
+          currency_code: selectedCurrencyCode,
+          exchange_rate: currentExchangeRate,
+          cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : (paymentMethod === 'split' ? (parseFloat(splitAmounts.cash) || 0) : totalInSelectedCurrency),
           split_details: paymentMethod === 'split' ? { cash: parseFloat(splitAmounts.cash) || 0, card: parseFloat(splitAmounts.card) || 0 } : null,
           items: cart.map(i => {
             let price = i.type === 'product' 
@@ -9289,19 +10047,27 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         };
       });
 
-      const total_amount = total;
-      const tax_amount = tax;
+      const currencyObj = availableCurrencies.find(c => c.code === formalInvoiceForm.currency);
+      const rateToUse = (currencyObj && !currencyObj.is_base && formalInvoiceAmount > 0) ? total / formalInvoiceAmount : 1.0;
+
+      const total_amount = formalInvoiceAmount;
+      const tax_amount = Math.round((tax / rateToUse) * 100) / 100;
 
       const res = await fetch('/api/owner/credit-invoices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           ...formalInvoiceForm, 
-          items,
+          items: items.map(it => ({
+            ...it,
+            price: Math.round((it.price / rateToUse) * 100) / 100
+          })),
           establishment_id: establishmentId,
           total_amount,
           tax_amount,
-          seller_id: user.id
+          exchange_rate: rateToUse,
+          seller_id: user.id,
+          cash_register_id: user.cash_register_id
         })
       });
 
@@ -9327,7 +10093,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     }
   };
 
-  const change = paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - total : 0;
+  const change = paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - totalInSelectedCurrency : 0;
 
   const filteredProducts = products
     .filter(p => 
@@ -9562,13 +10328,13 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                               +
                             </button>
                             <span className="text-[9px] font-bold text-zinc-400 ml-1">
-                              x Kz {(unitPrice + feesTotal).toLocaleString()}
+                              x {selectedCurrencyCode} {((unitPrice + feesTotal) / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
                           </div>
                         </div>
                         <div className="text-right">
                           <p className="text-[11px] font-black text-zinc-900">
-                            Kz {totalPrice.toLocaleString()}
+                            {selectedCurrencyCode} {(totalPrice / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </p>
                           <button 
                             onClick={() => removeFromCart(i.id)}
@@ -9583,7 +10349,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                         <div className="pl-13 flex flex-wrap gap-1">
                           {i.selectedFees.map((fee, fIdx) => (
                             <span key={fIdx} className="text-[8px] font-black bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded uppercase tracking-widest border border-orange-100">
-                              {fee.name} (+Kz {fee.amount.toLocaleString()})
+                              {fee.name} (+{selectedCurrencyCode} {(fee.amount / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                             </span>
                           ))}
                         </div>
@@ -9634,21 +10400,21 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             <div className="space-y-2">
               <div className="flex justify-between text-xs text-zinc-500">
                 <span>Subtotal</span>
-                <span className="font-bold text-zinc-700">Kz {(subtotal || 0).toLocaleString()}</span>
+                <span className="font-bold text-zinc-700">{selectedCurrencyCode} {((subtotal || 0) / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               {discount > 0 && (
                 <div className="flex justify-between text-xs text-rose-500">
                   <span>Desconto</span>
-                  <span className="font-bold">- Kz {(discountAmount || 0).toLocaleString()}</span>
+                  <span className="font-bold">- {selectedCurrencyCode} {((discountAmount || 0) / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               )}
               <div className="flex justify-between text-xs text-zinc-500">
                 <span>Imposto ({defaultTax ? `${defaultTax.percentage}%` : (user?.fiscal_regime === 'exclusao' ? '0%' : '14%')})</span>
-                <span className="font-bold text-zinc-700">Kz {(tax || 0).toLocaleString()}</span>
+                <span className="font-bold text-zinc-700">{selectedCurrencyCode} {((tax || 0) / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-xl font-black pt-3 border-t border-zinc-200 text-zinc-900">
                 <span>Total</span>
-                <span className="text-orange-600">Kz {(total || 0).toLocaleString()}</span>
+                <span className="text-orange-600">{selectedCurrencyCode} {totalInSelectedCurrency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
             <div className="flex gap-2">
@@ -9666,7 +10432,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                     ...formalInvoiceForm, 
                     doc_type: 'FR',
                     client_name: client.name !== 'Consumidor Final' ? client.name : '',
-                    client_nif: client.nif !== '999999999' ? client.nif : ''
+                    client_nif: client.nif !== '999999999' ? client.nif : '',
+                    currency: selectedCurrencyCode
                   });
                   setIsFormalInvoiceModalOpen(true);
                 }}
@@ -9710,13 +10477,13 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   <div key={item.id} className="flex flex-col gap-1 text-[10px]">
                     <div className="flex justify-between">
                       <span className="text-zinc-600 font-bold">{item.quantity}x {item.item.name}</span>
-                      <span className="font-black">Kz {((unitPrice + feesTotal) * item.quantity).toLocaleString()}</span>
+                      <span className="font-black">{selectedCurrencyCode} {(((unitPrice + feesTotal) * item.quantity) / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                     {item.selectedFees && item.selectedFees.length > 0 && (
                       <div className="pl-4 flex flex-wrap gap-1">
                         {item.selectedFees.map((fee, idx) => (
                           <span key={idx} className="text-[8px] text-orange-600 italic">
-                            + {fee.name} (Kz {fee.amount.toLocaleString()})
+                            + {fee.name} ({selectedCurrencyCode} {(fee.amount / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                           </span>
                         ))}
                       </div>
@@ -9727,7 +10494,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             </div>
             <div className="mt-3 pt-3 border-t border-zinc-200 flex justify-between font-bold text-sm">
               <span>Total Proforma</span>
-              <span className="text-orange-600">Kz {total.toLocaleString()}</span>
+              <span className="text-orange-600">{selectedCurrencyCode} {totalInSelectedCurrency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
           </div>
 
@@ -9786,8 +10553,27 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Finalizar Pagamento">
         <div className="space-y-6">
           <div className="bg-zinc-50 p-6 rounded-2xl border border-zinc-100 text-center">
-            <p className="text-sm text-zinc-500 font-medium uppercase tracking-wider mb-1">Total a Pagar</p>
-            <h3 className="text-4xl font-black text-zinc-900">Kz {(total || 0).toLocaleString()}</h3>
+            <div className="flex items-center justify-center gap-2 mb-2">
+              {availableCurrencies.length > 1 && (
+                <select 
+                  value={selectedCurrencyCode}
+                  onChange={(e) => setSelectedCurrencyCode(e.target.value)}
+                  className="bg-white border border-zinc-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:ring-2 focus:ring-orange-500"
+                >
+                  {availableCurrencies.map(c => (
+                    <option key={c.id} value={c.code}>{c.code}</option>
+                  ))}
+                </select>
+              )}
+              <p className="text-sm text-zinc-500 font-medium uppercase tracking-wider">Total a Pagar</p>
+            </div>
+            <h3 className="text-4xl font-black text-zinc-900">{selectedCurrencyCode} {totalInSelectedCurrency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            {currentExchangeRate !== 1 && (
+              <p className="text-xs text-zinc-400 mt-2 font-medium italic">
+                Equivalente a: {(availableCurrencies.find(c => c.is_base)?.code || 'Kz')} {total.toLocaleString()} 
+                <span className="ml-2">(Taxa: {currentExchangeRate})</span>
+              </p>
+            )}
           </div>
 
           <div className="space-y-3">
@@ -9824,9 +10610,9 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             >
               <div className="space-y-1">
                 <div className="flex justify-between items-center ml-1">
-                  <label className="text-xs font-bold text-zinc-500 uppercase">Quantia Recebida (Kz)</label>
+                  <label className="text-xs font-bold text-zinc-500 uppercase">Quantia Recebida ({selectedCurrencyCode})</label>
                   <button 
-                    onClick={() => setCashReceived(total.toString())}
+                    onClick={() => setCashReceived(totalInSelectedCurrency.toFixed(2))}
                     className="text-[10px] font-black text-orange-600 uppercase hover:underline"
                   >
                     Valor Exacto
@@ -9851,7 +10637,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                     {change >= 0 ? 'Troco a devolver' : 'Dinheiro insuficiente'}
                   </span>
                   <span className="font-black">
-                    Kz {(Math.abs(change) || 0).toLocaleString()}
+                    {selectedCurrencyCode} {(Math.abs(change) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
               )}
@@ -9895,11 +10681,11 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 <span className="text-zinc-500 font-medium">Total Lançado:</span>
                 <span className={cn(
                   "font-black",
-                  Math.abs((parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')) - total) < 0.01 
+                  Math.abs((parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')) - totalInSelectedCurrency) < 0.01 
                     ? "text-emerald-600" 
                     : "text-rose-600"
                 )}>
-                  Kz {(parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')).toLocaleString()} / {total.toLocaleString()}
+                  {selectedCurrencyCode} {(parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')).toLocaleString()} / {totalInSelectedCurrency.toLocaleString()}
                 </span>
               </div>
             </motion.div>
@@ -9908,7 +10694,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           <div className="flex flex-col gap-3">
             <button
               onClick={finalizeSale}
-              disabled={isProcessing || (paymentMethod === 'cash' && (isNaN(parseFloat(cashReceived)) || parseFloat(cashReceived) < total)) || (paymentMethod === 'split' && Math.abs((parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')) - total) > 0.05)}
+              disabled={isProcessing || (paymentMethod === 'cash' && (isNaN(parseFloat(cashReceived)) || parseFloat(cashReceived) < totalInSelectedCurrency)) || (paymentMethod === 'split' && Math.abs((parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')) - totalInSelectedCurrency) > 0.05)}
               className="w-full bg-orange-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed"
             >
               {isProcessing ? 'Processando...' : 'Confirmar Pagamento'}
@@ -10074,9 +10860,9 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                     onChange={e => setFormalInvoiceForm({...formalInvoiceForm, currency: e.target.value})}
                     className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black font-bold text-sm"
                   >
-                    <option value="AOA">AOA (Kwanza)</option>
-                    <option value="USD">USD (Dólar)</option>
-                    <option value="EUR">EUR (Euro)</option>
+                    {availableCurrencies.map(c => (
+                      <option key={c.id} value={c.code}>{c.code} ({c.name})</option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -10114,7 +10900,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   <span className="px-3 py-1 bg-white/10 rounded-full text-[10px] font-black uppercase tracking-widest">{formalInvoiceForm.currency}</span>
                 </div>
                 <div className="text-4xl font-black tracking-tighter">
-                  {formalInvoiceForm.currency} {total.toLocaleString()}
+                  {formalInvoiceForm.currency} {formalInvoiceAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div className="mt-4 pt-4 border-t border-white/10 flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-50">
                   <span>Itens no Carrinho</span>
@@ -11234,7 +12020,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
   );
 };
 
-const SellerSettings = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void }) => {
+const SellerSettings = ({ user, onUpdate, onLogout }: { user: User, onUpdate: (u: User) => void, onLogout: () => void }) => {
   const [formData, setFormData] = useState({
     name: user.name || '',
     email: user.email || '',
@@ -11244,6 +12030,8 @@ const SellerSettings = ({ user, onUpdate }: { user: User, onUpdate: (u: User) =>
   });
   const [isSaving, setIsSaving] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -11293,20 +12081,20 @@ const SellerSettings = ({ user, onUpdate }: { user: User, onUpdate: (u: User) =>
           </div>
         </Card>
 
-        <Card className="p-6 border-zinc-100 shadow-sm rounded-2xl hover:border-orange-200 transition-colors cursor-pointer group">
+        <Card className="p-6 border-zinc-100 shadow-sm rounded-2xl hover:border-orange-200 transition-colors cursor-pointer group" onClick={() => setIsAboutModalOpen(true)}>
           <div className="flex items-center gap-4">
             <div className="p-3 bg-zinc-50 text-zinc-600 rounded-xl group-hover:bg-zinc-900 group-hover:text-white transition-colors">
               <Info size={24} />
             </div>
             <div className="flex-1">
               <h4 className="font-bold text-zinc-800">Sobre o Fatu-R</h4>
-              <p className="text-xs text-zinc-500">Versão 1.0.4 - Sistema de Faturação Inteligente.</p>
+              <p className="text-xs text-zinc-500">Produtor: Lazivânio Mulaza - Versão 1.0.5</p>
             </div>
             <ChevronRight size={20} className="text-zinc-300" />
           </div>
         </Card>
 
-        <Card className="p-6 border-zinc-100 shadow-sm rounded-2xl bg-rose-50 border-rose-100 hover:bg-rose-100 transition-colors cursor-pointer group">
+        <Card className="p-6 border-zinc-100 shadow-sm rounded-2xl bg-rose-50 border-rose-100 hover:bg-rose-100 transition-colors cursor-pointer group" onClick={() => setIsLogoutModalOpen(true)}>
           <div className="flex items-center gap-4">
             <div className="p-3 bg-white text-rose-600 rounded-xl shadow-sm">
               <LogOut size={24} />
@@ -11364,6 +12152,91 @@ const SellerSettings = ({ user, onUpdate }: { user: User, onUpdate: (u: User) =>
             {isSaving ? 'Guardando...' : 'Actualizar Palavra-passe'}
           </button>
         </form>
+      </Modal>
+
+      <Modal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} title="Sobre o Fatu-R">
+        <div className="space-y-6">
+          <div className="flex flex-col items-center justify-center py-4">
+            <div className="w-20 h-20 bg-black text-orange-500 rounded-3xl flex items-center justify-center mb-4 shadow-xl shadow-orange-500/10 scale-110">
+              <Zap size={40} className="fill-orange-500" />
+            </div>
+            <h3 className="text-3xl font-black text-zinc-900 tracking-tighter">Fatu-R</h3>
+            <p className="text-sm font-bold text-orange-600 uppercase tracking-[0.2em] mt-1">Smart Billing System</p>
+          </div>
+
+          <div className="bg-zinc-50 p-6 rounded-2xl border border-zinc-100 space-y-4">
+            <div className="flex justify-between items-center pb-3 border-b border-zinc-200/60">
+              <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Produtor</span>
+              <span className="text-sm font-bold text-zinc-900">Lazivânio Mulaza</span>
+            </div>
+            <div className="flex justify-between items-center pb-3 border-b border-zinc-200/60">
+              <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Validação AGT</span>
+              <span className="text-sm font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">Certificado № 274/AGT/2026</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Versão do Sistema</span>
+              <span className="text-sm font-bold text-zinc-900">v1.0.5 POS-Expert</span>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Atributos do Sistema</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-4 bg-orange-50/50 border border-orange-100 rounded-2xl flex flex-col gap-2">
+                <ShieldCheck size={24} className="text-orange-600" />
+                <span className="text-xs font-bold text-orange-900">Segurança Total</span>
+                <p className="text-[10px] text-orange-600 font-medium">Dados encriptados e auditoria completa.</p>
+              </div>
+              <div className="p-4 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col gap-2">
+                <Zap size={24} className="text-orange-400" />
+                <span className="text-xs font-bold text-white">Alta Performance</span>
+                <p className="text-[10px] text-zinc-400 font-medium">Resposta em milissegundos mesmo ऑफलाइन.</p>
+              </div>
+              <div className="p-4 bg-zinc-50 border border-zinc-100 rounded-2xl flex flex-col gap-2 col-span-2">
+                <div className="flex items-center gap-2">
+                  <Database size={20} className="text-zinc-600" />
+                  <span className="text-xs font-bold text-zinc-900">Faturação Multimoeda Inteligente</span>
+                </div>
+                <p className="text-[10px] text-zinc-500 font-medium">Converta valores em tempo real e emita faturas em múltiplas moedas com total conformidade fiscal.</p>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-[10px] text-center text-zinc-400 font-medium italic">
+            © 2026 Fatu-R. Todos os direitos reservados. Desenvolvido para simplificar a gestão do seu negócio.
+          </p>
+        </div>
+      </Modal>
+
+      <Modal isOpen={isLogoutModalOpen} onClose={() => setIsLogoutModalOpen(false)} title="Terminar Sessão">
+        <div className="space-y-6">
+          <div className="p-6 bg-rose-50 border border-rose-100 rounded-2xl flex flex-col items-center text-center gap-4">
+            <div className="w-16 h-16 bg-white text-rose-600 rounded-full flex items-center justify-center shadow-lg shadow-rose-600/10 border border-rose-200">
+              <AlertTriangle size={32} />
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-rose-900 tracking-tighter">Tem a certeza?</h3>
+              <p className="text-sm text-rose-600 font-medium mt-1">
+                Todas as alterações não guardadas no carrinho podem ser perdidas. Certifique-se de que fechou o seu turno se necessário.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <button 
+              onClick={() => setIsLogoutModalOpen(false)}
+              className="flex-1 py-4 bg-zinc-100 text-zinc-600 rounded-xl font-bold hover:bg-zinc-200 transition-all"
+            >
+              Cancelar
+            </button>
+            <button 
+              onClick={onLogout}
+              className="flex-1 py-4 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all shadow-lg shadow-rose-600/20"
+            >
+              Sim, Sair
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );
@@ -11680,6 +12553,14 @@ export default function App() {
     localStorage.removeItem('user');
   };
 
+  // Add global handler for components that need logout
+  useEffect(() => {
+    (window as any).handleGlobalLogout = handleLogout;
+    return () => {
+      delete (window as any).handleGlobalLogout;
+    };
+  }, [handleLogout]);
+
   useEffect(() => {
     if (user && user.role !== 'admin') {
       const checkStatus = async (signal: AbortSignal) => {
@@ -11762,7 +12643,8 @@ export default function App() {
                 <Route path="/owner/warehouses" element={<OwnerWarehouses user={user} />} />
                 <Route path="/owner/finance" element={<OwnerFinance user={user} />} />
                 <Route path="/owner/rh" element={<OwnerRH user={user} />} />
-                <Route path="/owner/reports" element={<OwnerReports user={user} />} />
+                <Route path="/owner/reports" element={<OwnerReports user = {user} />} />
+                <Route path="/owner/currencies" element={<OwnerCurrencies user={user} />} />
                 <Route path="/owner/settings" element={<OwnerSettings user={user} onUpdateUser={handleUpdateUser} />} />
                 <Route path="*" element={<Navigate to="/owner" replace />} />
               </>
@@ -11777,7 +12659,7 @@ export default function App() {
                 <Route path="/seller/rh" element={<OwnerRH user={user} />} />
                 <Route path="/seller/movements" element={<SellerCashMovements user={user} />} />
                 <Route path="/seller/history" element={<SellerHistory user={user} />} />
-                <Route path="/seller/settings" element={<SellerSettings user={user} onUpdate={handleLogin} />} />
+                <Route path="/seller/settings" element={<SellerSettings user={user} onUpdate={handleLogin} onLogout={handleLogout} />} />
                 <Route path="*" element={<Navigate to="/seller" replace />} />
               </>
             )}

@@ -336,6 +336,9 @@ function runStartupMigrations() {
       if (!creditInvoicesCols.some(col => col.name === 'owner_id')) {
         db.exec("ALTER TABLE credit_invoices ADD COLUMN owner_id INTEGER");
       }
+      if (!creditInvoicesCols.some(col => col.name === 'cash_register_id')) {
+        db.exec("ALTER TABLE credit_invoices ADD COLUMN cash_register_id INTEGER");
+      }
     }
 
     const transactionsCols = db.prepare("PRAGMA table_info(transactions)").all() as any[];
@@ -351,6 +354,69 @@ function runStartupMigrations() {
       if (!proformaInvoicesCols.some(col => col.name === 'owner_id')) {
         db.exec("ALTER TABLE proforma_invoices ADD COLUMN owner_id INTEGER");
       }
+      if (!proformaInvoicesCols.some(col => col.name === 'cash_register_id')) {
+        db.exec("ALTER TABLE proforma_invoices ADD COLUMN cash_register_id INTEGER");
+      }
+    }
+
+    // Migration for system_logs expansion
+    try {
+      const logCols = db.prepare("PRAGMA table_info(system_logs)").all() as any[];
+      const requiredCols = [
+        { name: "session_id", type: "TEXT" },
+        { name: "actor_role", type: "TEXT" },
+        { name: "metadata", type: "TEXT" },
+        { name: "old_values", type: "TEXT" },
+        { name: "new_values", type: "TEXT" }
+      ];
+      for (const col of requiredCols) {
+        if (!logCols.some(c => c.name === col.name)) {
+          db.prepare(`ALTER TABLE system_logs ADD COLUMN ${col.name} ${col.type}`).run();
+          console.log(`[DB] Added ${col.name} column to system_logs`);
+        }
+      }
+      
+      // Cleanup old singular names if preferred or just keep them for backward compat
+      // Here we migrate data from old_value to old_values if exists
+      if (logCols.some(c => c.name === 'old_value') && logCols.some(c => c.name === 'old_values')) {
+          db.prepare("UPDATE system_logs SET old_values = old_value WHERE old_values IS NULL AND old_value IS NOT NULL").run();
+      }
+      if (logCols.some(c => c.name === 'new_value') && logCols.some(c => c.name === 'new_values')) {
+          db.prepare("UPDATE system_logs SET new_values = new_value WHERE new_values IS NULL AND new_value IS NOT NULL").run();
+      }
+    } catch (e) {
+      console.error("Migration error (system_logs):", e);
+    }
+
+    // SaaS Invoices Migration
+    try {
+      const sysInvCols = db.prepare("PRAGMA table_info(system_invoices)").all() as any[];
+      if (sysInvCols.length > 0 && !sysInvCols.some(col => col.name === 'paid_amount')) {
+        db.exec("ALTER TABLE system_invoices ADD COLUMN paid_amount REAL DEFAULT 0");
+        console.log("[DB] Added paid_amount column to system_invoices");
+      }
+    } catch (e) {
+      console.error("Migration error (system_invoices):", e);
+    }
+
+    // Fix legacy plan names and duplicates
+    try {
+      db.prepare("UPDATE licenses SET plan_type = 'Empresarial' WHERE plan_type = 'enterprise'").run();
+      db.prepare("UPDATE licenses SET plan_type = 'Profissional' WHERE plan_type = 'professional'").run();
+      
+      // Deactivate duplicates: Keep only the one with furthest expiry date for each USER
+      const activeLicsPerUser = db.prepare("SELECT user_id, COUNT(*) as count FROM licenses WHERE status = 'active' GROUP BY user_id HAVING count > 1").all() as any[];
+      for (const group of activeLicsPerUser) {
+        const licensesInGroup = db.prepare(`SELECT id FROM licenses WHERE user_id = ? AND status = 'active' ORDER BY expiry_date DESC`).all(group.user_id) as any[];
+        
+        // Deactivate all but the first (latest expiry)
+        for (let i = 1; i < licensesInGroup.length; i++) {
+          db.prepare("UPDATE licenses SET status = 'inactive' WHERE id = ?").run(licensesInGroup[i].id);
+        }
+      }
+      console.log("[DB] Cleaned up duplicate active licenses per user");
+    } catch (e) {
+      console.error("Cleanup migration error:", e);
     }
   } catch (e) {
     console.error("Migration error (purchase_returns):", e);
@@ -449,51 +515,69 @@ const DigitalSignatureService = {
     userId?: number | string | null;
     ownerId?: number | string | null;
     establishmentId?: number | string | null;
+    sessionId?: string | null;
+    actorRole?: string | null;
     module: string;
     actionType: string;
-    severity?: 'info' | 'warning' | 'critical';
+    severity?: 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
     description?: string;
     entityType?: string;
     entityId?: string | number | null;
-    oldValue?: any;
-    newValue?: any;
+    oldValues?: any;
+    newValues?: any;
     status?: 'success' | 'failure';
+    metadata?: any;
     req?: express.Request;
   }) => {
     try {
       const {
-        userId, ownerId, establishmentId, module, actionType,
-        severity = 'info', description, entityType, entityId,
-        oldValue, newValue, status = 'success', req
+        userId, ownerId, establishmentId, sessionId, actorRole, module, actionType,
+        severity = 'INFO', description, entityType, entityId,
+        oldValues, newValues, status = 'success', metadata, req
       } = params;
 
-      const ipAddress = req?.ip || req?.headers['x-forwarded-for'] || null;
+      const ipRaw = req?.ip || req?.headers['x-forwarded-for'] || null;
+      const ipAddress = Array.isArray(ipRaw) ? ipRaw[0] : ipRaw;
       const userAgent = req?.headers['user-agent'] || null;
+
+      const enrichedMetadata = {
+        path: req?.path,
+        method: req?.method,
+        timestamp: new Date().toISOString(),
+        ...metadata
+      };
 
       db.prepare(`
         INSERT INTO system_logs (
-          user_id, owner_id, establishment_id, module, action_type,
+          user_id, owner_id, establishment_id, session_id, actor_role, module, action_type,
           severity, description, entity_type, entity_id,
-          old_value, new_value, ip_address, user_agent, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          old_values, new_values, ip_address, user_agent, status, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         userId || null,
         ownerId || null,
         establishmentId || null,
+        sessionId || null,
+        actorRole || null,
         module,
         actionType,
-        severity,
+        severity.toUpperCase(),
         description || null,
         entityType || null,
         entityId?.toString() || null,
-        oldValue ? JSON.stringify(oldValue) : null,
-        newValue ? JSON.stringify(newValue) : null,
-        Array.isArray(ipAddress) ? ipAddress[0] : ipAddress,
+        oldValues ? JSON.stringify(oldValues) : null,
+        newValues ? JSON.stringify(newValues) : null,
+        ipAddress,
         userAgent,
-        status
+        status,
+        JSON.stringify(enrichedMetadata)
       );
+
+      if (severity === 'CRITICAL' || severity === 'ERROR') {
+        console.warn(`[AUDIT ALERT] ${severity}: ${actionType} in ${module} by ${actorRole || 'Unknown'}`);
+      }
     } catch (err) {
-      console.error("[LOG] Failed to record system log:", err);
+      console.error("[AUDIT FAILURE] Failed to record log:", err);
     }
   };
 
@@ -619,27 +703,97 @@ function initializeDatabase() {
         FOREIGN KEY(requested_by) REFERENCES users(id)
       );
 
+      CREATE TABLE IF NOT EXISTS currencies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER NOT NULL,
+        code TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        name TEXT,
+        is_base INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(owner_id, code),
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS exchange_rates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER NOT NULL,
+        currency_id INTEGER NOT NULL,
+        rate REAL NOT NULL,
+        rate_date DATE NOT NULL,
+        created_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users(id),
+        FOREIGN KEY(currency_id) REFERENCES currencies(id)
+      );
+
       CREATE TABLE IF NOT EXISTS system_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         owner_id INTEGER,
         establishment_id INTEGER,
+        session_id TEXT,
         module TEXT NOT NULL,
         action_type TEXT NOT NULL,
-        severity TEXT DEFAULT 'info',
+        severity TEXT DEFAULT 'INFO',
         description TEXT,
         entity_type TEXT,
         entity_id TEXT,
-        old_value TEXT,
-        new_value TEXT,
+        old_values TEXT,
+        new_values TEXT,
+        actor_role TEXT,
         ip_address TEXT,
         user_agent TEXT,
         status TEXT DEFAULT 'success',
+        metadata TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id),
         FOREIGN KEY (owner_id) REFERENCES users(id),
         FOREIGN KEY (establishment_id) REFERENCES establishments(id)
       );
+    `);
+
+    // Add currency columns to transactions if they don't exist
+    try {
+      const transCols = db.prepare("PRAGMA table_info(transactions)").all() as any[];
+      if (!transCols.some(c => c.name === 'currency_code')) {
+        db.prepare("ALTER TABLE transactions ADD COLUMN currency_code TEXT DEFAULT 'Kz'").run();
+        db.prepare("ALTER TABLE transactions ADD COLUMN exchange_rate REAL DEFAULT 1.0").run();
+        db.prepare("ALTER TABLE transactions ADD COLUMN base_amount REAL").run();
+        console.log("[DB] Added multi-currency columns to transactions");
+      }
+      
+      const finCols = db.prepare("PRAGMA table_info(financial_transactions)").all() as any[];
+      if (!finCols.some(c => c.name === 'currency_code')) {
+        db.prepare("ALTER TABLE financial_transactions ADD COLUMN currency_code TEXT DEFAULT 'Kz'").run();
+        db.prepare("ALTER TABLE financial_transactions ADD COLUMN exchange_rate REAL DEFAULT 1.0").run();
+        db.prepare("ALTER TABLE financial_transactions ADD COLUMN base_amount REAL").run();
+        console.log("[DB] Added multi-currency columns to financial_transactions");
+      }
+
+      const creditCols = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
+      if (!creditCols.some(c => c.name === 'exchange_rate')) {
+        db.prepare("ALTER TABLE credit_invoices ADD COLUMN exchange_rate REAL DEFAULT 1.0").run();
+        db.prepare("ALTER TABLE credit_invoices ADD COLUMN base_amount REAL").run();
+        console.log("[DB] Added multi-currency columns to credit_invoices");
+      }
+    } catch (e) {
+      console.error("[DB] Error updating tables for multi-currency:", e);
+    }
+
+    db.exec(`
+
+    `);
+    
+    // Create indexes for auditing performance
+    try {
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_logs_owner ON system_logs(owner_id)").run();
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_logs_created ON system_logs(created_at)").run();
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_logs_entity ON system_logs(entity_type, entity_id)").run();
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_logs_session ON system_logs(session_id)").run();
+    } catch (e) {}
+
+    db.exec(`
 
       CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -692,6 +846,7 @@ function initializeDatabase() {
         establishment_id INTEGER,
         owner_id INTEGER,
         seller_id INTEGER,
+        cash_register_id INTEGER,
         parent_invoice_id INTEGER,
         client_name TEXT,
         client_nif TEXT,
@@ -712,6 +867,8 @@ function initializeDatabase() {
         items TEXT,
         due_date TEXT,
         service_designation TEXT,
+        exchange_rate REAL DEFAULT 1.0,
+        base_amount REAL,
         status TEXT DEFAULT 'pending',
         hash TEXT,
         signature TEXT,
@@ -726,6 +883,7 @@ function initializeDatabase() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         establishment_id INTEGER,
         owner_id INTEGER,
+        cash_register_id INTEGER,
         client_name TEXT,
         client_nif TEXT,
         client_address TEXT,
@@ -846,6 +1004,9 @@ function initializeDatabase() {
         date TEXT,
         status TEXT DEFAULT 'paid',
         reference_id INTEGER,
+        currency_code TEXT DEFAULT 'Kz',
+        exchange_rate REAL DEFAULT 1.0,
+        base_amount REAL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(establishment_id) REFERENCES establishments(id),
         FOREIGN KEY(owner_id) REFERENCES users(id)
@@ -965,18 +1126,6 @@ function initializeDatabase() {
         features TEXT,
         description TEXT
       );
-
-      // Ensure description column exists in system_plans
-      try {
-        const columns = db.prepare("PRAGMA table_info(system_plans)").all() as any[];
-        const hasDescription = columns.some(c => c.name === 'description');
-        if (!hasDescription) {
-          db.prepare("ALTER TABLE system_plans ADD COLUMN description TEXT").run();
-          console.log("[DB] Added description column to system_plans");
-        }
-      } catch (e) {
-        console.error("[DB] Error checking/adding description column to system_plans:", e);
-      }
 
       CREATE TABLE IF NOT EXISTS system_payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1201,6 +1350,45 @@ function initializeDatabase() {
         amount REAL,
         FOREIGN KEY(service_id) REFERENCES services(id)
       );
+
+      CREATE TABLE IF NOT EXISTS system_invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        doc_type TEXT, -- FT, FR, RC
+        series TEXT,
+        invoice_number TEXT,
+        invoice_date TEXT,
+        owner_id INTEGER,
+        owner_name TEXT,
+        owner_nif TEXT,
+        total_amount REAL,
+        paid_amount REAL DEFAULT 0,
+        tax_amount REAL,
+        items TEXT, -- JSON array of items
+        status TEXT, -- pending, paid, canceled, partial
+        payment_method TEXT,
+        related_id INTEGER, -- For RC pointing to FT (legacy or simple case)
+        hash TEXT,
+        signature TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS system_invoice_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rc_id INTEGER,
+        ft_id INTEGER,
+        amount REAL,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(rc_id) REFERENCES system_invoices(id),
+        FOREIGN KEY(ft_id) REFERENCES system_invoices(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS system_audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        action TEXT,
+        details TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // Run migrations after table creations
@@ -1261,7 +1449,7 @@ function initializeDatabase() {
         db.prepare(`
           INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, features)
           VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(ownerUser.id, firstEst.id, 'enterprise', new Date().toISOString(), '2026-12-31', 'active', '{"reports": true, "multi_establishment": true, "api_access": true}');
+        `).run(ownerUser.id, firstEst.id, 'Empresarial', new Date().toISOString(), '2026-12-31', 'active', '{"reports": true, "multi_establishment": true, "api_access": true}');
       }
     }
 
@@ -1478,48 +1666,28 @@ async function startServer() {
       actionType, 
       severity, 
       search,
-      entityType
+      entityType,
+      actorRole,
+      sessionId
     } = req.query;
 
     const offset = (Number(page) - 1) * Number(limit);
     let query = "SELECT l.*, u.name as user_name, o.name as owner_name FROM system_logs l LEFT JOIN users u ON l.user_id = u.id LEFT JOIN users o ON l.owner_id = o.id WHERE 1=1";
     const params: any[] = [];
 
-    if (startDate) {
-      query += " AND l.created_at >= ?";
-      params.push(startDate);
-    }
-    if (endDate) {
-      query += " AND l.created_at <= ?";
-      params.push(endDate);
-    }
-    if (userId) {
-      query += " AND l.user_id = ?";
-      params.push(userId);
-    }
-    if (ownerId) {
-      query += " AND l.owner_id = ?";
-      params.push(ownerId);
-    }
-    if (module) {
-      query += " AND l.module = ?";
-      params.push(module);
-    }
-    if (actionType) {
-      query += " AND l.action_type = ?";
-      params.push(actionType);
-    }
-    if (severity) {
-      query += " AND l.severity = ?";
-      params.push(severity);
-    }
-    if (entityType) {
-      query += " AND l.entity_type = ?";
-      params.push(entityType);
-    }
+    if (startDate) { query += " AND l.created_at >= ?"; params.push(startDate); }
+    if (endDate) { query += " AND l.created_at <= ?"; params.push(endDate); }
+    if (userId) { query += " AND l.user_id = ?"; params.push(userId); }
+    if (ownerId) { query += " AND l.owner_id = ?"; params.push(ownerId); }
+    if (module) { query += " AND l.module = ?"; params.push(module); }
+    if (actionType) { query += " AND l.action_type = ?"; params.push(actionType); }
+    if (severity && typeof severity === 'string') { query += " AND l.severity = ?"; params.push(severity.toUpperCase()); }
+    if (entityType) { query += " AND l.entity_type = ?"; params.push(entityType); }
+    if (actorRole) { query += " AND l.actor_role = ?"; params.push(actorRole); }
+    if (sessionId) { query += " AND l.session_id = ?"; params.push(sessionId); }
     if (search) {
-      query += " AND (l.description LIKE ? OR l.entity_id LIKE ?)";
-      params.push(`%${search}%`, `%${search}%`);
+      query += " AND (l.description LIKE ? OR l.entity_id LIKE ? OR l.metadata LIKE ?)";
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     const countQuery = query.replace("SELECT l.*, u.name as user_name, o.name as owner_name", "SELECT COUNT(*) as total");
@@ -1551,14 +1719,19 @@ async function startServer() {
         "Data": l.created_at,
         "Utilizador": l.user_name || "Sistema",
         "Empresa": l.owner_name || "N/A",
+        "Papel": l.actor_role,
+        "Sessão": l.session_id,
         "Módulo": l.module,
         "Ação": l.action_type,
         "Severidade": l.severity,
         "Descrição": l.description,
         "Entidade": l.entity_type,
         "ID Recurso": l.entity_id,
+        "Valor Antigo": l.old_values,
+        "Valor Novo": l.new_values,
         "Status": l.status,
-        "IP": l.ip_address
+        "IP": l.ip_address,
+        "User Agent": l.user_agent
       }));
 
       const wb = XLSX.utils.book_new();
@@ -1578,7 +1751,7 @@ async function startServer() {
   // Owner: Get their own logs
   app.get("/api/owner/logs/:ownerId", (req, res) => {
     const ownerId = req.params.ownerId;
-    const { page = 1, limit = 20, module, actionType } = req.query;
+    const { page = 1, limit = 20, module, actionType, severity, search } = req.query;
 
     const offset = (Number(page) - 1) * Number(limit);
     let query = "SELECT l.*, u.name as user_name FROM system_logs l LEFT JOIN users u ON l.user_id = u.id WHERE l.owner_id = ?";
@@ -1586,6 +1759,11 @@ async function startServer() {
 
     if (module) { query += " AND l.module = ?"; params.push(module); }
     if (actionType) { query += " AND l.action_type = ?"; params.push(actionType); }
+    if (severity && typeof severity === 'string') { query += " AND l.severity = ?"; params.push(severity.toUpperCase()); }
+    if (search) {
+      query += " AND (l.description LIKE ? OR l.entity_id LIKE ? OR l.entity_type LIKE ?)";
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
 
     const countQuery = query.replace("SELECT l.*, u.name as user_name", "SELECT COUNT(*) as total");
     const total = (db.prepare(countQuery).get(...params) as any).total;
@@ -1674,8 +1852,13 @@ async function startServer() {
       const { 
         establishment_id, seller_id, cash_register_id, total_amount, items, payment_method, 
         cash_received, split_details, client_name, client_nif,
-        discount_percent, discount_amount, tax_amount
+        discount_percent, discount_amount, tax_amount,
+        currency_code, exchange_rate
       } = body;
+
+      const finalCurrencyCode = currency_code || 'Kz';
+      const finalExchangeRate = exchange_rate || 1.0;
+      const baseAmount = total_amount * finalExchangeRate;
 
       if (!establishment_id || !seller_id || !items || !Array.isArray(items)) {
         return res.status(400).json({ error: "Dados da venda incompletos ou inválidos." });
@@ -1764,8 +1947,9 @@ async function startServer() {
           establishment_id, owner_id, seller_id, cash_register_id, total_amount, items, payment_method, 
           cash_received, split_details, client_name, client_nif,
           discount_percent, discount_amount, tax_amount, invoice_number, agt_status, billing_mode,
-          hash, signature, prev_signature, key_version_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          hash, signature, prev_signature, key_version_id,
+          currency_code, exchange_rate, base_amount
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         establishment_id, 
         ownerId,
@@ -1787,7 +1971,10 @@ async function startServer() {
         signatureData.hash,
         signatureData.signature,
         signatureData.prev_signature,
-        signatureData.keyVersionId
+        signatureData.keyVersionId,
+        finalCurrencyCode,
+        finalExchangeRate,
+        baseAmount
       );
       
       // Update stock
@@ -1802,17 +1989,41 @@ async function startServer() {
         sale.items = typeof sale.items === 'string' ? JSON.parse(sale.items) : (sale.items || []);
         if (sale.split_details) sale.split_details = typeof sale.split_details === 'string' ? JSON.parse(sale.split_details) : sale.split_details;
         
+        // Audit POS Sale
+        logAction({
+          userId: seller_id,
+          ownerId: ownerId,
+          establishmentId: establishment_id,
+          module: 'FISCAL',
+          actionType: 'CREATE_INVOICE',
+          severity: 'INFO',
+          description: `Venda Processada: ${invoice_number}`,
+          entityType: 'TRANSACTION',
+          entityId: Number(info.lastInsertRowid),
+          newValues: { 
+            invoice_number, 
+            total_amount, 
+            payment_method, 
+            client_name, 
+            agt_status,
+            billing_mode
+          },
+          req
+        });
+
         // Record in financial_transactions
         try {
           const establishmentData = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
           if (establishmentData) {
             db.prepare(`
               INSERT INTO financial_transactions (
-                establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
-              ) VALUES (?, ?, 'income', 'Venda POS', ?, ?, ?, ?, 'paid', ?)
+                establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id,
+                currency_code, exchange_rate, base_amount
+              ) VALUES (?, ?, 'income', 'Venda POS', ?, ?, ?, ?, 'paid', ?, ?, ?, ?)
             `).run(
-              establishment_id, establishmentData.owner_id, total_amount, payment_method || 'cash',
-              `Venda POS - Fatura ${invoice_number}`, new Date().toISOString(), sale.id
+              establishment_id, establishmentData.owner_id, baseAmount, payment_method || 'cash',
+              `Venda POS - Fatura ${invoice_number} (${finalCurrencyCode} ${total_amount})`, new Date().toISOString(), sale.id,
+              finalCurrencyCode, finalExchangeRate, baseAmount
             );
           }
         } catch (finError) {
@@ -1930,7 +2141,7 @@ async function startServer() {
           userId: user.id,
           module: 'AUTH',
           actionType: 'LOGIN_FAILURE',
-          severity: 'warning',
+          severity: 'WARNING',
           description: `Tentativa de login em conta suspensa: ${user.email}`,
           status: 'failure',
           req
@@ -1972,7 +2183,7 @@ async function startServer() {
             ownerId,
             module: 'AUTH',
             actionType: 'LOGIN_FAILURE',
-            severity: 'warning',
+            severity: 'WARNING',
             description: `Acesso negado devido à suspensão do proprietário: ${user.email}`,
             status: 'failure',
             req
@@ -1993,7 +2204,7 @@ async function startServer() {
             ownerId,
             module: 'AUTH',
             actionType: 'LOGIN_FAILURE',
-            severity: 'warning',
+            severity: 'WARNING',
             description: `Tentativa de login sem licença ativa: ${user.email}`,
             status: 'failure',
             req
@@ -2443,9 +2654,15 @@ async function startServer() {
 
   app.post("/api/admin/licenses", (req, res) => {
     const { user_id, establishment_id, plan_type, start_date, expiry_date, features } = req.body;
+    
+    // Deactivate ALL previous active licenses for this user to ensure only one is active
+    if (user_id) {
+      db.prepare("UPDATE licenses SET status = 'inactive' WHERE user_id = ? AND status = 'active'").run(user_id);
+    }
+
     db.prepare(`
-      INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, features)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, features)
+      VALUES (?, ?, ?, ?, ?, 'active', ?)
     `).run(user_id, establishment_id, plan_type, start_date, expiry_date, JSON.stringify(features));
     
     // Update establishment expiry too
@@ -2560,7 +2777,7 @@ async function startServer() {
   app.get("/api/admin/reports", (req, res) => {
     // Revenue by month (last 6 months)
     const revenueByMonth = db.prepare(`
-      SELECT strftime('%m', timestamp) as month, SUM(total_amount) as total
+      SELECT strftime('%m', timestamp) as month, SUM(base_amount) as total
       FROM transactions
       WHERE timestamp >= date('now', '-6 months')
       GROUP BY month
@@ -2762,24 +2979,27 @@ async function startServer() {
     try {
       const plans = db.prepare("SELECT * FROM system_plans").all() as any[];
       
+      if (plans.length === 0) {
+        return res.status(404).send("Nenhum plano encontrado");
+      }
+
       const doc = new (PDFDocument as any)({ 
         margin: 50,
         bufferPages: true
       });
-
-      // Handle stream errors
-      doc.on('error', (err: any) => {
-        console.error('PDF Generator Error (Plans):', err);
-        if (!res.headersSent) res.status(500).send("Erro interno no gerador de Guia de Planos");
-      });
       
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", "attachment; filename=planos_sistema.pdf");
+      
+      doc.on('error', (err: any) => {
+        console.error('PDF Stream Error:', err);
+        if (!res.headersSent) res.status(500).send("Erro interno ao gerar PDF");
+      });
+
       doc.pipe(res);
 
       const orange = "#F97316";
       const black = "#000000";
-      const white = "#FFFFFF";
 
       // Header
       doc.rect(0, 0, 595.28, 80).fill(orange);
@@ -2794,6 +3014,12 @@ async function startServer() {
 
       for (let i = 0; i < plans.length; i++) {
         const plan = plans[i];
+        
+        // Prevent orphaned headers at page bottom
+        if (doc.y > doc.page.height - 150) {
+          doc.addPage();
+        }
+
         const planName = String(plan.name || 'PLANO SEM NOME');
         doc.fillColor(orange).fontSize(16).text(planName.toUpperCase(), { characterSpacing: 1 });
         doc.rect(40, doc.y + 2, 515, 1).fill("#E4E4E7");
@@ -2814,9 +3040,10 @@ async function startServer() {
           rows: planData.slice(1),
         }, {
           prepareHeader: () => doc.font("Helvetica-Bold").fontSize(10).fillColor(black),
-          prepareRow: () => doc.font("Helvetica").fontSize(10).fillColor(black),
+          prepareRow: (row: any, index: any) => doc.font("Helvetica").fontSize(10).fillColor(black),
           padding: 8,
           columnSpacing: 15,
+          width: 515
         });
 
         if (i < plans.length - 1) {
@@ -2828,17 +3055,14 @@ async function startServer() {
       const range = doc.bufferedPageRange();
       for (let i = range.start; i < range.start + range.count; i++) {
         doc.switchToPage(i);
-        
         const oldMargin = (doc.page as any).margins.bottom;
         (doc.page as any).margins.bottom = 0;
-
         doc.fontSize(8).fillColor("#A1A1AA").text(
           `Página ${i + 1} de ${range.count} - Documento de Referência de Planos`,
           0,
           doc.page.height - 30,
           { align: "center", width: doc.page.width, lineBreak: false }
         );
-
         (doc.page as any).margins.bottom = oldMargin;
       }
 
@@ -2851,7 +3075,7 @@ async function startServer() {
 
       doc.end();
     } catch (err) {
-      console.error(err);
+      console.error('PDF Catch Error:', err);
       if (!res.headersSent) res.status(500).send("Erro ao gerar Guia de Planos");
     }
   });
@@ -2863,18 +3087,58 @@ async function startServer() {
 
   app.post("/api/admin/plans", (req, res) => {
     const { name, price, max_establishments, max_products, features, description } = req.body;
-    db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features, description) VALUES (?, ?, ?, ?, ?, ?)").run(name, price, max_establishments, max_products, JSON.stringify(features), description);
-    res.json({ success: true });
+    const info = db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features, description) VALUES (?, ?, ?, ?, ?, ?)").run(name, price, max_establishments, max_products, JSON.stringify(features), description);
+    
+    logAction({
+      module: 'FINANCE',
+      actionType: 'CREATE_PLAN',
+      severity: 'WARNING',
+      description: `Novo plano criado: ${name}`,
+      entityType: 'PLAN',
+      entityId: Number(info.lastInsertRowid),
+      newValues: { name, price, max_establishments, max_products, features, description },
+      req
+    });
+    
+    res.json({ success: true, id: Number(info.lastInsertRowid) });
   });
 
   app.put("/api/admin/plans/:id", (req, res) => {
     const { name, price, max_establishments, max_products, features, description } = req.body;
+    const oldPlan = db.prepare("SELECT * FROM system_plans WHERE id = ?").get(req.params.id) as any;
+    
     db.prepare("UPDATE system_plans SET name = ?, price = ?, max_establishments = ?, max_products = ?, features = ?, description = ? WHERE id = ?").run(name, price, max_establishments, max_products, JSON.stringify(features), description, req.params.id);
+    
+    logAction({
+      module: 'FINANCE',
+      actionType: 'UPDATE_PLAN',
+      severity: 'WARNING',
+      description: `Plano atualizado: ${name}`,
+      entityType: 'PLAN',
+      entityId: req.params.id,
+      oldValues: oldPlan,
+      newValues: { name, price, max_establishments, max_products, features, description },
+      req
+    });
+    
     res.json({ success: true });
   });
 
   app.delete("/api/admin/plans/:id", (req, res) => {
+    const oldPlan = db.prepare("SELECT * FROM system_plans WHERE id = ?").get(req.params.id);
     db.prepare("DELETE FROM system_plans WHERE id = ?").run(req.params.id);
+    
+    logAction({
+      module: 'FINANCE',
+      actionType: 'DELETE_PLAN',
+      severity: 'CRITICAL',
+      description: `Plano excluído ID ${req.params.id}`,
+      entityType: 'PLAN',
+      entityId: req.params.id,
+      oldValues: oldPlan,
+      req
+    });
+    
     res.json({ success: true });
   });
 
@@ -2887,71 +3151,326 @@ async function startServer() {
     res.json(settingsObj);
   });
 
+  app.post("/api/admin/system/generate-recurring", (req, res) => {
+    try {
+      const activeLicenses = db.prepare(`
+        SELECT l.*, u.name as owner_name, u.nif as owner_nif
+        FROM licenses l
+        JOIN users u ON l.user_id = u.id
+        WHERE l.status = 'active'
+      `).all() as any[];
+
+      const today = new Date();
+      const currentMonthYear = `${today.getMonth() + 1}/${today.getFullYear()}`;
+      const year = today.getFullYear();
+      const date = today.toISOString().split("T")[0];
+      const series = "SaaS";
+
+      let generated = 0;
+      let skipped = 0;
+
+      for (const lic of activeLicenses) {
+        // Resolve price from plans table (or system_plans if that's where they are)
+        const plan = db.prepare("SELECT price FROM system_plans WHERE name = ?").get(lic.plan_type) as any;
+        const price = plan?.price || 0;
+
+        const existing = db.prepare(`
+          SELECT id FROM system_invoices 
+          WHERE owner_id = ? AND items LIKE ?
+        `).get(lic.user_id, `%${currentMonthYear}%`) as any;
+
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
+        const lastDoc = db.prepare("SELECT invoice_number FROM system_invoices WHERE doc_type = 'FT' AND series = ? ORDER BY id DESC LIMIT 1").get(series) as any;
+        let sequence = 1;
+        if (lastDoc) {
+          const parts = lastDoc.invoice_number.split("/");
+          sequence = parseInt(parts[parts.length - 1]) + 1;
+        }
+        const invoice_number = `FT ${series}/${year}/${sequence}`;
+        const items = [{
+          description: `Subscrição Mensal - Plano ${lic.plan_type} (${currentMonthYear})`,
+          amount: price
+        }];
+
+        db.prepare(`
+          INSERT INTO system_invoices (doc_type, series, invoice_number, invoice_date, owner_id, owner_name, owner_nif, total_amount, tax_amount, items, status, payment_method)
+          VALUES ('FT', ?, ?, ?, ?, ?, ?, ?, 0, ?, 'pending', 'bank_transfer')
+        `).run(series, invoice_number, date, lic.user_id, lic.owner_name, lic.owner_nif, price, JSON.stringify(items));
+
+        db.prepare("INSERT INTO system_audit_logs (user_id, action, details) VALUES (?, ?, ?)")
+          .run(1, "GENERATE_RECURRING", `Fatura recorrente automática gerada para ${lic.owner_name} (${invoice_number})`);
+        
+        generated++;
+      }
+
+      res.json({ message: "Processamento concluído", generated, skipped });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // System Finance Dashboard (Unified)
   app.get("/api/admin/finance", (req, res) => {
-    const payments = db.prepare(`
-      SELECT p.*, u.name as client_name, pl.name as plan_name 
-      FROM system_payments p
-      JOIN users u ON p.user_id = u.id
-      JOIN system_plans pl ON p.plan_id = pl.id
-      ORDER BY p.timestamp DESC
+    // 1. All Receipt Documents (Actual entries of money)
+    const officialPayments = db.prepare(`
+      SELECT * FROM system_invoices 
+      WHERE doc_type = 'RC' 
+      ORDER BY created_at DESC
     `).all() as any[];
 
+    // 2. Pending and Partial Invoices (Debts)
+    const pendingInvoices = db.prepare(`
+      SELECT * FROM system_invoices 
+      WHERE doc_type = 'FT' AND status IN ('pending', 'partial')
+      ORDER BY created_at DESC
+    `).all() as any[];
+
+    // 3. Stats based on RC documents
     const today = new Date().toISOString().split('T')[0];
     const thisMonth = today.substring(0, 7);
     const thisYear = today.substring(0, 4);
 
     const stats = {
-      totalToday: payments.filter(p => p.timestamp.startsWith(today)).reduce((sum, p) => sum + p.amount, 0),
-      totalMonth: payments.filter(p => p.timestamp.startsWith(thisMonth)).reduce((sum, p) => sum + p.amount, 0),
-      totalYear: payments.filter(p => p.timestamp.startsWith(thisYear)).reduce((sum, p) => sum + p.amount, 0),
-      count: payments.length
+      totalToday: officialPayments.filter(p => p.invoice_date === today).reduce((sum, p) => sum + p.total_amount, 0),
+      totalMonth: officialPayments.filter(p => p.invoice_date.startsWith(thisMonth)).reduce((sum, p) => sum + p.total_amount, 0),
+      totalYear: officialPayments.filter(p => p.invoice_date.startsWith(thisYear)).reduce((sum, p) => sum + p.total_amount, 0),
+      count: officialPayments.length
     };
 
-    const pendingPayments = db.prepare(`
-      SELECT u.id as user_id, s.id as establishment_id, u.name as client_name, s.name as establishment_name, s.license_expiry
-      FROM users u
-      JOIN establishments s ON u.id = s.owner_id
-      WHERE s.license_status = 'expired' OR s.license_expiry < date('now', '+7 days')
-    `).all();
-
+    // 4. Reports
     const revenueByMonth = db.prepare(`
-      SELECT strftime('%Y-%m', timestamp) as month, SUM(amount) as total
-      FROM system_payments
+      SELECT strftime('%Y-%m', invoice_date) as month, SUM(total_amount) as total
+      FROM system_invoices
+      WHERE doc_type = 'RC'
       GROUP BY month
       ORDER BY month DESC
     `).all();
 
-    const revenueByPlan = db.prepare(`
-      SELECT pl.name as plan_name, SUM(p.amount) as total
-      FROM system_payments p
-      JOIN system_plans pl ON p.plan_id = pl.id
-      GROUP BY plan_name
-    `).all();
-
-    const revenueByClient = db.prepare(`
-      SELECT u.name as client_name, SUM(p.amount) as total
-      FROM system_payments p
-      JOIN users u ON p.user_id = u.id
-      GROUP BY client_name
-    `).all();
-
     const methods = db.prepare(`
-      SELECT payment_method, SUM(amount) as total, COUNT(*) as count
-      FROM system_payments
+      SELECT payment_method, SUM(total_amount) as total, COUNT(*) as count
+      FROM system_invoices
+      WHERE doc_type = 'RC'
       GROUP BY payment_method
     `).all();
 
+    const byPlan: any[] = [];
+    const byClient: any[] = [];
+
+    officialPayments.forEach(pay => {
+      // By Client
+      const existingClient = byClient.find(c => c.client_name === pay.owner_name);
+      if (existingClient) {
+        existingClient.total += pay.total_amount;
+      } else {
+        byClient.push({ client_name: pay.owner_name, total: pay.total_amount });
+      }
+
+      // By Plan (parsing items)
+      try {
+        const items = JSON.parse(pay.items || '[]');
+        items.forEach((item: any) => {
+          const planName = item.description || 'Outros';
+          const existingPlan = byPlan.find(p => p.plan_name === planName);
+          if (existingPlan) {
+            existingPlan.total += item.amount;
+          } else {
+            byPlan.push({ plan_name: planName, total: item.amount });
+          }
+        });
+      } catch(e) {}
+    });
+
     res.json({
-      payments,
+      payments: officialPayments.map(p => ({
+        id: p.id,
+        client_name: p.owner_name,
+        amount: p.total_amount,
+        payment_method: p.payment_method,
+        timestamp: p.created_at,
+        invoice_number: p.invoice_number,
+        plan_name: p.items ? (JSON.parse(p.items)[0]?.description || 'N/A') : 'N/A'
+      })),
       stats,
-      pendingPayments,
+      pendingPayments: pendingInvoices.map(inv => ({
+        establishment_id: inv.id,
+        owner_id: inv.owner_id,
+        client_name: inv.owner_name,
+        amount: inv.total_amount,
+        paid: inv.paid_amount || 0,
+        balance: inv.total_amount - (inv.paid_amount || 0),
+        license_expiry: inv.invoice_date,
+        invoice_number: inv.invoice_number
+      })),
       reports: {
         byMonth: revenueByMonth,
-        byPlan: revenueByPlan,
-        byClient: revenueByClient
+        byPlan: byPlan,
+        byClient: byClient
       },
       methods
     });
+  });
+
+  // System Invoices (SaaS Billing)
+  app.get("/api/admin/system/invoices", (req, res) => {
+    const invoices = db.prepare("SELECT * FROM system_invoices ORDER BY created_at DESC").all();
+    res.json(invoices);
+  });
+
+  app.post("/api/admin/system/invoices", (req, res) => {
+    const { doc_type, owner_id, total_amount, tax_amount, items, payment_method } = req.body;
+    
+    try {
+      const owner = db.prepare("SELECT name, nif FROM users WHERE id = ?").get(owner_id) as any;
+      if (!owner) return res.status(404).json({ error: "Proprietário não encontrado" });
+
+      const series = "SaaS"; 
+      const date = new Date().toISOString().split('T')[0];
+      const year = new Date().getFullYear();
+      
+      const lastDoc = db.prepare("SELECT invoice_number FROM system_invoices WHERE doc_type = ? AND series = ? ORDER BY id DESC LIMIT 1").get(doc_type, series) as any;
+      let sequence = 1;
+      if (lastDoc) {
+        const parts = lastDoc.invoice_number.split('/');
+        sequence = parseInt(parts[parts.length - 1]) + 1;
+      }
+      const invoice_number = `${doc_type} ${series}/${year}/${sequence}`;
+
+      const status = (doc_type === 'FR') ? 'paid' : 'pending';
+
+      const result = db.prepare(`
+        INSERT INTO system_invoices (doc_type, series, invoice_number, invoice_date, owner_id, owner_name, owner_nif, total_amount, tax_amount, items, status, payment_method)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(doc_type, series, invoice_number, date, owner_id, owner.name, owner.nif, total_amount, tax_amount, JSON.stringify(items), status, payment_method || null);
+
+      db.prepare("INSERT INTO system_audit_logs (user_id, action, details) VALUES (?, ?, ?)")
+        .run(1, `Emissão de ${doc_type}`, `Documento ${invoice_number} emitido para ${owner.name} no valor de Kz ${total_amount}`);
+
+      res.json({ id: result.lastInsertRowid, invoice_number });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/system/liquidate-multiple", (req, res) => {
+    const { owner_id, payments, payment_method, total_amount } = req.body; // payments: [{ft_id, amount}]
+    
+    try {
+      const owner = db.prepare("SELECT name, nif FROM users WHERE id = ?").get(owner_id) as any;
+      if (!owner) return res.status(404).json({ error: "Proprietário não encontrado" });
+
+      const date = new Date().toISOString().split('T')[0];
+      const year = new Date().getFullYear();
+      const series = "SaaS";
+
+      // 1. Create the RC (Receipt) document
+      const lastRC = db.prepare("SELECT invoice_number FROM system_invoices WHERE doc_type = 'RC' AND series = ? ORDER BY id DESC LIMIT 1").get(series) as any;
+      let sequence = 1;
+      if (lastRC) {
+        const parts = lastRC.invoice_number.split('/');
+        sequence = parseInt(parts[parts.length - 1]) + 1;
+      }
+      const rc_number = `RC ${series}/${year}/${sequence}`;
+
+      // Build items for the receipt based on invoices being paid
+      const rcItems = payments.map((p: any) => {
+        const ft = db.prepare("SELECT invoice_number FROM system_invoices WHERE id = ?").get(p.ft_id) as any;
+        return {
+          description: `Liquidação ${ft ? 'da Fatura ' + ft.invoice_number : 'de Fatura Individual'}`,
+          amount: p.amount
+        };
+      });
+
+      const rcResult = db.prepare(`
+        INSERT INTO system_invoices (doc_type, series, invoice_number, invoice_date, owner_id, owner_name, owner_nif, total_amount, tax_amount, items, status, payment_method)
+        VALUES ('RC', ?, ?, ?, ?, ?, ?, ?, 0, ?, 'paid', ?)
+      `).run(series, rc_number, date, owner_id, owner.name, owner.nif, total_amount, JSON.stringify(rcItems), payment_method);
+
+      const rcId = rcResult.lastInsertRowid;
+
+      // 2. Register link and update FT status
+      for (const p of payments) {
+        db.prepare(`
+          INSERT INTO system_invoice_payments (rc_id, ft_id, amount)
+          VALUES (?, ?, ?)
+        `).run(rcId, p.ft_id, p.amount);
+
+        // Update the FT
+        const ft = db.prepare("SELECT total_amount, paid_amount FROM system_invoices WHERE id = ?").get(p.ft_id) as any;
+        const newPaid = (ft.paid_amount || 0) + p.amount;
+        const newStatus = newPaid >= ft.total_amount ? 'paid' : 'partial';
+
+        db.prepare("UPDATE system_invoices SET paid_amount = ?, status = ? WHERE id = ?")
+          .run(newPaid, newStatus, p.ft_id);
+      }
+
+      db.prepare("INSERT INTO system_audit_logs (user_id, action, details) VALUES (?, ?, ?)")
+        .run(1, "Pagamento Múltiplo", `Recibo ${rc_number} emitido para ${owner.name} liquidando ${payments.length} faturas.`);
+
+      res.json({ success: true, rc_number });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/system/invoices/:id/liquidate", (req, res) => {
+    const ftId = req.params.id;
+    const { payment_method, amount } = req.body;
+    
+    try {
+      const ft = db.prepare("SELECT * FROM system_invoices WHERE id = ? AND doc_type = 'FT'").get(ftId) as any;
+      if (!ft) return res.status(404).json({ error: "Fatura não encontrada" });
+
+      const amountToPay = amount || (ft.total_amount - (ft.paid_amount || 0));
+
+      const date = new Date().toISOString().split('T')[0];
+      const year = new Date().getFullYear();
+      const series = "SaaS";
+
+      const lastRC = db.prepare("SELECT invoice_number FROM system_invoices WHERE doc_type = 'RC' AND series = ? ORDER BY id DESC LIMIT 1").get(series) as any;
+      let sequence = 1;
+      if (lastRC) {
+        const parts = lastRC.invoice_number.split('/');
+        sequence = parseInt(parts[parts.length - 1]) + 1;
+      }
+      const rc_number = `RC ${series}/${year}/${sequence}`;
+
+      const rcItems = [{ description: `Liquidação da Fatura ${ft.invoice_number}`, amount: amountToPay }];
+
+      const rcResult = db.prepare(`
+        INSERT INTO system_invoices (doc_type, series, invoice_number, invoice_date, owner_id, owner_name, owner_nif, total_amount, tax_amount, items, status, payment_method, related_id)
+        VALUES ('RC', ?, ?, ?, ?, ?, ?, ?, 0, ?, 'paid', ?, ?)
+      `).run(series, rc_number, date, ft.owner_id, ft.owner_name, ft.owner_nif, amountToPay, JSON.stringify(rcItems), payment_method, ft.id);
+
+      const rcId = rcResult.lastInsertRowid;
+
+      // Register link
+      db.prepare(`
+        INSERT INTO system_invoice_payments (rc_id, ft_id, amount)
+        VALUES (?, ?, ?)
+      `).run(rcId, ft.id, amountToPay);
+
+      const newPaid = (ft.paid_amount || 0) + amountToPay;
+      const newStatus = newPaid >= ft.total_amount ? 'paid' : 'partial';
+
+      db.prepare("UPDATE system_invoices SET paid_amount = ?, status = ? WHERE id = ?")
+        .run(newPaid, newStatus, ft.id);
+
+      db.prepare("INSERT INTO system_audit_logs (user_id, action, details) VALUES (?, ?, ?)")
+        .run(1, "Liquidação de Fatura", `Fatura ${ft.invoice_number} liquidada (Valor: Kz ${amountToPay}) com Recibo ${rc_number}`);
+
+      res.json({ success: true, rc_number });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/admin/system/audit-logs", (req, res) => {
+    const logs = db.prepare("SELECT sal.*, u.name as user_name FROM system_audit_logs sal LEFT JOIN users u ON sal.user_id = u.id ORDER BY sal.timestamp DESC LIMIT 100").all();
+    res.json(logs);
   });
 
   app.post("/api/admin/settings", (req, res) => {
@@ -3143,10 +3662,10 @@ async function startServer() {
         ownerId: ownerId,
         module: 'FISCAL',
         actionType: 'BILLING_MODE_CHANGE',
-        severity: 'critical',
+        severity: 'CRITICAL',
         description: `Mudança de modo de faturação de ${oldMode} para ${billing_mode}`,
-        oldValue: { billing_mode: oldMode },
-        newValue: { billing_mode: billing_mode },
+        oldValues: { billing_mode: oldMode },
+        newValues: { billing_mode: billing_mode },
         req
       });
 
@@ -3158,7 +3677,7 @@ async function startServer() {
         ownerId: ownerId,
         module: 'FISCAL',
         actionType: 'BILLING_MODE_CHANGE_FAILURE',
-        severity: 'critical',
+        severity: 'CRITICAL',
         description: `Falha ao mudar modo de faturação: ${String(e)}`,
         status: 'failure',
         req
@@ -3187,8 +3706,8 @@ async function startServer() {
         module: 'PROFILE',
         actionType: 'PROFILE_UPDATE',
         description: `Perfil atualizado para ${name}`,
-        oldValue: { fiscal_regime: oldUser.fiscal_regime, name: oldUser.name },
-        newValue: { fiscal_regime, name },
+        oldValues: { fiscal_regime: oldUser.fiscal_regime, name: oldUser.name },
+        newValues: { fiscal_regime, name },
         req
       });
 
@@ -3198,10 +3717,10 @@ async function startServer() {
           ownerId: (oldUser?.role === 'owner' || oldUser?.role === 'admin') ? req.params.id : oldUser?.owner_id,
           module: 'FISCAL',
           actionType: 'FISCAL_REGIME_CHANGE',
-          severity: 'critical',
+          severity: 'CRITICAL',
           description: `Regime fiscal alterado de ${oldUser.fiscal_regime} para ${fiscal_regime}`,
-          oldValue: { fiscal_regime: oldUser.fiscal_regime },
-          newValue: { fiscal_regime },
+          oldValues: { fiscal_regime: oldUser.fiscal_regime },
+          newValues: { fiscal_regime },
           req
         });
       }
@@ -3258,7 +3777,7 @@ async function startServer() {
         ownerId,
         module: 'FISCAL',
         actionType: 'KEY_ROTATION',
-        severity: 'critical',
+        severity: 'CRITICAL',
         description: `Chave de assinatura digital rotacionada para versão ${newKey.version}`,
         entityType: 'KEY',
         entityId: String(newKey.id),
@@ -3446,16 +3965,16 @@ async function startServer() {
       const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
 
       // Break down the big stats query to avoid "Too many parameter values" if there are many establishments
-      const salesRes = db.prepare(`SELECT SUM(total_amount) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?`).get(...establishmentIds, today) as any;
-      const creditRes = db.prepare(`SELECT SUM(total_amount) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
+      const salesRes = db.prepare(`SELECT SUM(base_amount) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?`).get(...establishmentIds, today) as any;
+      const creditRes = db.prepare(`SELECT SUM(base_amount) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
       
       const countSalesRes = db.prepare(`SELECT COUNT(*) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?`).get(...establishmentIds, today) as any;
       const countCreditRes = db.prepare(`SELECT COUNT(*) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
 
       const expenseRes = db.prepare(`SELECT SUM(amount) as total FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND date(date) = ?`).get(...establishmentIds, today) as any;
 
-      const monthlySalesRes = db.prepare(`SELECT SUM(total_amount) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ?`).get(...establishmentIds, monthStart) as any;
-      const monthlyCreditRes = db.prepare(`SELECT SUM(total_amount) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) >= ?`).get(...establishmentIds, monthStart) as any;
+      const monthlySalesRes = db.prepare(`SELECT SUM(base_amount) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ?`).get(...establishmentIds, monthStart) as any;
+      const monthlyCreditRes = db.prepare(`SELECT SUM(base_amount) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) >= ?`).get(...establishmentIds, monthStart) as any;
 
       const todaySales = (salesRes?.total || 0) + (creditRes?.total || 0);
       const todayCount = (countSalesRes?.total || 0) + (countCreditRes?.total || 0);
@@ -3508,12 +4027,12 @@ async function startServer() {
 
       const salesByDay = db.prepare(`
         SELECT day, SUM(total) as total FROM (
-          SELECT date(timestamp) as day, SUM(total_amount) as total
+          SELECT date(timestamp) as day, SUM(base_amount) as total
           FROM transactions
           WHERE establishment_id IN (${placeholders}) AND timestamp >= date('now', '-7 days')
           GROUP BY day
           UNION ALL
-          SELECT date(invoice_date) as day, SUM(-total_amount) as total
+          SELECT date(invoice_date) as day, SUM(-base_amount) as total
           FROM credit_invoices
           WHERE establishment_id IN (${placeholders}) AND invoice_date >= date('now', '-7 days') AND doc_type = 'NC'
           GROUP BY day
@@ -3524,13 +4043,13 @@ async function startServer() {
 
       const salesByEstablishment = db.prepare(`
         SELECT name, SUM(total) as total FROM (
-          SELECT s.name, SUM(t.total_amount) as total
+          SELECT s.name, SUM(t.base_amount) as total
           FROM transactions t
           JOIN establishments s ON t.establishment_id = s.id
           WHERE s.owner_id = ?
           GROUP BY s.id
           UNION ALL
-          SELECT s.name, SUM(-ci.total_amount) as total
+          SELECT s.name, SUM(-ci.base_amount) as total
           FROM credit_invoices ci
           JOIN establishments s ON ci.establishment_id = s.id
           WHERE s.owner_id = ? AND ci.doc_type = 'NC'
@@ -3542,12 +4061,12 @@ async function startServer() {
 
       const paymentMethods = db.prepare(`
         SELECT name, SUM(value) as value FROM (
-          SELECT payment_method as name, SUM(total_amount) as value
+          SELECT payment_method as name, SUM(base_amount) as value
           FROM transactions
           WHERE establishment_id IN (${placeholders})
           GROUP BY payment_method
           UNION ALL
-          SELECT payment_method as name, SUM(-total_amount) as value
+          SELECT payment_method as name, SUM(-base_amount) as value
           FROM credit_invoices
           WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'
           GROUP BY payment_method
@@ -3585,7 +4104,7 @@ async function startServer() {
       const establishments = db.prepare(`
         SELECT e.*, 
           (SELECT count(*) FROM staff st WHERE st.establishment_id = e.id) as staff_count,
-          (SELECT SUM(total_amount) FROM transactions t WHERE t.establishment_id = e.id AND date(t.timestamp) = date('now')) as today_sales
+          (SELECT SUM(base_amount) FROM transactions t WHERE t.establishment_id = e.id AND date(t.timestamp) = date('now')) as today_sales
         FROM establishments e 
         WHERE e.id IN (${placeholders})
       `).all(...establishmentIds) as any[];
@@ -4286,7 +4805,7 @@ async function startServer() {
         ownerId: owner_id,
         module: 'FISCAL',
         actionType: 'SAFT_GENERATION',
-        severity: 'info',
+        severity: 'INFO',
         description: `Arquivo SAFT gerado por ${user_name}: ${fileName}`,
         entityType: 'FILE',
         entityId: fileName,
@@ -4766,9 +5285,9 @@ async function startServer() {
       // Breakdown queries for stability
       const countTrans = db.prepare("SELECT COUNT(*) as count FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
       const countCredit = db.prepare("SELECT COUNT(*) as count FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
-      const totalTrans = db.prepare("SELECT SUM(total_amount) as total FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
-      const totalCredit = db.prepare("SELECT SUM(total_amount) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
-      const totalNC = db.prepare("SELECT SUM(total_amount) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type = 'NC'").get(establishmentId, today) as any;
+      const totalTrans = db.prepare("SELECT SUM(base_amount) as total FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
+      const totalCredit = db.prepare("SELECT SUM(base_amount) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
+      const totalNC = db.prepare("SELECT SUM(base_amount) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type = 'NC'").get(establishmentId, today) as any;
       const sellers = db.prepare("SELECT COUNT(DISTINCT seller_id) as count FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
 
       const stats = {
@@ -5302,11 +5821,11 @@ async function startServer() {
         ownerId: employee?.owner_id,
         module: 'HR',
         actionType: 'EMPLOYEE_DELETE',
-        severity: 'warning',
+        severity: 'WARNING',
         description: `Funcionário removido: ${employee?.name || employeeId}`,
         entityType: 'USER',
         entityId: employeeId,
-        oldValue: employee,
+        oldValues: employee,
         req
       });
 
@@ -5807,6 +6326,119 @@ async function startServer() {
     });
     transaction();
     res.json({ success: true });
+  });
+
+  // --- MULTI-CURRENCY ROUTES ---
+
+  app.get("/api/owner/currencies/:ownerId", (req, res) => {
+    const currencies = db.prepare("SELECT * FROM currencies WHERE owner_id = ?").all(req.params.ownerId);
+    res.json(currencies);
+  });
+
+  app.post("/api/owner/currencies", (req, res) => {
+    const { owner_id, code, symbol, name, is_base } = req.body;
+    try {
+      if (is_base) {
+        db.prepare("UPDATE currencies SET is_base = 0 WHERE owner_id = ?").run(owner_id);
+      }
+      
+      const info = db.prepare(`
+        INSERT INTO currencies (owner_id, code, symbol, name, is_base) 
+        VALUES (?, ?, ?, ?, ?)
+      `).run(owner_id, code, symbol, name, is_base ? 1 : 0);
+
+      logAction({
+        ownerId: owner_id,
+        module: 'CONFIG',
+        actionType: 'CREATE_CURRENCY',
+        severity: 'INFO',
+        description: `Nova moeda cadastrada: ${code}`,
+        entityType: 'CURRENCY',
+        entityId: Number(info.lastInsertRowid),
+        newValues: req.body,
+        req
+      });
+
+      res.json({ success: true, id: Number(info.lastInsertRowid) });
+    } catch (e) {
+      res.status(400).json({ error: "Erro ao cadastrar moeda (possível código duplicado)." });
+    }
+  });
+
+  app.put("/api/owner/currencies/:id", (req, res) => {
+    const { code, symbol, name, is_base, owner_id } = req.body;
+    const old = db.prepare("SELECT * FROM currencies WHERE id = ?").get(req.params.id) as any;
+    
+    if (is_base) {
+      db.prepare("UPDATE currencies SET is_base = 0 WHERE owner_id = ?").run(owner_id);
+    }
+    
+    db.prepare(`
+      UPDATE currencies SET code = ?, symbol = ?, name = ?, is_base = ? 
+      WHERE id = ?
+    `).run(code, symbol, name, is_base ? 1 : 0, req.params.id);
+
+    logAction({
+      ownerId: owner_id,
+      module: 'CONFIG',
+      actionType: 'UPDATE_CURRENCY',
+      severity: 'INFO',
+      description: `Moeda atualizada: ${code}`,
+      entityType: 'CURRENCY',
+      entityId: Number(req.params.id),
+      oldValues: old,
+      newValues: req.body,
+      req
+    });
+
+    res.json({ success: true });
+  });
+
+  app.get("/api/owner/exchange-rates/:ownerId", (req, res) => {
+    const rates = db.prepare(`
+      SELECT r.*, c.code, c.symbol 
+      FROM exchange_rates r 
+      JOIN currencies c ON r.currency_id = c.id 
+      WHERE r.owner_id = ? 
+      ORDER BY r.rate_date DESC, r.created_at DESC
+    `).all(req.params.ownerId);
+    res.json(rates);
+  });
+
+  app.post("/api/owner/exchange-rates", (req, res) => {
+    const { owner_id, currency_id, rate, rate_date, created_by } = req.body;
+    
+    const info = db.prepare(`
+      INSERT INTO exchange_rates (owner_id, currency_id, rate, rate_date, created_by) 
+      VALUES (?, ?, ?, ?, ?)
+    `).run(owner_id, currency_id, rate, rate_date, created_by);
+
+    const currency = db.prepare("SELECT code FROM currencies WHERE id = ?").get(currency_id) as any;
+
+    logAction({
+      userId: created_by,
+      ownerId: owner_id,
+      module: 'FINANCE',
+      actionType: 'UPDATE_EXCHANGE_RATE',
+      severity: 'WARNING',
+      description: `Nova taxa de câmbio para ${currency?.code}: ${rate} (Data: ${rate_date})`,
+      entityType: 'EXCHANGE_RATE',
+      entityId: Number(info.lastInsertRowid),
+      newValues: req.body,
+      req
+    });
+
+    res.json({ success: true, id: Number(info.lastInsertRowid) });
+  });
+
+  app.get("/api/owner/exchange-rates/latest/:ownerId/:currencyId", (req, res) => {
+    const rate = db.prepare(`
+      SELECT * FROM exchange_rates 
+      WHERE owner_id = ? AND currency_id = ? 
+      ORDER BY rate_date DESC, created_at DESC 
+      LIMIT 1
+    `).get(req.params.ownerId, req.params.currencyId);
+    res.json(rate || { rate: 1 });
   });
 
   app.post("/api/admin/establishments/toggle-license", (req, res) => {
@@ -6665,13 +7297,13 @@ async function startServer() {
   app.get("/api/seller/dashboard-stats/:sellerId", (req, res) => {
     const sellerId = req.params.sellerId;
     const today = db.prepare(`
-      SELECT SUM(total_amount) as total 
+      SELECT SUM(base_amount) as total 
       FROM transactions 
       WHERE seller_id = ? AND date(timestamp) = date('now')
     `).get(sellerId) as any;
     
     const last7Days = db.prepare(`
-      SELECT SUM(total_amount) as total 
+      SELECT SUM(base_amount) as total 
       FROM transactions 
       WHERE seller_id = ? AND timestamp >= date('now', '-7 days')
     `).get(sellerId) as any;
@@ -6756,10 +7388,27 @@ async function startServer() {
     if (!session) return res.json(null);
 
     // Calculate current totals for this session across the establishment
-    const sales = db.prepare(`
-      SELECT SUM(total_amount) as total 
+    // 1. POS Sales (base_amount)
+    const salesPos = db.prepare(`
+      SELECT SUM(base_amount) as total 
       FROM transactions 
       WHERE establishment_id = ? AND timestamp >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+    `).get(session.establishment_id, session.opening_time, session.cash_register_id) as any;
+
+    // 2. Formal Sales (FR/VD/FT/ND/RC)
+    const salesFormal = db.prepare(`
+      SELECT SUM(base_amount) as total 
+      FROM credit_invoices 
+      WHERE establishment_id = ? AND invoice_date >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+      AND doc_type IN ('FR', 'VD', 'FT', 'ND', 'RC')
+    `).get(session.establishment_id, session.opening_time, session.cash_register_id) as any;
+
+    // 3. Refunds (NC)
+    const refunds = db.prepare(`
+      SELECT SUM(base_amount) as total 
+      FROM credit_invoices 
+      WHERE establishment_id = ? AND invoice_date >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+      AND doc_type = 'NC'
     `).get(session.establishment_id, session.opening_time, session.cash_register_id) as any;
 
     const cashIn = db.prepare(`
@@ -6774,13 +7423,15 @@ async function startServer() {
       WHERE establishment_id = ? AND type = 'out' AND timestamp >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
     `).get(session.establishment_id, session.opening_time, session.cash_register_id) as any;
 
+    const totalSales = (salesPos?.total || 0) + (salesFormal?.total || 0);
+
     res.json({
       ...session,
       totals: {
-        sales: sales?.total || 0,
+        sales: totalSales,
         in: cashIn?.total || 0,
-        out: cashOut?.total || 0,
-        expected: (session.opening_amount + (sales?.total || 0) + (cashIn?.total || 0)) - (cashOut?.total || 0)
+        out: (cashOut?.total || 0) + (refunds?.total || 0),
+        expected: (session.opening_amount + totalSales + (cashIn?.total || 0)) - ((cashOut?.total || 0) + (refunds?.total || 0))
       }
     });
   });
@@ -6808,8 +7459,24 @@ async function startServer() {
       return res.status(400).json({ error: "Este caixa já possui uma sessão aberta por outro funcionário." });
     }
 
-    db.prepare("INSERT INTO cashier_sessions (establishment_id, seller_id, opening_amount, cash_register_id) VALUES (?, ?, ?, ?)").run(establishment_id, seller_id, opening_amount, cash_register_id);
-    res.json({ success: true });
+    const info = db.prepare("INSERT INTO cashier_sessions (establishment_id, seller_id, opening_amount, cash_register_id) VALUES (?, ?, ?, ?)").run(establishment_id, seller_id, opening_amount, cash_register_id);
+    
+    const est = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
+    logAction({
+      userId: seller_id,
+      ownerId: est?.owner_id,
+      establishmentId: establishment_id,
+      module: 'FINANCE',
+      actionType: 'OPEN_CASHIER',
+      severity: 'INFO',
+      description: `Caixa aberto com valor inicial de Kz ${opening_amount}`,
+      entityType: 'CASHIER_SESSION',
+      entityId: Number(info.lastInsertRowid),
+      newValues: { opening_amount, cash_register_id },
+      req
+    });
+
+    res.json({ success: true, id: info.lastInsertRowid });
   });
 
   app.post("/api/seller/close-session", (req, res) => {
@@ -6820,15 +7487,31 @@ async function startServer() {
       return res.status(403).json({ error: "Você não tem permissão para fechar o caixa." });
     }
 
+    const session = db.prepare("SELECT * FROM cashier_sessions WHERE id = ?").get(session_id) as any;
+    if (!session) return res.status(404).json({ error: "Sessão não encontrada." });
+
     // If closing_amount is 0 or not provided, calculate it from transactions
     if (!closing_amount || closing_amount === 0) {
-      const session = db.prepare("SELECT * FROM cashier_sessions WHERE id = ?").get(session_id) as any;
       if (session) {
         // Sum cash sales from transactions
-        const sales = db.prepare(`
-          SELECT SUM(total_amount) as total 
+        const salesPos = db.prepare(`
+          SELECT SUM(base_amount) as total 
           FROM transactions 
           WHERE establishment_id = ? AND timestamp >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+        `).get(session.establishment_id, session.opening_time, session.cash_register_id) as any;
+
+        const salesFormal = db.prepare(`
+          SELECT SUM(base_amount) as total 
+          FROM credit_invoices 
+          WHERE establishment_id = ? AND invoice_date >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+          AND doc_type IN ('FR', 'VD', 'FT', 'ND', 'RC')
+        `).get(session.establishment_id, session.opening_time, session.cash_register_id) as any;
+
+        const refunds = db.prepare(`
+          SELECT SUM(base_amount) as total 
+          FROM credit_invoices 
+          WHERE establishment_id = ? AND invoice_date >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+          AND doc_type = 'NC'
         `).get(session.establishment_id, session.opening_time, session.cash_register_id) as any;
         
         const movements = db.prepare(`
@@ -6837,7 +7520,7 @@ async function startServer() {
           WHERE establishment_id = ? AND timestamp >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
         `).get(session.establishment_id, session.opening_time, session.cash_register_id) as any;
 
-        closing_amount = (session.opening_amount || 0) + (sales?.total || 0) + (movements?.total || 0);
+        closing_amount = (session.opening_amount || 0) + (salesPos?.total || 0) + (salesFormal?.total || 0) + (movements?.total || 0) - (refunds?.total || 0);
       }
     }
 
@@ -6846,6 +7529,23 @@ async function startServer() {
       SET physical_amount = ?, closing_amount = ?, closing_time = CURRENT_TIMESTAMP, status = 'closed' 
       WHERE id = ?
     `).run(physical_amount, closing_amount || 0, session_id);
+    
+    const est = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(session.establishment_id) as any;
+    logAction({
+      userId: seller_id,
+      ownerId: est?.owner_id,
+      establishmentId: session.establishment_id,
+      module: 'FINANCE',
+      actionType: 'CLOSE_CASHIER',
+      severity: 'INFO',
+      description: `Caixa fechado. Esperado: Kz ${closing_amount} | Físico: Kz ${physical_amount}`,
+      entityType: 'CASHIER_SESSION',
+      entityId: session_id,
+      oldValues: session,
+      newValues: { physical_amount, closing_amount, status: 'closed' },
+      req
+    });
+
     res.json({ success: true });
   });
 
@@ -6957,7 +7657,7 @@ async function startServer() {
   });
 
   app.post("/api/owner/proforma", (req, res) => {
-    const { establishment_id, owner_id, client_name = 'Consumidor Final', client_nif, client_address, total_amount, items } = req.body;
+    const { establishment_id, owner_id, client_name = 'Consumidor Final', client_nif, client_address, total_amount, items, cash_register_id } = req.body;
     try {
       // Get Billing Mode and Series
       const establishmentData = db.prepare("SELECT owner_id, bank_accounts FROM establishments WHERE id = ?").get(establishment_id) as any;
@@ -7013,11 +7713,11 @@ async function startServer() {
 
       const result = db.prepare(`
         INSERT INTO proforma_invoices (
-          establishment_id, owner_id, client_name, client_nif, client_address, total_amount, items, bank_accounts, invoice_number,
+          establishment_id, owner_id, cash_register_id, client_name, client_nif, client_address, total_amount, items, bank_accounts, invoice_number,
           hash, signature, prev_signature, key_version_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        establishment_id, owner_id, client_name, client_nif, client_address, total_amount, JSON.stringify(items), bank_accounts, invoice_number,
+        establishment_id, owner_id, cash_register_id || null, client_name, client_nif, client_address, total_amount, JSON.stringify(items), bank_accounts, invoice_number,
         signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.keyVersionId
       );
       
@@ -7046,8 +7746,11 @@ async function startServer() {
       doc_type, series: providedSeries, invoice_number: providedNumber, invoice_date, 
       currency, total_amount, tax_amount, items, seller_id,
       payment_method, parent_invoice_id, reason, note_category,
-      adjustment_amount, observations
+      adjustment_amount, observations, exchange_rate, cash_register_id
     } = req.body;
+
+    const rateToSave = exchange_rate || 1.0;
+    const base_amount = total_amount * rateToSave;
 
     console.log("Creating credit invoice request:", { establishment_id, doc_type, items_count: items?.length });
 
@@ -7109,17 +7812,19 @@ async function startServer() {
           INSERT INTO credit_invoices (
             establishment_id, owner_id, client_nif, client_name, address, country, 
             doc_type, series, invoice_number, invoice_date, 
-            currency, total_amount, tax_amount, items, seller_id,
+            currency, total_amount, tax_amount, items, seller_id, cash_register_id,
             payment_method, parent_invoice_id, reason, note_category,
             adjustment_amount, observations, due_date, service_designation,
+            exchange_rate, base_amount,
             hash, signature, prev_signature, key_version_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           establishment_id, establishment.owner_id, client_nif, client_name, address, country, 
           doc_type, finalSeries, finalNumber, invoice_date, 
-          currency, total_amount, tax_amount, JSON.stringify(items), seller_id || null,
+          currency, total_amount, tax_amount, JSON.stringify(items), seller_id || null, cash_register_id || null,
           payment_method || 'cash', parent_invoice_id || null, reason || null, 
           note_category || null, adjustment_amount || 0, observations || null, req.body.due_date || null, req.body.service_designation || null,
+          rateToSave, base_amount,
           signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.keyVersionId
         );
 
@@ -7165,18 +7870,20 @@ async function startServer() {
               // This ensures that the user sees the refund in the Saídas section
               const isNC = doc_type === 'NC';
               const finType = isNC ? 'expense' : 'income';
-              const finAmount = total_amount; // Always positive amount, type determines direction
+              const finAmount = base_amount; // Use the converted base amount in Kz
               const finCategory = isNC ? 'Nota de Crédito (Saída)' : 
                                   doc_type === 'RC' ? 'Recibo de Pagamento (FT)' : 'Venda Faturada';
               
               db.prepare(`
                 INSERT INTO financial_transactions (
-                  establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paid', ?)
+                  establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id,
+                  currency_code, exchange_rate, base_amount
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paid', ?, ?, ?, ?)
               `).run(
                 establishment_id, establishment.owner_id, finType, finCategory, finAmount, payment_method || 'cash',
-                `${finCategory} - Documento ${finalNumber}${parent_invoice_id ? ' (Ref: ' + parent_invoice_id + ')' : ''}`, 
-                new Date().toISOString(), invoiceId
+                `${finCategory} - Documento ${finalNumber}${parent_invoice_id ? ' (Ref: ' + parent_invoice_id + ')' : ''} (${currency} ${total_amount})`, 
+                new Date().toISOString(), invoiceId,
+                currency, rateToSave, base_amount
               );
             }
           } catch (finError) {
