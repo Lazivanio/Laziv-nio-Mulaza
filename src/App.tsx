@@ -1814,7 +1814,15 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                           ))
                         )}
                         <button 
-                          onClick={() => setIsSystemPaymentModalOpen(true)}
+                          onClick={() => {
+                            setSystemPaymentFormData({
+                              owner_id: '',
+                              payment_method: 'bank_transfer',
+                              payments: [],
+                              total_amount: 0
+                            });
+                            setIsSystemPaymentModalOpen(true);
+                          }}
                           className="w-full py-3 bg-black text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-all flex items-center justify-center gap-2 shadow-lg shadow-black/10"
                         >
                           <CreditCard size={18} /> Liquidar Dívidas
@@ -4171,6 +4179,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [creditInvoices, setCreditInvoices] = useState<any[]>([]);
   const [cancellationRequests, setCancellationRequests] = useState<any[]>([]);
+  const [currencies, setCurrencies] = useState<any[]>([]);
   const [isCreditInvoiceModalOpen, setIsCreditInvoiceModalOpen] = useState(false);
   const [isInvoiceTypeModalOpen, setIsInvoiceTypeModalOpen] = useState(false);
   const [invoiceModalMode, setInvoiceModalMode] = useState<'invoice' | 'note'>('invoice');
@@ -4415,6 +4424,9 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     fetch(`/api/owner/cancellation-requests/${user.id}`)
       .then(res => res.json())
       .then(setCancellationRequests).catch(() => {});
+    fetch(`/api/owner/currencies/${user.id}`)
+      .then(res => res.json())
+      .then(setCurrencies).catch(() => {});
   };
 
   useEffect(fetchData, [establishmentId]);
@@ -6634,6 +6646,10 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                 <div className="flex gap-2">
                   <button 
                     onClick={() => {
+                      if (currencies.length === 0) {
+                        alert('Por favor, cadastre pelo menos uma moeda nas configurações antes de emitir faturas.');
+                        return;
+                      }
                       setInvoiceModalMode('invoice');
                       setIsInvoiceTypeModalOpen(true);
                     }}
@@ -6643,6 +6659,10 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                   </button>
                   <button 
                     onClick={() => {
+                      if (currencies.length === 0) {
+                        alert('Por favor, cadastre pelo menos uma moeda nas configurações antes de emitir notas.');
+                        return;
+                      }
                       setInvoiceModalMode('note');
                       setIsInvoiceTypeModalOpen(true);
                     }}
@@ -9067,13 +9087,13 @@ const Invoice = ({ sale, establishment, user }: { sale: any, establishment: any,
 
   return (
     <div className="space-y-4">
-      <div ref={invoiceRef} className="bg-white p-4 max-w-[280px] mx-auto shadow-sm border border-zinc-100 rounded-lg invoice-print font-mono text-zinc-900">
-          <div className="text-center mb-2 border-b-2 border-dashed border-orange-500 pb-2">
+      <div ref={invoiceRef} className="bg-white p-4 max-w-[280px] mx-auto shadow-sm border border-zinc-200 rounded-lg invoice-print font-mono text-black">
+          <div className="text-center mb-2 border-b-2 border-dashed border-zinc-900 pb-2">
           {establishment.logo_url && (
             <img src={establishment.logo_url || undefined} alt="" className="w-10 h-10 mx-auto mb-1 object-contain grayscale" referrerPolicy="no-referrer" />
           )}
-          <h2 className="text-base font-black uppercase tracking-tight text-orange-600">{establishment.name}</h2>
-          <h1 className="text-[10px] font-black text-orange-400 uppercase tracking-[0.2em] mt-0.5">
+          <h2 className="text-base font-black uppercase tracking-tight text-black">{establishment.name}</h2>
+          <h1 className="text-[10px] font-black text-black uppercase tracking-[0.2em] mt-0.5">
             {sale.doc_type === 'FR' ? 'Fatura Recibo' : 
              sale.doc_type === 'FT' ? 'Fatura Crédito' : 
              sale.doc_type === 'RC' ? 'Recibo' :
@@ -9081,18 +9101,18 @@ const Invoice = ({ sale, establishment, user }: { sale: any, establishment: any,
              sale.doc_type === 'ND' ? 'Nota de Débito' :
              'Fatura Recibo'}
           </h1>
-          <p className="text-[8px] leading-tight text-zinc-500 mb-0.5 mt-0.5">{establishment.address}</p>
+          <p className="text-[8px] leading-tight text-black mb-0.5 mt-0.5">{establishment.address}</p>
           <div className="text-[7px] font-bold flex flex-wrap justify-center gap-x-2">
-            <span className="text-orange-600">NIF: {establishment.nif}</span>
+            <span className="text-black">NIF: {establishment.nif}</span>
             <span>TEL: {establishment.phone}</span>
             {establishment.establishment_code && <span>CÓD. ESTAB: {establishment.establishment_code}</span>}
           </div>
         </div>
 
-        <div className="space-y-0.5 mb-2 text-[8px] text-zinc-600">
+        <div className="space-y-0.5 mb-2 text-[8px] text-black">
           <div className="flex justify-between">
             <span>Nº DOCUMENTO:</span>
-            <span className="font-bold text-orange-600">{sale.invoice_number}</span>
+            <span className="font-bold text-black">{sale.invoice_number}</span>
           </div>
           <div className="flex justify-between">
             <span>DATA/HORA:</span>
@@ -9102,55 +9122,55 @@ const Invoice = ({ sale, establishment, user }: { sale: any, establishment: any,
             <span>OPERADOR:</span>
             <span>{user.name.toUpperCase()}</span>
           </div>
-          <div className="mt-1 pt-1 border-t border-dashed border-orange-200">
+          <div className="mt-1 pt-1 border-t border-dashed border-zinc-400">
             <div className="flex justify-between">
               <span>CLIENTE:</span>
-              <span className="font-bold truncate max-w-[140px] text-orange-600">{sale.client_name.toUpperCase()}</span>
+              <span className="font-bold truncate max-w-[140px] text-black">{sale.client_name.toUpperCase()}</span>
             </div>
             <div className="flex justify-between">
               <span>NIF CLIENTE:</span>
               <span>{sale.client_nif}</span>
             </div>
             {sale.parent_invoice_id && (
-              <div className="mt-1 pt-1 border-t border-dashed border-orange-200 flex justify-between">
+              <div className="mt-1 pt-1 border-t border-dashed border-zinc-400 flex justify-between">
                 <span>DOC. REF:</span>
-                <span className="font-bold text-orange-600">{sale.parent_invoice_id}</span>
+                <span className="font-bold text-black">{sale.parent_invoice_id}</span>
               </div>
             )}
           </div>
         </div>
 
-        <div className="border-y-2 border-dashed border-zinc-200 py-1 mb-2">
+        <div className="border-y-2 border-dashed border-zinc-400 py-1 mb-2">
           <table className="w-full text-[9px]">
             <thead>
-              <tr className="text-left border-b border-zinc-100">
+              <tr className="text-left border-b border-zinc-200">
                 <th className="pb-0.5">ARTIGO</th>
                 <th className="pb-0.5 text-center">QTD</th>
                 <th className="pb-0.5 text-right">TOTAL</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-50">
+            <tbody className="divide-y divide-zinc-100">
               {sale.items.map((item: any, idx: number) => (
                 <tr key={`thermal-item-${item.id || item.product_id}-${idx}`}>
                   <td className="py-1 leading-tight">
-                    <p className="font-bold truncate max-w-[160px]">{item.name.toUpperCase()}</p>
-                    <p className="text-[7px] text-zinc-500">{item.price.toLocaleString()} x {item.quantity}</p>
+                    <p className="font-black truncate max-w-[160px]">{item.name.toUpperCase()}</p>
+                    <p className="text-[7px] text-black italic">{item.price.toLocaleString()} x {item.quantity}</p>
                   </td>
                   <td className="py-1 text-center align-top">{item.quantity}</td>
-                  <td className="py-1 text-right align-top font-bold">{(item.price * item.quantity).toLocaleString()}</td>
+                  <td className="py-1 text-right align-top font-black">{(item.price * item.quantity).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
 
-        <div className="space-y-0.5 text-[9px] pt-0.5">
+        <div className="space-y-0.5 text-[9px] pt-0.5 text-black">
           <div className="flex justify-between">
             <span>SUBTOTAL</span>
             <span>{sale.currency_code || 'Kz'} {(sale.total_amount - sale.tax_amount + (sale.discount_amount || 0)).toLocaleString()}</span>
           </div>
           {sale.discount_amount > 0 && (
-            <div className="flex justify-between text-rose-600">
+            <div className="flex justify-between font-bold">
               <span>DESCONTO</span>
               <span>- {sale.currency_code || 'Kz'} {sale.discount_amount.toLocaleString()}</span>
             </div>
@@ -9160,15 +9180,15 @@ const Invoice = ({ sale, establishment, user }: { sale: any, establishment: any,
             <span>{sale.currency_code || 'Kz'} {sale.tax_amount.toLocaleString()}</span>
           </div>
           {user.fiscal_regime === 'exclusao' && (
-            <p className="text-[7px] text-zinc-500 italic mt-0.5">Isento nos termos do regime de exclusão</p>
+            <p className="text-[7px] text-black italic mt-0.5">Isento nos termos do regime de exclusão</p>
           )}
-          <div className="flex justify-between text-sm font-black pt-1 border-t-2 border-dashed border-zinc-900 mt-1">
+          <div className="flex justify-between text-sm font-black pt-1 border-t-2 border-dashed border-black mt-1">
             <span>TOTAL ({sale.currency_code || 'Kz'})</span>
             <span>{sale.currency_code || 'Kz'} {sale.total_amount.toLocaleString()}</span>
           </div>
 
           {sale.currency_code && sale.currency_code !== 'Kz' && (
-            <div className="flex justify-between text-[10px] font-bold text-zinc-600 mt-1">
+            <div className="flex justify-between text-[10px] font-black text-black mt-1 py-1 border-y border-dashed border-black/10">
               <span>EQUIV. BASE (Kz)</span>
               <span>Kz {(sale.total_amount * (sale.exchange_rate || 1)).toLocaleString()}</span>
             </div>
@@ -9176,11 +9196,12 @@ const Invoice = ({ sale, establishment, user }: { sale: any, establishment: any,
           
           {qrCode && sale.billing_mode === 'eletronica' && (
             <div className="mt-4 flex flex-col items-center gap-1">
-              <img src={qrCode} alt="QR Code AGT" className="w-20 h-20" />
-              <p className="text-[6px] text-zinc-400 font-bold uppercase">Código QR AGT - Faturação Eletrónica</p>
+              <img src={qrCode} alt="QR Code AGT" className="w-20 h-20 grayscale" />
+              <p className="text-[6px] text-black font-black uppercase">Código QR AGT - Faturação Eletrónica</p>
             </div>
           )}
         </div>
+
 
         <div className="mt-4 text-center space-y-2">
           <div className="py-1 border-y border-zinc-100">
@@ -9513,30 +9534,35 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
 
   const [totalInSelectedCurrency, setTotalInSelectedCurrency] = useState(0);
 
-
   useEffect(() => {
-    if (selectedCurrencyCode && availableCurrencies.length > 0) {
-      const currency = availableCurrencies.find(c => c.code === selectedCurrencyCode);
-      if (currency) {
-        if (currency.is_base) {
-          setCurrentExchangeRate(1.0);
-          setTotalInSelectedCurrency(total);
-        } else {
-          const ownerId = user.role === 'owner' ? user.id : user.owner_id;
-          fetch(`/api/owner/exchange-rates/latest/${ownerId}/${currency.id}`)
-            .then(res => res.json())
-            .then(data => {
-              const rate = data.rate || 1.0;
-              setCurrentExchangeRate(rate);
-              // If base is Kz and we select USD (rate 850), then USD amount = Kz / 850
-              setTotalInSelectedCurrency(Math.round((total / rate) * 100) / 100);
-            })
-            .catch(() => {
-              setCurrentExchangeRate(1.0);
-              setTotalInSelectedCurrency(total);
-            });
-        }
+    if (availableCurrencies.length === 0) {
+      setTotalInSelectedCurrency(total);
+      setCurrentExchangeRate(1.0);
+      return;
+    }
+
+    const currency = availableCurrencies.find(c => c.code === selectedCurrencyCode);
+    if (currency) {
+      if (currency.is_base) {
+        setCurrentExchangeRate(1.0);
+        setTotalInSelectedCurrency(total);
+      } else {
+        const ownerId = user.role === 'owner' ? user.id : user.owner_id;
+        fetch(`/api/owner/exchange-rates/latest/${ownerId}/${currency.id}`)
+          .then(res => res.json())
+          .then(data => {
+            const rate = data.rate || 1.0;
+            setCurrentExchangeRate(rate);
+            setTotalInSelectedCurrency(Math.round((total / rate) * 100) / 100);
+          })
+          .catch(() => {
+            setCurrentExchangeRate(1.0);
+            setTotalInSelectedCurrency(total);
+          });
       }
+    } else {
+      setTotalInSelectedCurrency(total);
+      setCurrentExchangeRate(1.0);
     }
   }, [selectedCurrencyCode, availableCurrencies, total]);
 
@@ -9875,6 +9901,11 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const finalizeSale = async () => {
     if (cart.length === 0 || !establishmentInfo) {
       alert('O carrinho está vazio ou informações do estabelecimento não carregadas!');
+      return;
+    }
+
+    if (availableCurrencies.length === 0) {
+      alert('Não é possível realizar vendas sem moedas cadastradas no sistema. Por favor, cadastre uma moeda nas configurações do proprietário.');
       return;
     }
 

@@ -402,19 +402,33 @@ function runStartupMigrations() {
     // Fix legacy plan names and duplicates
     try {
       db.prepare("UPDATE licenses SET plan_type = 'Empresarial' WHERE plan_type = 'enterprise'").run();
-      db.prepare("UPDATE licenses SET plan_type = 'Profissional' WHERE plan_type = 'professional'").run();
+      db.prepare("UPDATE licenses SET plan_type = 'Profissional' WHERE plan_type IN ('professional', 'pro')").run();
+      db.prepare("UPDATE licenses SET plan_type = 'Básico' WHERE plan_type IN ('basic', 'standard')").run();
       
-      // Deactivate duplicates: Keep only the one with furthest expiry date for each USER
-      const activeLicsPerUser = db.prepare("SELECT user_id, COUNT(*) as count FROM licenses WHERE status = 'active' GROUP BY user_id HAVING count > 1").all() as any[];
-      for (const group of activeLicsPerUser) {
-        const licensesInGroup = db.prepare(`SELECT id FROM licenses WHERE user_id = ? AND status = 'active' ORDER BY expiry_date DESC`).all(group.user_id) as any[];
+      // Deactivate duplicates: Keep only the one with furthest expiry date for each USER/ESTABLISHMENT combination
+      const activeLicsPerTarget = db.prepare(`
+        SELECT user_id, establishment_id, COUNT(*) as count 
+        FROM licenses 
+        WHERE status = 'active' 
+        GROUP BY user_id, establishment_id 
+        HAVING count > 1
+      `).all() as any[];
+
+      for (const group of activeLicsPerTarget) {
+        const licensesInGroup = db.prepare(`
+          SELECT id FROM licenses 
+          WHERE user_id = ? 
+          AND (establishment_id = ? OR (establishment_id IS NULL AND ? IS NULL))
+          AND status = 'active' 
+          ORDER BY expiry_date DESC
+        `).all(group.user_id, group.establishment_id, group.establishment_id) as any[];
         
         // Deactivate all but the first (latest expiry)
         for (let i = 1; i < licensesInGroup.length; i++) {
           db.prepare("UPDATE licenses SET status = 'inactive' WHERE id = ?").run(licensesInGroup[i].id);
         }
       }
-      console.log("[DB] Cleaned up duplicate active licenses per user");
+      console.log("[DB] Cleaned up duplicate active licenses (scoped to user/establishment)");
     } catch (e) {
       console.error("Cleanup migration error:", e);
     }
@@ -703,6 +717,12 @@ function initializeDatabase() {
         FOREIGN KEY(requested_by) REFERENCES users(id)
       );
 
+      try {
+        db.exec("ALTER TABLE service_sheets ADD COLUMN service_id INTEGER REFERENCES services(id);");
+      } catch (e) {
+        // Column might already exist
+      }
+
       CREATE TABLE IF NOT EXISTS currencies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         owner_id INTEGER NOT NULL,
@@ -713,6 +733,22 @@ function initializeDatabase() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(owner_id, code),
         FOREIGN KEY(owner_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS service_sheets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER NOT NULL,
+        service_id INTEGER,
+        client_name TEXT NOT NULL,
+        client_nif TEXT,
+        client_address TEXT,
+        service_description TEXT NOT NULL,
+        assigned_staff TEXT,
+        scheduled_date DATETIME NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(service_id) REFERENCES services(id)
       );
 
       CREATE TABLE IF NOT EXISTS exchange_rates (
@@ -1865,28 +1901,40 @@ async function startServer() {
       }
 
       // Check for active cashier session
-      let sessionQuery = "SELECT id FROM cashier_sessions WHERE establishment_id = ? AND status = 'open'";
+      let sessionQuery = "SELECT id, cash_register_id FROM cashier_sessions WHERE establishment_id = ? AND status = 'open'";
       let sessionParams: any[] = [establishment_id];
       if (cash_register_id) {
-        sessionQuery += " AND cash_register_id = ?";
+        sessionQuery += " AND (cash_register_id = ? OR cash_register_id IS NULL)";
         sessionParams.push(cash_register_id);
       }
       const activeSession = db.prepare(sessionQuery).get(...sessionParams);
       if (!activeSession) {
+        console.warn(`[Checkout] No active session found for establishment ${establishment_id}${cash_register_id ? ' and register ' + cash_register_id : ''}`);
         return res.status(403).json({ error: "O caixa deve estar aberto para realizar vendas." });
       }
       
       // Get Billing Mode and Series
-      const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
+      const establishment = db.prepare("SELECT * FROM establishments WHERE id = ?").get(establishment_id) as any;
       if (!establishment) {
+        console.error(`[Checkout] Establishment ${establishment_id} not found`);
         return res.status(404).json({ error: "Estabelecimento não encontrado." });
       }
       const ownerId = establishment.owner_id;
+
+      // Check if owner has at least one currency registered
+      const currencyCount = db.prepare("SELECT COUNT(*) as count FROM currencies WHERE owner_id = ?").get(ownerId) as any;
+      if (!currencyCount || currencyCount.count === 0) {
+        console.warn(`[Checkout] Blocked sale: No currencies registered for owner ${ownerId}`);
+        return res.status(400).json({ error: "O proprietário deve cadastrar pelo menos uma moeda antes de realizar vendas." });
+      }
+
       const owner = db.prepare("SELECT billing_mode FROM users WHERE id = ?").get(ownerId) as any;
       const billing_mode = (owner?.billing_mode === 'eletronica') ? 'eletronica' : 'tradicional';
       const seriesPrefix = billing_mode === 'eletronica' ? 'E' : 'A';
       
-        // Find active series for this establishment, prefix and type FR (Fatura Recibo)
+      console.log(`[Checkout] Billing Mode: ${billing_mode}, Prefix: ${seriesPrefix}`);
+
+      // Find active series for this establishment, prefix and type FR (Fatura Recibo)
       let series = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = ? AND type = 'FR' AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id, seriesPrefix) as any;
       
       if (!series && billing_mode === 'tradicional') {
@@ -1916,8 +1964,9 @@ async function startServer() {
 
       const year = new Date().getFullYear();
       const nextNumber = Math.max(series.current_number + 1, series.start_number);
-      // FORCE: Use seriesPrefix to ensure it matches the billing mode exactly (A for traditional, E for electronic)
       const invoice_number = `FR ${seriesPrefix}/${year}/${nextNumber.toString().padStart(4, '0')}`;
+
+      console.log(`[Checkout] Generated Invoice Number: ${invoice_number}`);
 
       // Update series current number
       db.prepare("UPDATE invoice_series SET current_number = ? WHERE id = ?").run(nextNumber, series.id);
@@ -1925,15 +1974,13 @@ async function startServer() {
       // AGT Status Simulation
       let agt_status = 'pending';
       if (billing_mode === 'eletronica') {
-        // Simulate AGT validation
-        const isAccepted = Math.random() > 0.05; // 95% success rate
-        agt_status = isAccepted ? 'accepted' : 'rejected';
+        agt_status = 'accepted'; 
       } else {
-        agt_status = 'sent'; // In traditional mode, it's considered "sent" to the system
+        agt_status = 'sent';
       }
 
       // Digital Signature
-      const signatureData = DigitalSignatureService.signDocument(establishment.owner_id, establishment_id, {
+      const signatureData = DigitalSignatureService.signDocument(ownerId, establishment_id, {
         invoice_number,
         doc_type: 'FR',
         client_name: client_name || 'Consumidor Final',
@@ -1941,6 +1988,8 @@ async function startServer() {
         date: new Date().toISOString(),
         items: JSON.stringify(items)
       });
+
+      console.log(`[Checkout] Signature generated for ${invoice_number}`);
 
       const info = db.prepare(`
         INSERT INTO transactions (
@@ -1977,9 +2026,11 @@ async function startServer() {
         baseAmount
       );
       
+      console.log(`[Checkout] Transaction inserted: ${info.lastInsertRowid}`);
+
       // Update stock
       for (const item of items) {
-        if (item.type === 'product') {
+        if (item.type === 'product' && item.id) {
           db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(item.quantity, item.id);
         }
       }
@@ -2013,32 +2064,29 @@ async function startServer() {
 
         // Record in financial_transactions
         try {
-          const establishmentData = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
-          if (establishmentData) {
-            db.prepare(`
-              INSERT INTO financial_transactions (
-                establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id,
-                currency_code, exchange_rate, base_amount
-              ) VALUES (?, ?, 'income', 'Venda POS', ?, ?, ?, ?, 'paid', ?, ?, ?, ?)
-            `).run(
-              establishment_id, establishmentData.owner_id, baseAmount, payment_method || 'cash',
-              `Venda POS - Fatura ${invoice_number} (${finalCurrencyCode} ${total_amount})`, new Date().toISOString(), sale.id,
-              finalCurrencyCode, finalExchangeRate, baseAmount
-            );
-          }
+          db.prepare(`
+            INSERT INTO financial_transactions (
+              establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id,
+              currency_code, exchange_rate, base_amount
+            ) VALUES (?, ?, 'income', 'Venda POS', ?, ?, ?, ?, 'paid', ?, ?, ?, ?)
+          `).run(
+            establishment_id, ownerId, baseAmount, payment_method || 'cash',
+            `Venda POS - Fatura ${invoice_number} (${finalCurrencyCode} ${total_amount})`, new Date().toISOString(), sale.id,
+            finalCurrencyCode, finalExchangeRate, baseAmount
+          );
         } catch (finError) {
-          console.error("Error recording financial transaction for sale:", finError);
+          console.error("[Checkout] Error recording financial transaction:", finError);
         }
+
         // --- SAF-T JSON Generation & AGT Submission ---
         try {
-          const establishmentData = db.prepare("SELECT * FROM establishments WHERE id = ?").get(establishment_id) as any;
           const saftData = {
             Header: {
               InvoiceNo: invoice_number,
               InvoiceDate: new Date(sale.timestamp).toISOString().split('T')[0],
               SystemEntryDate: new Date(sale.timestamp).toISOString(),
-              EstablishmentName: establishmentData.name,
-              EstablishmentNIF: establishmentData.nif,
+              EstablishmentName: establishment.name,
+              EstablishmentNIF: establishment.nif,
               ClientName: client_name || 'Consumidor Final',
               ClientNIF: client_nif || '999999999'
             },
@@ -2067,21 +2115,16 @@ async function startServer() {
           }
           const fileName = `SAFT_${invoice_number.replace(/[\/\s]/g, '_')}.json`;
           fs.writeFileSync(path.join(saftDir, fileName), JSON.stringify(saftData, null, 2));
-          console.log(`SAF-T file saved: ${fileName}`);
+          console.log(`[Checkout] SAF-T file saved: ${fileName}`);
 
-          // 2. Submit to AGT (Mock)
-          console.log(`Submitting invoice ${invoice_number} to AGT...`);
-          // In a real scenario, we would use fetch() to send the JSON to AGT API
-          // Only update to 'sent' if it's not already 'accepted' or 'rejected'
+          // 2. Submit to AGT (Simulation)
           if (billing_mode !== 'eletronica') {
             db.prepare("UPDATE transactions SET agt_status = 'sent' WHERE id = ?").run(sale.id);
           }
           
         } catch (saftError) {
-          console.error("Error generating SAF-T or submitting to AGT:", saftError);
-          db.prepare("UPDATE transactions SET agt_status = 'error' WHERE id = ?").run(sale.id);
+          console.error("[Checkout] Error generating SAF-T or submitting to AGT:", saftError);
         }
-        // ----------------------------------------------
       }
       
       res.json({ success: true, sale });
@@ -2655,9 +2698,11 @@ async function startServer() {
   app.post("/api/admin/licenses", (req, res) => {
     const { user_id, establishment_id, plan_type, start_date, expiry_date, features } = req.body;
     
-    // Deactivate ALL previous active licenses for this user to ensure only one is active
-    if (user_id) {
-      db.prepare("UPDATE licenses SET status = 'inactive' WHERE user_id = ? AND status = 'active'").run(user_id);
+    // Deactivate previous active licenses for this target to ensure only one is active
+    if (establishment_id) {
+       db.prepare("UPDATE licenses SET status = 'inactive' WHERE establishment_id = ? AND status = 'active'").run(establishment_id);
+    } else if (user_id) {
+       db.prepare("UPDATE licenses SET status = 'inactive' WHERE user_id = ? AND establishment_id IS NULL AND status = 'active'").run(user_id);
     }
 
     db.prepare(`
@@ -3296,6 +3341,7 @@ async function startServer() {
       })),
       stats,
       pendingPayments: pendingInvoices.map(inv => ({
+        id: inv.id,
         establishment_id: inv.id,
         owner_id: inv.owner_id,
         client_name: inv.owner_name,
@@ -3964,22 +4010,26 @@ async function startServer() {
       const today = new Date().toISOString().split('T')[0];
       const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
 
-      // Break down the big stats query to avoid "Too many parameter values" if there are many establishments
-      const salesRes = db.prepare(`SELECT SUM(base_amount) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?`).get(...establishmentIds, today) as any;
-      const creditRes = db.prepare(`SELECT SUM(base_amount) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
-      
-      const countSalesRes = db.prepare(`SELECT COUNT(*) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?`).get(...establishmentIds, today) as any;
-      const countCreditRes = db.prepare(`SELECT COUNT(*) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
+    // Break down the big stats query to avoid "Too many parameter values" if there are many establishments
+    const salesRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?`).get(...establishmentIds, today) as any;
+    const creditRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
+    const ncRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
+    
+    const countSalesRes = db.prepare(`SELECT COUNT(*) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?`).get(...establishmentIds, today) as any;
+    const countCreditRes = db.prepare(`SELECT COUNT(*) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
 
-      const expenseRes = db.prepare(`SELECT SUM(amount) as total FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND date(date) = ?`).get(...establishmentIds, today) as any;
+    const expenseRes = db.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND date(date) = ?`).get(...establishmentIds, today) as any;
 
-      const monthlySalesRes = db.prepare(`SELECT SUM(base_amount) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ?`).get(...establishmentIds, monthStart) as any;
-      const monthlyCreditRes = db.prepare(`SELECT SUM(base_amount) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FR', 'RC') AND date(invoice_date) >= ?`).get(...establishmentIds, monthStart) as any;
+    const monthlySalesRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ?`).get(...establishmentIds, monthStart) as any;
+    const monthlyCreditRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) >= ?`).get(...establishmentIds, monthStart) as any;
+    const monthlyNCRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) >= ?`).get(...establishmentIds, monthStart) as any;
 
-      const todaySales = (salesRes?.total || 0) + (creditRes?.total || 0);
-      const todayCount = (countSalesRes?.total || 0) + (countCreditRes?.total || 0);
-      const todayExpense = expenseRes?.total || 0;
-      const monthlySales = (monthlySalesRes?.total || 0) + (monthlyCreditRes?.total || 0);
+    const todaySales = (salesRes?.total || 0) + (creditRes?.total || 0) - (ncRes?.total || 0);
+    const todayCount = (countSalesRes?.total || 0) + (countCreditRes?.total || 0);
+    const todayExpense = expenseRes?.total || 0;
+    const monthlySales = (monthlySalesRes?.total || 0) + (monthlyCreditRes?.total || 0) - (monthlyNCRes?.total || 0);
+
+    console.log(`[DashboardStats] Global stats for owner ${resolvedOwnerId}: todaySales=${todaySales}, todayCount=${todayCount}, establishments=${establishmentIds.length}`);
 
       const lowStockCount = db.prepare(`SELECT COUNT(*) as count FROM products WHERE establishment_id IN (${placeholders}) AND stock <= min_stock`).get(...establishmentIds) as any;
       const staffCount = db.prepare(`SELECT COUNT(*) as count FROM staff WHERE establishment_id IN (${placeholders})`).get(...establishmentIds) as any;
@@ -4004,6 +4054,13 @@ async function startServer() {
           WHERE t.establishment_id IN (${placeholders})
           GROUP BY p.id
           UNION ALL
+          SELECT p.name, SUM(CAST(JSON_EXTRACT(cii_json.value, '$.quantity') AS REAL)) as quantity
+          FROM credit_invoices ci
+          JOIN json_each(ci.items) as cii_json
+          JOIN products p ON JSON_EXTRACT(cii_json.value, '$.id') = p.id
+          WHERE ci.establishment_id IN (${placeholders}) AND ci.doc_type IN ('FT', 'FR', 'ND')
+          GROUP BY p.id
+          UNION ALL
           SELECT p.name, SUM(-CAST(JSON_EXTRACT(cii_json.value, '$.quantity') AS REAL)) as quantity
           FROM credit_invoices ci
           JOIN json_each(ci.items) as cii_json
@@ -4014,7 +4071,7 @@ async function startServer() {
         GROUP BY name
         ORDER BY total_qty DESC
         LIMIT 5
-      `).all(...establishmentIds, ...establishmentIds) as any[];
+      `).all(...establishmentIds, ...establishmentIds, ...establishmentIds) as any[];
 
       const recentTransactions = db.prepare(`
         SELECT t.*, s.name as establishment_name
@@ -4027,29 +4084,40 @@ async function startServer() {
 
       const salesByDay = db.prepare(`
         SELECT day, SUM(total) as total FROM (
-          SELECT date(timestamp) as day, SUM(base_amount) as total
+          SELECT date(timestamp) as day, SUM(COALESCE(base_amount, total_amount)) as total
           FROM transactions
           WHERE establishment_id IN (${placeholders}) AND timestamp >= date('now', '-7 days')
           GROUP BY day
           UNION ALL
-          SELECT date(invoice_date) as day, SUM(-base_amount) as total
+          SELECT date(invoice_date) as day, SUM(COALESCE(base_amount, total_amount)) as total
+          FROM credit_invoices
+          WHERE establishment_id IN (${placeholders}) AND invoice_date >= date('now', '-7 days') AND doc_type IN ('FT', 'FR', 'ND')
+          GROUP BY day
+          UNION ALL
+          SELECT date(invoice_date) as day, SUM(-COALESCE(base_amount, total_amount)) as total
           FROM credit_invoices
           WHERE establishment_id IN (${placeholders}) AND invoice_date >= date('now', '-7 days') AND doc_type = 'NC'
           GROUP BY day
         )
         GROUP BY day
         ORDER BY day ASC
-      `).all(...establishmentIds, ...establishmentIds);
+      `).all(...establishmentIds, ...establishmentIds, ...establishmentIds);
 
       const salesByEstablishment = db.prepare(`
         SELECT name, SUM(total) as total FROM (
-          SELECT s.name, SUM(t.base_amount) as total
+          SELECT s.name, SUM(COALESCE(t.base_amount, t.total_amount)) as total
           FROM transactions t
           JOIN establishments s ON t.establishment_id = s.id
           WHERE s.owner_id = ?
           GROUP BY s.id
           UNION ALL
-          SELECT s.name, SUM(-ci.base_amount) as total
+          SELECT s.name, SUM(COALESCE(ci.base_amount, ci.total_amount)) as total
+          FROM credit_invoices ci
+          JOIN establishments s ON ci.establishment_id = s.id
+          WHERE s.owner_id = ? AND ci.doc_type IN ('FT', 'FR', 'ND')
+          GROUP BY s.id
+          UNION ALL
+          SELECT s.name, SUM(-COALESCE(ci.base_amount, ci.total_amount)) as total
           FROM credit_invoices ci
           JOIN establishments s ON ci.establishment_id = s.id
           WHERE s.owner_id = ? AND ci.doc_type = 'NC'
@@ -4057,22 +4125,27 @@ async function startServer() {
         )
         GROUP BY name
         ORDER BY total DESC
-      `).all(resolvedOwnerId, resolvedOwnerId);
+      `).all(resolvedOwnerId, resolvedOwnerId, resolvedOwnerId);
 
       const paymentMethods = db.prepare(`
         SELECT name, SUM(value) as value FROM (
-          SELECT payment_method as name, SUM(base_amount) as value
+          SELECT payment_method as name, SUM(COALESCE(base_amount, total_amount)) as value
           FROM transactions
           WHERE establishment_id IN (${placeholders})
           GROUP BY payment_method
           UNION ALL
-          SELECT payment_method as name, SUM(-base_amount) as value
+          SELECT payment_method as name, SUM(COALESCE(base_amount, total_amount)) as value
+          FROM credit_invoices
+          WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND')
+          GROUP BY payment_method
+          UNION ALL
+          SELECT payment_method as name, SUM(-COALESCE(base_amount, total_amount)) as value
           FROM credit_invoices
           WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'
           GROUP BY payment_method
         )
         GROUP BY name
-      `).all(...establishmentIds, ...establishmentIds);
+      `).all(...establishmentIds, ...establishmentIds, ...establishmentIds);
 
       res.json({
         todaySales,
@@ -4101,13 +4174,18 @@ async function startServer() {
       if (establishmentIds.length === 0) return res.json([]);
 
       const placeholders = establishmentIds.map(() => '?').join(',');
+      const today = new Date().toISOString().split('T')[0];
       const establishments = db.prepare(`
         SELECT e.*, 
           (SELECT count(*) FROM staff st WHERE st.establishment_id = e.id) as staff_count,
-          (SELECT SUM(base_amount) FROM transactions t WHERE t.establishment_id = e.id AND date(t.timestamp) = date('now')) as today_sales
+          (
+            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM transactions t WHERE t.establishment_id = e.id AND date(t.timestamp) = ?), 0) +
+            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM credit_invoices ci WHERE ci.establishment_id = e.id AND ci.doc_type IN ('FT', 'FR', 'ND') AND date(ci.invoice_date) = ?), 0) -
+            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM credit_invoices ci WHERE ci.establishment_id = e.id AND ci.doc_type = 'NC' AND date(ci.invoice_date) = ?), 0)
+          ) as today_sales
         FROM establishments e 
         WHERE e.id IN (${placeholders})
-      `).all(...establishmentIds) as any[];
+      `).all(today, today, today, ...establishmentIds) as any[];
       
       res.json(establishments.map(e => ({
         ...e,
@@ -5282,18 +5360,23 @@ async function startServer() {
       const ownerId = establishment.owner_id;
       const today = new Date().toISOString().split('T')[0];
       
-      // Breakdown queries for stability
+      // Breakdown queries for stability and accuracy
       const countTrans = db.prepare("SELECT COUNT(*) as count FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
       const countCredit = db.prepare("SELECT COUNT(*) as count FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
-      const totalTrans = db.prepare("SELECT SUM(base_amount) as total FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
-      const totalCredit = db.prepare("SELECT SUM(base_amount) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
-      const totalNC = db.prepare("SELECT SUM(base_amount) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type = 'NC'").get(establishmentId, today) as any;
+      
+      const totalTrans = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
+      const totalCredit = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
+      const totalNC = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type = 'NC'").get(establishmentId, today) as any;
+      
+      const todaySalesCount = (countTrans?.count || 0) + (countCredit?.count || 0);
+      const todayRevenueTotal = (totalTrans?.total || 0) + (totalCredit?.total || 0) - (totalNC?.total || 0);
+      
       const sellers = db.prepare("SELECT COUNT(DISTINCT seller_id) as count FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
 
       const stats = {
-        total_transactions: (countTrans?.count || 0) + (countCredit?.count || 0),
-        total_revenue: (totalTrans?.total || 0) + (totalCredit?.total || 0) - (totalNC?.total || 0),
-        active_sellers: sellers?.count || 0
+        todaySales: todaySalesCount,
+        todayRevenue: todayRevenueTotal,
+        activeSellers: sellers?.count || 0
       };
 
       console.log(`[API] Stats for establishment ${establishmentId}:`, stats);
@@ -6066,12 +6149,18 @@ async function startServer() {
     }
     
     // Sales of the day (Transactions)
-    const todaySales = db.prepare(`
+    const today = new Date().toISOString().split('T')[0];
+    const todaySalesRes = db.prepare(`
       SELECT 
-        (SELECT COUNT(*) FROM transactions WHERE ${whereClause} AND date(timestamp) = date('now')) as count
-    `).get(...params) as any;
+        (SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) FROM transactions WHERE ${whereClause} AND date(timestamp) = ?) as trans_total,
+        (SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) FROM credit_invoices WHERE ${whereClause} AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')) as credit_total,
+        (SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) FROM credit_invoices WHERE ${whereClause} AND date(invoice_date) = ? AND doc_type = 'NC') as nc_total,
+        (SELECT COUNT(*) FROM transactions WHERE ${whereClause} AND date(timestamp) = ?) as trans_count,
+        (SELECT COUNT(*) FROM credit_invoices WHERE ${whereClause} AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')) as credit_count
+    `).get(...params, today, ...params, today, ...params, today, ...params, today, ...params, today) as any;
 
-    const todayCount = Math.max(0, todaySales?.count || 0);
+    const todaySales = (todaySalesRes?.trans_total || 0) + (todaySalesRes?.credit_total || 0) - (todaySalesRes?.nc_total || 0);
+    const todayCount = (todaySalesRes?.trans_count || 0) + (todaySalesRes?.credit_count || 0);
 
     // Low stock count (below 5)
     const lowStock = db.prepare(`
@@ -6089,7 +6178,7 @@ async function startServer() {
 
     // Top Products - Unified JS processing for better JSON error handling
     const productSales: Record<string, { id: any, name: string, quantity: number, revenue: number }> = {};
-    const processItems = (rows: any[]) => {
+    const processItems = (rows: any[], isSubtraction = false) => {
       rows.forEach((t: any) => {
         try {
           const items = typeof t.items === 'string' ? JSON.parse(t.items) : t.items;
@@ -6100,7 +6189,8 @@ async function startServer() {
             if (!productSales[id]) {
               productSales[id] = { id, name: item.name || item.ProductDescription, quantity: 0, revenue: 0 };
             }
-            productSales[id].quantity += (Number(item.quantity) || 0);
+            const factor = isSubtraction ? -1 : 1;
+            productSales[id].quantity += (Number(item.quantity) || 0) * factor;
           });
         } catch (e) {}
       });
@@ -6108,7 +6198,8 @@ async function startServer() {
 
     processItems(db.prepare(`SELECT items FROM transactions WHERE ${whereClause}`).all(...params));
     // Also include credit invoices in top products for dashboard
-    processItems(db.prepare(`SELECT items FROM credit_invoices WHERE ${whereClause} AND doc_type IN ('FT', 'FR')`).all(...params));
+    processItems(db.prepare(`SELECT items FROM credit_invoices WHERE ${whereClause} AND doc_type IN ('FT', 'FR', 'ND')`).all(...params));
+    processItems(db.prepare(`SELECT items FROM credit_invoices WHERE ${whereClause} AND doc_type = 'NC'`).all(...params), true);
 
     const topProducts = Object.values(productSales)
       .sort((a, b) => b.quantity - a.quantity)
@@ -6125,17 +6216,27 @@ async function startServer() {
       LIMIT 5
     `).all(...params) as any[];
 
-    // Sales by Day (Last 7 days)
+    // Sales by Day (Last 7 days) - Unified
     const salesByDay = db.prepare(`
       SELECT day, SUM(total) as total FROM (
-        SELECT date(timestamp) as day, SUM(total_amount) as total
+        SELECT date(timestamp) as day, SUM(COALESCE(base_amount, total_amount)) as total
         FROM transactions
         WHERE ${whereClause} AND timestamp >= date('now', '-7 days')
+        GROUP BY day
+        UNION ALL
+        SELECT date(invoice_date) as day, SUM(COALESCE(base_amount, total_amount)) as total
+        FROM credit_invoices
+        WHERE ${whereClause} AND invoice_date >= date('now', '-7 days') AND doc_type IN ('FT', 'FR', 'ND')
+        GROUP BY day
+        UNION ALL
+        SELECT date(invoice_date) as day, SUM(-COALESCE(base_amount, total_amount)) as total
+        FROM credit_invoices
+        WHERE ${whereClause} AND invoice_date >= date('now', '-7 days') AND doc_type = 'NC'
         GROUP BY day
       )
       GROUP BY day
       ORDER BY day ASC
-    `).all(...params) as any[];
+    `).all(...params, ...params, ...params) as any[];
 
     // Sales by Establishment - Including Credit Notes
     const salesByEstablishment = db.prepare(`
@@ -6156,16 +6257,26 @@ async function startServer() {
       ORDER BY total DESC
     `).all(ownerId, ownerId) as any[];
 
-    // Payment Methods Distribution - Including Credit Notes
+    // Payment Methods Distribution - Including Credit Invoices and Notes
     const paymentMethods = db.prepare(`
       SELECT name, SUM(value) as value FROM (
-        SELECT payment_method as name, SUM(total_amount) as value
+        SELECT payment_method as name, SUM(COALESCE(base_amount, total_amount)) as value
         FROM transactions
         WHERE ${whereClause}
         GROUP BY payment_method
+        UNION ALL
+        SELECT payment_method as name, SUM(COALESCE(base_amount, total_amount)) as value
+        FROM credit_invoices
+        WHERE ${whereClause} AND doc_type IN ('FT', 'FR', 'ND')
+        GROUP BY payment_method
+        UNION ALL
+        SELECT payment_method as name, SUM(-COALESCE(base_amount, total_amount)) as value
+        FROM credit_invoices
+        WHERE ${whereClause} AND doc_type = 'NC'
+        GROUP BY payment_method
       )
       GROUP BY name
-    `).all(...params) as any[];
+    `).all(...params, ...params, ...params) as any[];
 
     // Financial Summary (Real values)
     const financialToday = db.prepare(`
@@ -6199,8 +6310,8 @@ async function startServer() {
     const enoughForSalaries = monthlyIncome >= totalSalaries;
 
     res.json({
-      todaySales: financialToday?.income || 0,
-      todayCount: todayCount,
+      todaySales,
+      todayCount,
       todayExpense: financialToday?.expense || 0,
       monthlySales: monthlyIncome,
       monthlyExpense: financialMonth?.expense || 0,
@@ -6454,15 +6565,15 @@ async function startServer() {
     const salesByDay = db.prepare(`
       SELECT day as date, SUM(revenue) as revenue, SUM(count) as sales
       FROM (
-        SELECT date(timestamp) as day, total_amount as revenue, 1 as count
+        SELECT date(timestamp) as day, COALESCE(base_amount, total_amount) as revenue, 1 as count
         FROM transactions
         WHERE establishment_id = ? AND timestamp >= date('now', '-30 days')
         UNION ALL
-        SELECT invoice_date as day, total_amount as revenue, 1 as count
+        SELECT date(invoice_date) as day, COALESCE(base_amount, total_amount) as revenue, 1 as count
         FROM credit_invoices
         WHERE establishment_id = ? AND invoice_date >= date('now', '-30 days') AND doc_type IN ('FT', 'FR', 'ND')
         UNION ALL
-        SELECT invoice_date as day, -total_amount as revenue, 1 as count
+        SELECT date(invoice_date) as day, -COALESCE(base_amount, total_amount) as revenue, 1 as count
         FROM credit_invoices
         WHERE establishment_id = ? AND invoice_date >= date('now', '-30 days') AND doc_type = 'NC'
       )
@@ -6472,11 +6583,12 @@ async function startServer() {
 
     // Best selling products - Unified
     const transactions = db.prepare("SELECT items FROM transactions WHERE establishment_id = ?").all(establishmentId);
-    const invoices = db.prepare("SELECT items FROM credit_invoices WHERE establishment_id = ? AND doc_type IN ('FT', 'FR')").all(establishmentId);
+    const invoices = db.prepare("SELECT items FROM credit_invoices WHERE establishment_id = ? AND doc_type IN ('FT', 'FR', 'ND')").all(establishmentId);
+    const creditNotes = db.prepare("SELECT items FROM credit_invoices WHERE establishment_id = ? AND doc_type = 'NC'").all(establishmentId);
     
     const productSales: Record<string, { name: string, quantity: number, revenue: number }> = {};
     
-    const processItems = (itemStr: string) => {
+    const processItems = (itemStr: string, factor = 1) => {
       try {
         const items = JSON.parse(itemStr);
         items.forEach((item: any) => {
@@ -6485,8 +6597,8 @@ async function startServer() {
           if (!productSales[id]) {
             productSales[id] = { name: item.name || item.ProductDescription, quantity: 0, revenue: 0 };
           }
-          productSales[id].quantity += (Number(item.quantity) || 0);
-          productSales[id].revenue += ((Number(item.price) || 0) * (Number(item.quantity) || 0));
+          productSales[id].quantity += (Number(item.quantity) || 0) * factor;
+          productSales[id].revenue += ((Number(item.price) || 0) * (Number(item.quantity) || 0)) * factor;
         });
       } catch (e) {
         console.error("Error parsing items:", e);
@@ -6495,6 +6607,7 @@ async function startServer() {
 
     transactions.forEach((t: any) => processItems(t.items));
     invoices.forEach((i: any) => processItems(i.items));
+    creditNotes.forEach((cn: any) => processItems(cn.items, -1));
 
     const topProducts = Object.values(productSales)
       .sort((a, b) => b.quantity - a.quantity)
@@ -6530,12 +6643,16 @@ async function startServer() {
         FROM transactions
         WHERE establishment_id = ?
         UNION ALL
-        SELECT payment_method as name, total_amount as value
+        SELECT payment_method as name, COALESCE(base_amount, total_amount) as value
         FROM credit_invoices
-        WHERE establishment_id = ? AND doc_type IN ('FT', 'FR')
+        WHERE establishment_id = ? AND doc_type IN ('FT', 'FR', 'ND')
+        UNION ALL
+        SELECT payment_method as name, -COALESCE(base_amount, total_amount) as value
+        FROM credit_invoices
+        WHERE establishment_id = ? AND doc_type = 'NC'
       )
       GROUP BY name
-    `).all(establishmentId, establishmentId);
+    `).all(establishmentId, establishmentId, establishmentId);
 
     res.json({
       salesByDay,
@@ -6543,6 +6660,51 @@ async function startServer() {
       salesByCategory,
       paymentMethods
     });
+  });
+
+  // Service Sheets API
+  app.get("/api/owner/service-sheets/:establishmentId", (req, res) => {
+    const { establishmentId } = req.params;
+    try {
+      const sheets = db.prepare("SELECT * FROM service_sheets WHERE establishment_id = ? ORDER BY created_at DESC").all(establishmentId);
+      res.json(sheets);
+    } catch (e) {
+      res.status(500).json({ error: "Erro ao buscar folhas de serviço" });
+    }
+  });
+
+  app.post("/api/owner/service-sheets", (req, res) => {
+    const { establishment_id, service_id, client_name, client_nif, client_address, service_description, assigned_staff, scheduled_date } = req.body;
+    try {
+      const result = db.prepare(`
+        INSERT INTO service_sheets (establishment_id, service_id, client_name, client_nif, client_address, service_description, assigned_staff, scheduled_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(establishment_id, service_id || null, client_name, client_nif, client_address, service_description, assigned_staff, scheduled_date);
+      res.json({ id: result.lastInsertRowid });
+    } catch (e) {
+      res.status(500).json({ error: "Erro ao criar folha de serviço" });
+    }
+  });
+
+  app.patch("/api/owner/service-sheets/:id/status", (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+    try {
+      db.prepare("UPDATE service_sheets SET status = ? WHERE id = ?").run(status, id);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: "Erro ao atualizar status" });
+    }
+  });
+
+  app.delete("/api/owner/service-sheets/:id", (req, res) => {
+    const { id } = req.params;
+    try {
+      db.prepare("DELETE FROM service_sheets WHERE id = ?").run(id);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: "Erro ao excluir folha de serviço" });
+    }
   });
 
   app.get("/api/owner/global-reports/:ownerId", (req, res) => {
@@ -6569,21 +6731,25 @@ async function startServer() {
     const stats = db.prepare(`
       SELECT SUM(revenue) as totalRevenue, SUM(count) as totalSales
       FROM (
-        SELECT total_amount as revenue, 1 as count FROM transactions WHERE establishment_id IN (${placeholders})
+        SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM transactions WHERE establishment_id IN (${placeholders})
         UNION ALL
-        SELECT total_amount as revenue, 1 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR')
+        SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND')
+        UNION ALL
+        SELECT -COALESCE(base_amount, total_amount) as revenue, 0 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'
       )
-    `).get(...[...establishmentIds, ...establishmentIds]) as any;
+    `).get(...[...establishmentIds, ...establishmentIds, ...establishmentIds]) as any;
 
     // Revenue, Profit, and Comparison by Establishment
     const establishmentComparison = establishments.map(establishment => {
       const unifiedRevenue = db.prepare(`
         SELECT SUM(revenue) as total, SUM(count) as count FROM (
-          SELECT total_amount as revenue, 1 as count FROM transactions WHERE establishment_id = ?
+          SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM transactions WHERE establishment_id = ?
           UNION ALL
-          SELECT total_amount as revenue, 1 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type IN ('FT', 'FR')
+          SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type IN ('FT', 'FR', 'ND')
+          UNION ALL
+          SELECT -COALESCE(base_amount, total_amount) as revenue, 0 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type = 'NC'
         )
-      `).get(establishment.id, establishment.id) as any;
+      `).get(establishment.id, establishment.id, establishment.id) as any;
 
       const purchases = db.prepare(`
         SELECT SUM(total_amount) as total FROM purchases WHERE establishment_id = ?
@@ -6619,21 +6785,19 @@ async function startServer() {
     const salesByDay = db.prepare(`
       SELECT day as date, SUM(revenue) as revenue
       FROM (
-        SELECT date(timestamp) as day, total_amount as revenue
-        FROM transactions
-        WHERE establishment_id IN (${placeholders}) AND timestamp >= date('now', '-30 days')
+        SELECT date(timestamp) as day, COALESCE(base_amount, total_amount) as revenue FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= date('now', '-30 days')
         UNION ALL
-        SELECT invoice_date as day, total_amount as revenue
-        FROM credit_invoices
-        WHERE establishment_id IN (${placeholders}) AND invoice_date >= date('now', '-30 days') AND doc_type IN ('FT', 'FR')
+        SELECT date(invoice_date) as day, COALESCE(base_amount, total_amount) as revenue FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND date(invoice_date) >= date('now', '-30 days') AND doc_type IN ('FT', 'FR', 'ND')
+        UNION ALL
+        SELECT date(invoice_date) as day, -COALESCE(base_amount, total_amount) as revenue FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND date(invoice_date) >= date('now', '-30 days') AND doc_type = 'NC'
       )
       GROUP BY day
       ORDER BY day ASC
-    `).all(...[...establishmentIds, ...establishmentIds]);
+    `).all(...[...establishmentIds, ...establishmentIds, ...establishmentIds]);
 
     // Top Products - Unified
     const productSales: Record<string, { id: any, name: string, quantity: number, revenue: number }> = {};
-    const processItems = (rows: any[]) => {
+    const processItems = (rows: any[], isSubtraction = false) => {
       rows.forEach((t: any) => {
         try {
           const items = JSON.parse(t.items);
@@ -6643,29 +6807,17 @@ async function startServer() {
             if (!productSales[id]) {
               productSales[id] = { id, name: item.name || item.ProductDescription, quantity: 0, revenue: 0 };
             }
-            productSales[id].quantity += (Number(item.quantity) || 0);
-            productSales[id].revenue += (Number(item.quantity) || 0) * (Number(item.price) || 0);
+            const factor = isSubtraction ? -1 : 1;
+            productSales[id].quantity += (Number(item.quantity) || 0) * factor;
+            productSales[id].revenue += (Number(item.quantity) || 0) * (Number(item.price) || 0) * factor;
           });
         } catch (e) {}
       });
     };
 
     processItems(db.prepare(`SELECT items FROM transactions WHERE establishment_id IN (${placeholders})`).all(...establishmentIds));
-    processItems(db.prepare(`SELECT items FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR')`).all(...establishmentIds));
-    
-    // Subtract items from Credit Notes (NC)
-    const ncRows = db.prepare(`SELECT items FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'`).all(...establishmentIds);
-    ncRows.forEach((t: any) => {
-      try {
-        const items = JSON.parse(t.items);
-        items.forEach((item: any) => {
-          const id = item.id || item.product_id || item.ProductCode;
-          if (!id || !productSales[id]) return;
-          productSales[id].quantity -= (Number(item.quantity) || 0);
-          productSales[id].revenue -= (Number(item.quantity) || 0) * (Number(item.price) || 0);
-        });
-      } catch (e) {}
-    });
+    processItems(db.prepare(`SELECT items FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND')`).all(...establishmentIds));
+    processItems(db.prepare(`SELECT items FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'`).all(...establishmentIds), true);
 
     const topProducts = Object.values(productSales)
       .sort((a, b) => b.revenue - a.revenue)
@@ -6677,10 +6829,12 @@ async function startServer() {
       FROM (
         SELECT payment_method as name, total_amount as value FROM transactions WHERE establishment_id IN (${placeholders})
         UNION ALL
-        SELECT payment_method as name, total_amount as value FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR')
+        SELECT payment_method as name, COALESCE(base_amount, total_amount) as value FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND')
+        UNION ALL
+        SELECT payment_method as name, -COALESCE(base_amount, total_amount) as value FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'
       )
       GROUP BY name
-    `).all(...[...establishmentIds, ...establishmentIds]);
+    `).all(...[...establishmentIds, ...establishmentIds, ...establishmentIds]);
 
     // Promotions Efficiency
     const promotions = db.prepare(`
@@ -6724,8 +6878,8 @@ async function startServer() {
     }).sort((a, b) => b.revenue - a.revenue);
 
     res.json({
-      totalRevenue: stats.totalRevenue || 0,
-      totalSales: stats.totalSales || 0,
+      totalRevenue: stats?.totalRevenue || 0,
+      totalSales: stats?.totalSales || 0,
       revenueByEstablishment: establishmentComparison.map(s => ({ name: s.name, revenue: s.revenue })),
       salesByDay,
       topProducts,
@@ -7296,21 +7450,31 @@ async function startServer() {
   // Seller Dashboard Stats
   app.get("/api/seller/dashboard-stats/:sellerId", (req, res) => {
     const sellerId = req.params.sellerId;
-    const today = db.prepare(`
-      SELECT SUM(base_amount) as total 
-      FROM transactions 
-      WHERE seller_id = ? AND date(timestamp) = date('now')
-    `).get(sellerId) as any;
+    const today = new Date().toISOString().split('T')[0];
+
+    const todayStats = db.prepare(`
+      SELECT SUM(total) as total FROM (
+        SELECT COALESCE(SUM(base_amount), 0) as total FROM transactions WHERE seller_id = ? AND date(timestamp) = ?
+        UNION ALL
+        SELECT COALESCE(SUM(base_amount), 0) as total FROM credit_invoices WHERE seller_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')
+        UNION ALL
+        SELECT COALESCE(SUM(-base_amount), 0) as total FROM credit_invoices WHERE seller_id = ? AND date(invoice_date) = ? AND doc_type = 'NC'
+      )
+    `).get(sellerId, today, sellerId, today, sellerId, today) as any;
     
-    const last7Days = db.prepare(`
-      SELECT SUM(base_amount) as total 
-      FROM transactions 
-      WHERE seller_id = ? AND timestamp >= date('now', '-7 days')
-    `).get(sellerId) as any;
+    const last7DaysStats = db.prepare(`
+      SELECT SUM(total) as total FROM (
+        SELECT COALESCE(SUM(base_amount), 0) as total FROM transactions WHERE seller_id = ? AND timestamp >= date('now', '-7 days')
+        UNION ALL
+        SELECT COALESCE(SUM(base_amount), 0) as total FROM credit_invoices WHERE seller_id = ? AND invoice_date >= date('now', '-7 days') AND doc_type IN ('FT', 'FR', 'ND')
+        UNION ALL
+        SELECT COALESCE(SUM(-base_amount), 0) as total FROM credit_invoices WHERE seller_id = ? AND invoice_date >= date('now', '-7 days') AND doc_type = 'NC'
+      )
+    `).get(sellerId, sellerId, sellerId) as any;
 
     res.json({
-      today: today?.total || 0,
-      last7Days: last7Days?.total || 0
+      today: todayStats?.total || 0,
+      last7Days: last7DaysStats?.total || 0
     });
   });
 
@@ -7760,6 +7924,12 @@ async function startServer() {
         // Auto-generate series and number from the active series
         const establishmentInfo = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
         if (!establishmentInfo) throw new Error("Estabelecimento não encontrado.");
+
+        // Check if owner has at least one currency registered
+        const currencyCount = db.prepare("SELECT COUNT(*) as count FROM currencies WHERE owner_id = ?").get(establishmentInfo.owner_id) as any;
+        if (!currencyCount || currencyCount.count === 0) {
+          throw new Error("O proprietário deve cadastrar pelo menos uma moeda antes de emitir documentos.");
+        }
         
         const ownerInfo = db.prepare("SELECT billing_mode FROM users WHERE id = ?").get(establishmentInfo.owner_id) as any;
         const billing_mode = (ownerInfo?.billing_mode === 'eletronica') ? 'eletronica' : 'tradicional';
