@@ -478,7 +478,7 @@ const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-lg" }: { is
               <X size={20} />
             </button>
           </div>
-          <div className="p-6">
+          <div className="p-6 overflow-y-auto max-h-[85vh]">
             {children}
           </div>
         </motion.div>
@@ -3320,7 +3320,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                                 <CreditCard size={16} />
                               </div>
                               <div>
-                                <p className="text-sm font-bold">Plano {license.plan_type.toUpperCase()}</p>
+                                <p className="text-sm font-bold">Plano {(license.plan_type || 'N/A').toUpperCase()}</p>
                                 <p className="text-[10px] text-zinc-400">{license.establishment_name || 'Global'}</p>
                               </div>
                             </div>
@@ -4093,7 +4093,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   {licenseHistory.map((h: any) => (
                     <div key={h.id} className="p-4 border border-zinc-100 rounded-2xl flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-bold">Plano {h.plan_type.toUpperCase()}</p>
+                        <p className="text-sm font-bold">Plano {(h.plan_type || 'N/A').toUpperCase()}</p>
                         <p className="text-[10px] text-zinc-400">{h.establishment_name || 'Global'}</p>
                         <p className="text-[10px] text-zinc-500 mt-1">
                           {new Date(h.start_date).toLocaleDateString()} - {new Date(h.expiry_date).toLocaleDateString()}
@@ -6820,7 +6820,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                                               return originalItems.map((it: any) => ({ ...it, quantity: 0, max_quantity: it.quantity }));
                                             })(),
                                             parent_invoice_id: inv.id.toString(),
-                                            reason: request ? `${request.doc_type}: ${request.type.toUpperCase()} - ${request.reason}` : '',
+                                            reason: request ? `${request.doc_type}: ${(request.type || '').toUpperCase()} - ${request.reason}` : '',
                                             note_category: request?.doc_type === 'ND' ? 'price_correction' : (request?.type === 'cancel' ? 'correction' : 'return'),
                                             adjustment_amount: request?.type === 'cancel' ? 0 : (request ? request.amount : 0),
                                             observations: request ? `Solicitado por ${request.requested_by_name}` : '',
@@ -7845,47 +7845,18 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         </div>
       </Modal>
 
-      <Modal isOpen={isProductModalOpen} onClose={() => { setIsProductModalOpen(false); setEditingProduct(null); }} title={editingProduct ? "Editar Produto" : "Novo Produto"}>
+      <Modal isOpen={isProductModalOpen} onClose={() => { setIsProductModalOpen(false); setEditingProduct(null); }} title={editingProduct ? "Editar Produto" : "Novo Produto"} maxWidth="max-w-2xl">
         <form onSubmit={handleAddProduct} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Produto</label>
-            <input 
-              type="text" required
-              value={productForm.name}
-              onChange={e => setProductForm({...productForm, name: e.target.value})}
-              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Código de Barra</label>
-            <input 
-              type="text"
-              readOnly
-              value={editingProduct ? editingProduct.barcode : "Gerado automaticamente"}
-              className="w-full px-4 py-3 bg-zinc-100 border border-zinc-200 rounded-xl outline-none text-zinc-500 font-mono" 
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Preço (Kz)</label>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Produto</label>
               <input 
-                type="number" required
-                value={isNaN(Number(productForm.price)) ? '' : productForm.price}
-                onChange={e => setProductForm({...productForm, price: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+                type="text" required
+                value={productForm.name}
+                onChange={e => setProductForm({...productForm, name: e.target.value})}
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
               />
             </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Stock</label>
-              <input 
-                type="number" required
-                value={isNaN(Number(productForm.stock)) ? '' : productForm.stock}
-                onChange={e => setProductForm({...productForm, stock: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Categoria</label>
               <input 
@@ -7893,8 +7864,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                 list="categories-list"
                 value={productForm.category}
                 onChange={e => setProductForm({...productForm, category: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-                placeholder="Ex: Bebidas, Alimentos..."
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+                placeholder="Ex: Bebidas..."
               />
               <datalist id="categories-list">
                 {Array.from(new Set(products.map(p => p.category))).map(cat => (
@@ -7902,95 +7873,125 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                 ))}
               </datalist>
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Stock Mínimo</label>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Código de Barra</label>
+              <input 
+                type="text"
+                readOnly
+                value={editingProduct ? editingProduct.barcode : "Gerado automaticamente"}
+                className="w-full px-4 py-2 bg-zinc-100 border border-zinc-200 rounded-xl outline-none text-zinc-500 font-mono" 
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Armazém</label>
+              <select 
+                required
+                value={productForm.warehouse_id}
+                onChange={e => setProductForm({...productForm, warehouse_id: e.target.value})}
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+              >
+                <option value="">Selecione um armazém</option>
+                {warehouses.filter(w => w.establishment_id === Number(establishmentId)).map(w => (
+                  <option key={w.id} value={w.id}>{w.name} ({w.type})</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="col-span-1">
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Preço (Kz)</label>
+              <input 
+                type="number" required
+                value={isNaN(Number(productForm.price)) ? '' : productForm.price}
+                onChange={e => setProductForm({...productForm, price: e.target.value})}
+                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+              />
+            </div>
+            <div className="col-span-1">
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Stock</label>
+              <input 
+                type="number" required
+                value={isNaN(Number(productForm.stock)) ? '' : productForm.stock}
+                onChange={e => setProductForm({...productForm, stock: e.target.value})}
+                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+              />
+            </div>
+            <div className="col-span-1">
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Mín. Stock</label>
               <input 
                 type="number" required
                 value={isNaN(Number(productForm.min_stock)) ? '' : productForm.min_stock}
                 onChange={e => setProductForm({...productForm, min_stock: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
               />
             </div>
+            <div className="col-span-1">
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Taxa/IVA</label>
+              <select 
+                value={productForm.tax_id}
+                onChange={e => setProductForm({...productForm, tax_id: e.target.value})}
+                disabled={user?.fiscal_regime === 'exclusao'}
+                className={cn(
+                  "w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none",
+                  user?.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <option value="">Padrão</option>
+                {taxes.filter(t => t.status === 'active').map(tax => (
+                  <option key={tax.id} value={tax.id}>{tax.percentage}%</option>
+                ))}
+              </select>
+            </div>
           </div>
-          <div>
-            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Armazém</label>
-            <select 
-              required
-              value={productForm.warehouse_id}
-              onChange={e => setProductForm({...productForm, warehouse_id: e.target.value})}
-              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-            >
-              <option value="">Selecione um armazém</option>
-              {warehouses.filter(w => w.establishment_id === Number(establishmentId)).map(w => (
-                <option key={w.id} value={w.id}>{w.name} ({w.type})</option>
-              ))}
-            </select>
-          </div>
+
           <div>
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Imagem do Produto</label>
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="flex-1 space-y-2">
+            <div className="flex items-center gap-4">
+              {productForm.image_url && (
+                <div className="w-16 h-16 bg-zinc-100 rounded-xl overflow-hidden border border-zinc-200 shrink-0">
+                  <img src={productForm.image_url} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                </div>
+              )}
+              <div className="flex-1 flex gap-2">
                 <input 
                   type="text"
                   value={productForm.image_url}
                   onChange={e => setProductForm({...productForm, image_url: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none text-sm" 
-                  placeholder="URL da imagem (https://...)"
+                  className="flex-1 px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none text-xs" 
+                  placeholder="URL da imagem..."
                 />
-                <div className="relative">
-                  <input 
-                    type="file"
-                    accept="image/*"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        try {
-                          const base64 = await fileToBase64(file);
-                          setProductForm({...productForm, image_url: base64});
-                        } catch (err) {
-                          console.error("Error converting file to base64", err);
-                        }
+                <input 
+                  type="file"
+                  accept="image/*"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      try {
+                        const base64 = await fileToBase64(file);
+                        setProductForm({...productForm, image_url: base64});
+                      } catch (err) {
+                        console.error("Error converting file to base64", err);
                       }
-                    }}
-                    className="hidden"
-                    id="product-image-upload"
-                  />
-                  <label 
-                    htmlFor="product-image-upload"
-                    className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-white border-2 border-dashed border-zinc-200 rounded-xl cursor-pointer hover:border-black hover:bg-zinc-50 transition-all text-sm font-bold text-zinc-600"
-                  >
-                    <Upload size={18} /> Carregar Imagem Local
-                  </label>
-                </div>
+                    }
+                  }}
+                  className="hidden"
+                  id="product-image-upload"
+                />
+                <label 
+                  htmlFor="product-image-upload"
+                  className="px-4 py-2 bg-white border border-zinc-200 rounded-xl cursor-pointer hover:bg-zinc-50 transition-all text-[10px] font-bold text-zinc-600 flex items-center gap-1"
+                >
+                  <Upload size={14} /> Local
+                </label>
               </div>
-              {productForm.image_url && (
-                <div className="w-24 h-24 bg-zinc-100 rounded-2xl overflow-hidden border border-zinc-200 shrink-0">
-                  <img src={productForm.image_url} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                </div>
-              )}
             </div>
           </div>
-          <div className="mb-4">
-            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Imposto Aplicado</label>
-            <select 
-              value={productForm.tax_id}
-              onChange={e => setProductForm({...productForm, tax_id: e.target.value})}
-              disabled={user?.fiscal_regime === 'exclusao'}
-              className={cn(
-                "w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none",
-                user?.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
-              )}
-            >
-              <option value="">Usar Padrão do Estabelecimento</option>
-              {taxes.filter(t => t.status === 'active').map(tax => (
-                <option key={tax.id} value={tax.id}>{tax.name} ({tax.percentage}%)</option>
-              ))}
-            </select>
-            {user?.fiscal_regime === 'exclusao' && (
-              <p className="text-[10px] text-amber-600 mt-1 font-bold">Bloqueado: Regime de Exclusão exige 0% de IVA (ISENTO).</p>
-            )}
-          </div>
-          <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold">
+
+          <button type="submit" className="w-full bg-black text-white py-3 rounded-xl font-bold shadow-lg active:scale-95 transition-all">
             {editingProduct ? "Guardar Alterações" : "Adicionar Produto"}
           </button>
         </form>
@@ -8551,7 +8552,7 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
               )}
               {invoice.service_designation && (
                 <p className="text-[10px] font-black text-orange-600 bg-orange-50 px-2 py-1 rounded-lg inline-block mt-2 border border-orange-100 shadow-sm animate-pulse-slow">
-                  {invoice.service_designation.toUpperCase()}
+                  {(invoice.service_designation || 'SERVIÇO NOVO').toUpperCase()}
                 </p>
               )}
               <p>MOEDA {invoice.currency || 'Kz'}</p>
@@ -8605,7 +8606,7 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
                     {item.code}
                   </td>
                   <td className="py-4">
-                    <p className="font-bold">{item.name.toUpperCase()}</p>
+                    <p className="font-bold">{(item.name || item.description || 'ITEM').toUpperCase()}</p>
                   </td>
                   <td className="py-4 text-center">{item.quantity}</td>
                   <td className="py-4 text-right">Kz {item.price.toLocaleString()}</td>
@@ -8955,7 +8956,7 @@ const ProformaInvoice = ({ proforma, establishment }: { proforma: any, establish
                   {pageItems.map((item: any, idx: number) => (
                     <tr key={`prof-row-idx-${idx}`}>
                       <td className="py-4">
-                        <p className="font-bold">{item.name.toUpperCase()}</p>
+                        <p className="font-bold">{(item.name || item.description || 'ITEM').toUpperCase()}</p>
                       </td>
                       <td className="py-4 text-center">{item.quantity}</td>
                       <td className="py-4 text-right">{proforma.currency || 'Kz'} {item.price.toLocaleString()}</td>
@@ -9120,12 +9121,12 @@ const Invoice = ({ sale, establishment, user }: { sale: any, establishment: any,
           </div>
           <div className="flex justify-between">
             <span>OPERADOR:</span>
-            <span>{user.name.toUpperCase()}</span>
+            <span>{(user?.name || 'ADMIN').toUpperCase()}</span>
           </div>
           <div className="mt-1 pt-1 border-t border-dashed border-zinc-400">
             <div className="flex justify-between">
               <span>CLIENTE:</span>
-              <span className="font-bold truncate max-w-[140px] text-black">{sale.client_name.toUpperCase()}</span>
+              <span className="font-bold truncate max-w-[140px] text-black">{(sale.client_name || 'CONSUMIDOR FINAL').toUpperCase()}</span>
             </div>
             <div className="flex justify-between">
               <span>NIF CLIENTE:</span>
@@ -9153,7 +9154,7 @@ const Invoice = ({ sale, establishment, user }: { sale: any, establishment: any,
               {sale.items.map((item: any, idx: number) => (
                 <tr key={`thermal-item-${item.id || item.product_id}-${idx}`}>
                   <td className="py-1 leading-tight">
-                    <p className="font-black truncate max-w-[160px]">{item.name.toUpperCase()}</p>
+                    <p className="font-black truncate max-w-[160px]">{(item.name || item.description || 'ITEM').toUpperCase()}</p>
                     <p className="text-[7px] text-black italic">{item.price.toLocaleString()} x {item.quantity}</p>
                   </td>
                   <td className="py-1 text-center align-top">{item.quantity}</td>

@@ -395,7 +395,7 @@ const AdminAuditLogs: React.FC = () => {
                         <td className="px-6 py-4">
                           <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border ${getSeverityColor(log.severity)}`}>
                             <SeverityIcon className="w-3.5 h-3.5" />
-                            {log.severity.toUpperCase()}
+                            {(log.severity || 'INFO').toUpperCase()}
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -542,7 +542,7 @@ const AdminAuditLogs: React.FC = () => {
                           {selectedLog.module}
                         </span>
                         <span className={`text-[10px] px-2 py-1 rounded-md font-bold uppercase ${getStatusBadge(selectedLog.status)}`}>
-                          {selectedLog.status.toUpperCase()}
+                          {(selectedLog.status || 'success').toUpperCase()}
                         </span>
                       </div>
                     </div>

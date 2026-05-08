@@ -126,6 +126,7 @@ export const OwnerReports = ({ user }: { user: User }) => {
   };
 
   if (isLoading) return <div className="p-12 text-center">Carregando relatórios...</div>;
+  if (!data) return <div className="p-12 text-center text-rose-500 font-bold">Erro ao carregar dados do relatório global.</div>;
 
   return (
     <div className="space-y-8">

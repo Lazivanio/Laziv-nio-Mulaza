@@ -523,6 +523,123 @@ const DigitalSignatureService = {
   }
 };
 
+/**
+ * Helper to create a fiscal document (FT, FR, NC, RC, etc.)
+ */
+function createFiscalDocument(db: any, params: any) {
+  const {
+    establishment_id, client_nif, client_name, address, country,
+    doc_type, invoice_date, currency, total_amount, tax_amount, items, seller_id,
+    payment_method, parent_invoice_id, reason, note_category,
+    adjustment_amount, observations, exchange_rate, cash_register_id,
+    due_date, service_designation
+  } = params;
+
+  const rateToSave = exchange_rate || 1.0;
+  const base_amount = total_amount * (rateToSave || 1.0);
+
+  const establishmentInfo = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
+  if (!establishmentInfo) throw new Error("Estabelecimento não encontrado.");
+
+  const ownerInfo = db.prepare("SELECT billing_mode FROM users WHERE id = ?").get(establishmentInfo.owner_id) as any;
+  const billing_mode = (ownerInfo?.billing_mode === 'eletronica') ? 'eletronica' : 'tradicional';
+  const seriesPrefix = billing_mode === 'eletronica' ? 'E' : 'A';
+
+  // Ensure we find the active series for the current mode and document type
+  let activeSeries = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = ? AND type = ? AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id, seriesPrefix, doc_type) as any;
+  
+  if (!activeSeries && billing_mode === 'tradicional') {
+    const year = new Date().getFullYear();
+    db.prepare(`
+      INSERT INTO invoice_series (establishment_id, name, prefix, start_number, current_number, status, agt_status, is_electronic, type, fiscal_year)
+      VALUES (?, ?, ?, ?, ?, ?, 'aprovada', 0, ?, ?)
+    `).run(establishment_id, `Série ${doc_type} Automática ${year}`, 'A', 1, 0, 'active', doc_type, year);
+    activeSeries = db.prepare("SELECT * FROM invoice_series WHERE establishment_id = ? AND prefix = 'A' AND type = ? AND status = 'active' ORDER BY id DESC LIMIT 1").get(establishment_id, doc_type) as any;
+  }
+
+  if (!activeSeries) {
+    const errorMsg = billing_mode === 'eletronica'
+      ? `Faturação Eletrónica: Nenhuma série de ${doc_type} (prefixo 'E') ativa e aprovada encontrada.`
+      : `Não existe uma série activa para o documento ${doc_type}.`;
+    throw new Error(errorMsg);
+  }
+
+  const year = new Date().getFullYear();
+  const nextNum = Math.max((activeSeries.current_number || 0) + 1, activeSeries.start_number || 1);
+  const finalNumber = `${doc_type} ${activeSeries.prefix}${activeSeries.fiscal_year || year}/${nextNum.toString().padStart(4, '0')}`;
+  const finalSeries = activeSeries.name;
+
+  db.prepare("UPDATE invoice_series SET current_number = ? WHERE id = ?").run(nextNum, activeSeries.id);
+
+  const signatureData = DigitalSignatureService.signDocument(establishmentInfo.owner_id, establishment_id, {
+    invoice_number: finalNumber,
+    doc_type,
+    client_name: client_name || 'Consumidor Final',
+    total_amount,
+    date: invoice_date || new Date().toISOString(),
+    items: JSON.stringify(items)
+  });
+
+  const result = db.prepare(`
+    INSERT INTO credit_invoices (
+      establishment_id, owner_id, client_nif, client_name, address, country, 
+      doc_type, series, invoice_number, invoice_date, 
+      currency, total_amount, tax_amount, items, seller_id, cash_register_id,
+      payment_method, parent_invoice_id, reason, note_category,
+      adjustment_amount, observations, due_date, service_designation,
+      exchange_rate, base_amount,
+      hash, signature, prev_signature, key_version_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    establishment_id, establishmentInfo.owner_id, client_nif, client_name, address, country, 
+    doc_type, finalSeries, finalNumber, invoice_date || new Date().toISOString(), 
+    currency || 'Kz', total_amount, tax_amount || 0, JSON.stringify(items || []), seller_id || null, cash_register_id || null,
+    payment_method || 'cash', parent_invoice_id || null, reason || null, 
+    note_category || null, adjustment_amount || 0, observations || null, due_date || null, service_designation || null,
+    rateToSave, base_amount,
+    signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.keyVersionId
+  );
+
+  const invoiceId = result.lastInsertRowid;
+
+  // FT -> Receivables
+  if (doc_type === 'FT') {
+    db.prepare(`
+      INSERT INTO accounts_receivable (establishment_id, owner_id, client_name, amount, due_date, description, status, invoice_id)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+    `).run(establishment_id, establishmentInfo.owner_id, client_name, total_amount, due_date, `Fatura Crédito - ${finalNumber}`, invoiceId);
+  }
+
+  // RC -> Liquidate FT
+  if (doc_type === 'RC' && parent_invoice_id) {
+    db.prepare("UPDATE credit_invoices SET status = 'paid' WHERE id = ?").run(parent_invoice_id);
+    db.prepare("UPDATE accounts_receivable SET status = 'paid' WHERE invoice_id = ?").run(parent_invoice_id);
+  }
+
+  // Financial Transaction
+  if (doc_type !== 'PP' && doc_type !== 'FT') {
+    const isNC = doc_type === 'NC';
+    const finType = isNC ? 'expense' : 'income';
+    const finCategory = isNC ? 'Nota de Crédito (Saída)' : 
+                        doc_type === 'RC' ? 'Recibo de Pagamento (FT)' : 'Venda Faturada';
+    
+    db.prepare(`
+      INSERT INTO financial_transactions (
+        establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id, reference_type,
+        currency_code, exchange_rate, base_amount
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paid', ?, 'credit_invoice', ?, ?, ?)
+    `).run(
+      establishment_id, establishmentInfo.owner_id, finType, finCategory, base_amount, payment_method || 'cash',
+      `${finCategory} - Documento ${finalNumber}${parent_invoice_id ? ' (Ref: ' + parent_invoice_id + ')' : ''}`, 
+      new Date().toISOString(), invoiceId,
+      currency || 'Kz', rateToSave, base_amount
+    );
+  }
+
+  return { id: invoiceId, invoice_number: finalNumber };
+}
+
+
 // Digital Signature Service ... (placeholder for visual confirmation)
 
   const logAction = (params: {
@@ -717,12 +834,6 @@ function initializeDatabase() {
         FOREIGN KEY(requested_by) REFERENCES users(id)
       );
 
-      try {
-        db.exec("ALTER TABLE service_sheets ADD COLUMN service_id INTEGER REFERENCES services(id);");
-      } catch (e) {
-        // Column might already exist
-      }
-
       CREATE TABLE IF NOT EXISTS currencies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         owner_id INTEGER NOT NULL,
@@ -733,22 +844,6 @@ function initializeDatabase() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(owner_id, code),
         FOREIGN KEY(owner_id) REFERENCES users(id)
-      );
-
-      CREATE TABLE IF NOT EXISTS service_sheets (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        establishment_id INTEGER NOT NULL,
-        service_id INTEGER,
-        client_name TEXT NOT NULL,
-        client_nif TEXT,
-        client_address TEXT,
-        service_description TEXT NOT NULL,
-        assigned_staff TEXT,
-        scheduled_date DATETIME NOT NULL,
-        status TEXT DEFAULT 'pending',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
-        FOREIGN KEY(service_id) REFERENCES services(id)
       );
 
       CREATE TABLE IF NOT EXISTS exchange_rates (
@@ -806,6 +901,10 @@ function initializeDatabase() {
         db.prepare("ALTER TABLE financial_transactions ADD COLUMN base_amount REAL").run();
         console.log("[DB] Added multi-currency columns to financial_transactions");
       }
+      if (!finCols.some(c => c.name === 'reference_type')) {
+        db.prepare("ALTER TABLE financial_transactions ADD COLUMN reference_type TEXT").run();
+        console.log("[DB] Added reference_type column to financial_transactions");
+      }
 
       const creditCols = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
       if (!creditCols.some(c => c.name === 'exchange_rate')) {
@@ -815,6 +914,30 @@ function initializeDatabase() {
       }
     } catch (e) {
       console.error("[DB] Error updating tables for multi-currency:", e);
+    }
+
+    // Service Sheets Migration
+    try {
+      const sheetsCols = db.prepare("PRAGMA table_info(service_sheets)").all() as any[];
+      if (sheetsCols.length > 0) {
+        if (!sheetsCols.some((c: any) => c.name === 'service_id')) {
+          db.exec("ALTER TABLE service_sheets ADD COLUMN service_id INTEGER REFERENCES services(id);");
+        }
+        if (!sheetsCols.some((c: any) => c.name === 'total_amount')) {
+          db.exec("ALTER TABLE service_sheets ADD COLUMN total_amount REAL DEFAULT 0;");
+        }
+        if (!sheetsCols.some((c: any) => c.name === 'selected_fees')) {
+          db.exec("ALTER TABLE service_sheets ADD COLUMN selected_fees TEXT;");
+        }
+        if (!sheetsCols.some((c: any) => c.name === 'payment_method')) {
+          db.exec("ALTER TABLE service_sheets ADD COLUMN payment_method TEXT DEFAULT 'Dinheiro';");
+        }
+        if (!sheetsCols.some((c: any) => c.name === 'fiscal_document_id')) {
+          db.exec("ALTER TABLE service_sheets ADD COLUMN fiscal_document_id INTEGER REFERENCES credit_invoices(id);");
+        }
+      }
+    } catch (e) {
+      console.error("[DB] Error migrating service_sheets:", e);
     }
 
     db.exec(`
@@ -1040,6 +1163,7 @@ function initializeDatabase() {
         date TEXT,
         status TEXT DEFAULT 'paid',
         reference_id INTEGER,
+        reference_type TEXT, -- 'transaction', 'credit_invoice', 'service_sheet'
         currency_code TEXT DEFAULT 'Kz',
         exchange_rate REAL DEFAULT 1.0,
         base_amount REAL,
@@ -1191,6 +1315,22 @@ function initializeDatabase() {
         FOREIGN KEY(owner_id) REFERENCES users(id),
         FOREIGN KEY(establishment_id) REFERENCES establishments(id),
         FOREIGN KEY(tax_id) REFERENCES taxes(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS service_sheets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER NOT NULL,
+        service_id INTEGER,
+        client_name TEXT NOT NULL,
+        client_nif TEXT,
+        client_address TEXT,
+        service_description TEXT NOT NULL,
+        assigned_staff TEXT,
+        scheduled_date DATETIME NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(service_id) REFERENCES services(id)
       );
 
       CREATE TABLE IF NOT EXISTS suppliers (
@@ -2066,9 +2206,9 @@ async function startServer() {
         try {
           db.prepare(`
             INSERT INTO financial_transactions (
-              establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id,
+              establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id, reference_type,
               currency_code, exchange_rate, base_amount
-            ) VALUES (?, ?, 'income', 'Venda POS', ?, ?, ?, ?, 'paid', ?, ?, ?, ?)
+            ) VALUES (?, ?, 'income', 'Venda POS', ?, ?, ?, ?, 'paid', ?, 'transaction', ?, ?, ?)
           `).run(
             establishment_id, ownerId, baseAmount, payment_method || 'cash',
             `Venda POS - Fatura ${invoice_number} (${finalCurrencyCode} ${total_amount})`, new Date().toISOString(), sale.id,
@@ -4010,24 +4150,62 @@ async function startServer() {
       const today = new Date().toISOString().split('T')[0];
       const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
 
-    // Break down the big stats query to avoid "Too many parameter values" if there are many establishments
-    const salesRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?`).get(...establishmentIds, today) as any;
-    const creditRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
-    const ncRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
+    // Use a unified calculation logic across all dashboard stats
+    const financialToday = db.prepare(`
+      SELECT 
+        SUM(income) as income,
+        SUM(expense) as expense
+      FROM (
+        SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'income' AND date(date) = ?
+        UNION ALL
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
+        UNION ALL
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
+        UNION ALL
+        SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) = ?
+        UNION ALL
+        SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) = ?
+        UNION ALL
+        SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date) = ?
+      )
+    `).get(...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today) as any;
+
+    const todaySales = financialToday?.income || 0;
+    const todayCountRes = db.prepare(`
+      SELECT COUNT(*) as total 
+      FROM (
+        SELECT id FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?
+        UNION ALL
+        SELECT id FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ?
+        UNION ALL
+        SELECT id FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) = ?
+      )
+    `).get(...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today) as any;
     
-    const countSalesRes = db.prepare(`SELECT COUNT(*) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?`).get(...establishmentIds, today) as any;
-    const countCreditRes = db.prepare(`SELECT COUNT(*) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ?`).get(...establishmentIds, today) as any;
+    const todayCount = todayCountRes?.total || 0;
+    const todayExpense = financialToday?.expense || 0;
 
-    const expenseRes = db.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND date(date) = ?`).get(...establishmentIds, today) as any;
+    const monthlySummaryRes = db.prepare(`
+      SELECT 
+        SUM(income) as income,
+        SUM(expense) as expense
+      FROM (
+        SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'income' AND date(date) >= ?
+        UNION ALL
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
+        UNION ALL
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
+        UNION ALL
+        SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) >= ?
+        UNION ALL
+        SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) >= ?
+        UNION ALL
+        SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date) >= ?
+      )
+    `).get(...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart) as any;
 
-    const monthlySalesRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ?`).get(...establishmentIds, monthStart) as any;
-    const monthlyCreditRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) >= ?`).get(...establishmentIds, monthStart) as any;
-    const monthlyNCRes = db.prepare(`SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) >= ?`).get(...establishmentIds, monthStart) as any;
-
-    const todaySales = (salesRes?.total || 0) + (creditRes?.total || 0) - (ncRes?.total || 0);
-    const todayCount = (countSalesRes?.total || 0) + (countCreditRes?.total || 0);
-    const todayExpense = expenseRes?.total || 0;
-    const monthlySales = (monthlySalesRes?.total || 0) + (monthlyCreditRes?.total || 0) - (monthlyNCRes?.total || 0);
+    const monthlySales = monthlySummaryRes?.income || 0;
+    const monthlyExpense = monthlySummaryRes?.expense || 0;
 
     console.log(`[DashboardStats] Global stats for owner ${resolvedOwnerId}: todaySales=${todaySales}, todayCount=${todayCount}, establishments=${establishmentIds.length}`);
 
@@ -4098,10 +4276,15 @@ async function startServer() {
           FROM credit_invoices
           WHERE establishment_id IN (${placeholders}) AND invoice_date >= date('now', '-7 days') AND doc_type = 'NC'
           GROUP BY day
+          UNION ALL
+          SELECT date(scheduled_date) as day, SUM(total_amount) as total
+          FROM service_sheets
+          WHERE establishment_id IN (${placeholders}) AND scheduled_date >= date('now', '-7 days') AND status = 'concluded'
+          GROUP BY day
         )
         GROUP BY day
         ORDER BY day ASC
-      `).all(...establishmentIds, ...establishmentIds, ...establishmentIds);
+      `).all(...establishmentIds, ...establishmentIds, ...establishmentIds, ...establishmentIds);
 
       const salesByEstablishment = db.prepare(`
         SELECT name, SUM(total) as total FROM (
@@ -4122,10 +4305,16 @@ async function startServer() {
           JOIN establishments s ON ci.establishment_id = s.id
           WHERE s.owner_id = ? AND ci.doc_type = 'NC'
           GROUP BY s.id
+          UNION ALL
+          SELECT s.name, SUM(ss.total_amount) as total
+          FROM service_sheets ss
+          JOIN establishments s ON ss.establishment_id = s.id
+          WHERE s.owner_id = ? AND ss.status = 'concluded'
+          GROUP BY s.id
         )
         GROUP BY name
         ORDER BY total DESC
-      `).all(resolvedOwnerId, resolvedOwnerId, resolvedOwnerId);
+      `).all(resolvedOwnerId, resolvedOwnerId, resolvedOwnerId, resolvedOwnerId);
 
       const paymentMethods = db.prepare(`
         SELECT name, SUM(value) as value FROM (
@@ -4143,9 +4332,14 @@ async function startServer() {
           FROM credit_invoices
           WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'
           GROUP BY payment_method
+          UNION ALL
+          SELECT COALESCE(payment_method, 'Dinheiro') as name, SUM(total_amount) as value
+          FROM service_sheets
+          WHERE establishment_id IN (${placeholders}) AND status = 'concluded'
+          GROUP BY name
         )
         GROUP BY name
-      `).all(...establishmentIds, ...establishmentIds, ...establishmentIds);
+      `).all(...establishmentIds, ...establishmentIds, ...establishmentIds, ...establishmentIds);
 
       res.json({
         todaySales,
@@ -4159,7 +4353,7 @@ async function startServer() {
         salesByDay,
         salesByEstablishment,
         paymentMethods,
-        totalExpenses: totalExpenses.total,
+        totalExpenses: monthlyExpense,
         financialHealth
       });
     } catch (error: any) {
@@ -4179,13 +4373,15 @@ async function startServer() {
         SELECT e.*, 
           (SELECT count(*) FROM staff st WHERE st.establishment_id = e.id) as staff_count,
           (
-            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM transactions t WHERE t.establishment_id = e.id AND date(t.timestamp) = ?), 0) +
-            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM credit_invoices ci WHERE ci.establishment_id = e.id AND ci.doc_type IN ('FT', 'FR', 'ND') AND date(ci.invoice_date) = ?), 0) -
-            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM credit_invoices ci WHERE ci.establishment_id = e.id AND ci.doc_type = 'NC' AND date(ci.invoice_date) = ?), 0)
+            COALESCE((SELECT SUM(amount) FROM financial_transactions WHERE establishment_id = e.id AND type = 'income' AND date(date) = ?), 0) +
+            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM transactions t WHERE t.establishment_id = e.id AND date(t.timestamp) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL)), 0) +
+            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM credit_invoices ci WHERE ci.establishment_id = e.id AND ci.doc_type IN ('FT', 'FR', 'ND') AND date(ci.invoice_date) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL)), 0) -
+            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM credit_invoices ci WHERE ci.establishment_id = e.id AND ci.doc_type = 'NC' AND date(ci.invoice_date) = ?), 0) +
+            COALESCE((SELECT SUM(total_amount) FROM service_sheets ss WHERE ss.establishment_id = e.id AND ss.status = 'concluded' AND ss.fiscal_document_id IS NULL AND date(ss.scheduled_date) = ?), 0)
           ) as today_sales
         FROM establishments e 
         WHERE e.id IN (${placeholders})
-      `).all(today, today, today, ...establishmentIds) as any[];
+      `).all(today, today, today, today, today, ...establishmentIds) as any[];
       
       res.json(establishments.map(e => ({
         ...e,
@@ -4286,14 +4482,14 @@ async function startServer() {
 
   app.post("/api/owner/financial/transactions", (req, res) => {
     try {
-      const { establishment_id, owner_id: requestId, type, category, amount, payment_method, description, date, status, reference_id } = req.body;
+      const { establishment_id, owner_id: requestId, type, category, amount, payment_method, description, date, status, reference_id, reference_type } = req.body;
       const { ownerId } = getContextData(requestId);
       if (!ownerId) throw new Error("Owner context not found");
 
       const result = db.prepare(`
-        INSERT INTO financial_transactions (establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(establishment_id, ownerId, type, category, amount, payment_method, description, date, status || 'paid', reference_id);
+        INSERT INTO financial_transactions (establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id, reference_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(establishment_id, ownerId, type, category, amount, payment_method, description, date, status || 'paid', reference_id, reference_type || null);
       res.json({ id: result.lastInsertRowid });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -4347,8 +4543,8 @@ async function startServer() {
         if (receivable && receivable.status !== 'paid') {
           db.prepare(`
             INSERT INTO financial_transactions (
-              establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
-            ) VALUES (?, ?, 'income', 'Recebimento de Cliente', ?, 'other', ?, ?, 'paid', ?)
+              establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id, reference_type
+            ) VALUES (?, ?, 'income', 'Recebimento de Cliente', ?, 'other', ?, ?, 'paid', ?, 'receivable')
           `).run(
             receivable.establishment_id, receivable.owner_id, receivable.amount,
             `Recebimento - ${receivable.client_name} (${receivable.description || ''})`,
@@ -4411,8 +4607,8 @@ async function startServer() {
         if (payable && payable.status !== 'paid') {
           db.prepare(`
             INSERT INTO financial_transactions (
-              establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
-            ) VALUES (?, ?, 'expense', 'Pagamento de Conta', ?, 'other', ?, ?, 'paid', ?)
+              establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id, reference_type
+            ) VALUES (?, ?, 'expense', 'Pagamento de Conta', ?, 'other', ?, ?, 'paid', ?, 'payable')
           `).run(
             payable.establishment_id, payable.owner_id, payable.amount,
             `Pagamento - ${payable.supplier_name} (${payable.description || ''})`,
@@ -4451,19 +4647,41 @@ async function startServer() {
 
       todaySummary = db.prepare(`
         SELECT 
-          SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
-          SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
-        FROM financial_transactions 
-        WHERE establishment_id IN (${placeholders}) AND date LIKE ?
-      `).get(...targetEstIds, `${today}%`) as any;
+          SUM(income) as income,
+          SUM(expense) as expense
+        FROM (
+          SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'income' AND date(date) = ?
+          UNION ALL
+          SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
+          UNION ALL
+          SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
+          UNION ALL
+          SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) = ?
+          UNION ALL
+          SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) = ?
+          UNION ALL
+          SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date) = ?
+        )
+      `).get(...targetEstIds, today, ...targetEstIds, today, ...targetEstIds, today, ...targetEstIds, today, ...targetEstIds, today, ...targetEstIds, today) as any;
 
       monthSummary = db.prepare(`
         SELECT 
-          SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
-          SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
-        FROM financial_transactions 
-        WHERE establishment_id IN (${placeholders}) AND date >= ?
-      `).get(...targetEstIds, firstDayOfMonth) as any;
+          SUM(income) as income,
+          SUM(expense) as expense
+        FROM (
+          SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'income' AND date(date) >= ?
+          UNION ALL
+          SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
+          UNION ALL
+          SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
+          UNION ALL
+          SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) >= ?
+          UNION ALL
+          SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) >= ?
+          UNION ALL
+          SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date) >= ?
+        )
+      `).get(...targetEstIds, firstDayOfMonth, ...targetEstIds, firstDayOfMonth, ...targetEstIds, firstDayOfMonth, ...targetEstIds, firstDayOfMonth, ...targetEstIds, firstDayOfMonth, ...targetEstIds, firstDayOfMonth) as any;
 
       totals = db.prepare(`
         SELECT 
@@ -5363,13 +5581,15 @@ async function startServer() {
       // Breakdown queries for stability and accuracy
       const countTrans = db.prepare("SELECT COUNT(*) as count FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
       const countCredit = db.prepare("SELECT COUNT(*) as count FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
+      const countSheets = db.prepare("SELECT COUNT(*) as count FROM service_sheets WHERE establishment_id = ? AND status = 'concluded' AND date(scheduled_date) = ?").get(establishmentId, today) as any;
       
       const totalTrans = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
       const totalCredit = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
       const totalNC = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type = 'NC'").get(establishmentId, today) as any;
+      const totalSheets = db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM service_sheets WHERE establishment_id = ? AND status = 'concluded' AND date(scheduled_date) = ?").get(establishmentId, today) as any;
       
-      const todaySalesCount = (countTrans?.count || 0) + (countCredit?.count || 0);
-      const todayRevenueTotal = (totalTrans?.total || 0) + (totalCredit?.total || 0) - (totalNC?.total || 0);
+      const todaySalesCount = (countTrans?.count || 0) + (countCredit?.count || 0) + (countSheets?.count || 0);
+      const todayRevenueTotal = (totalTrans?.total || 0) + (totalCredit?.total || 0) - (totalNC?.total || 0) + (totalSheets?.total || 0);
       
       const sellers = db.prepare("SELECT COUNT(DISTINCT seller_id) as count FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
 
@@ -5396,11 +5616,20 @@ async function startServer() {
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
       const financialSummary = db.prepare(`
         SELECT 
-          SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
-          SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
-        FROM financial_transactions 
-        WHERE establishment_id = ? AND date >= ?
-      `).get(establishmentId, firstDay) as any;
+          SUM(income) as income,
+          SUM(expense) as expense
+        FROM (
+          SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE establishment_id = ? AND type = 'income' AND date >= ?
+          UNION ALL
+          SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE establishment_id = ? AND type = 'expense' AND date >= ?
+          UNION ALL
+          SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE establishment_id = ? AND date(timestamp) >= ? AND cancellation_id IS NULL AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE establishment_id = ? AND type = 'income' AND reference_id IS NOT NULL)
+          UNION ALL
+          SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) >= ? AND doc_type IN ('FT', 'FR', 'ND') AND status != 'canceled' AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE establishment_id = ? AND type = 'income' AND reference_id IS NOT NULL)
+          UNION ALL
+          SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) >= ? AND doc_type = 'NC' AND status != 'canceled' AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE establishment_id = ? AND type = 'expense' AND reference_id IS NOT NULL)
+        )
+      `).get(establishmentId, firstDay, establishmentId, firstDay, establishmentId, firstDay, establishmentId, establishmentId, firstDay, establishmentId, establishmentId, firstDay, establishmentId) as any;
 
       res.json({
         establishment: {
@@ -5653,6 +5882,7 @@ async function startServer() {
 
     const serviceSales: Record<string, { id: number, name: string, code: string, quantity: number, revenue: number, last_sold: string, establishment_id: number }> = {};
 
+    // 1. POS Transactions
     transactions.forEach(t => {
       try {
         const items = JSON.parse(t.items);
@@ -5661,25 +5891,54 @@ async function startServer() {
             const key = `${item.id}_${t.establishment_id}`;
             if (!serviceSales[key]) {
               serviceSales[key] = {
-                id: item.id,
-                name: item.name,
-                code: item.code || 'N/A',
-                quantity: 0,
-                revenue: 0,
-                last_sold: t.timestamp,
-                establishment_id: t.establishment_id
+                id: item.id, name: item.name, code: item.code || 'N/A', quantity: 0, revenue: 0, last_sold: t.timestamp, establishment_id: t.establishment_id
               };
             }
-            serviceSales[key].quantity += item.quantity || 1;
-            serviceSales[key].revenue += (item.quantity || 1) * item.price;
-            if (new Date(t.timestamp) > new Date(serviceSales[key].last_sold)) {
-              serviceSales[key].last_sold = t.timestamp;
-            }
+            const qty = item.quantity || 1;
+            serviceSales[key].quantity += qty;
+            serviceSales[key].revenue += item.total || (qty * (item.price || 0));
+            if (new Date(t.timestamp) > new Date(serviceSales[key].last_sold)) serviceSales[key].last_sold = t.timestamp;
           }
         });
-      } catch (e) {
-        console.error("Error parsing transaction items:", e);
+      } catch (e) {}
+    });
+
+    // 2. Invoices
+    const invoices = db.prepare(`SELECT items, invoice_date, establishment_id FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND status != 'canceled'`).all(...establishmentIds) as any[];
+    invoices.forEach(inv => {
+      try {
+        const items = JSON.parse(inv.items);
+        if (Array.isArray(items)) {
+          items.forEach((item: any) => {
+            if (item.type === 'service' || item.is_service) {
+              const key = `${item.id || item.product_id}_${inv.establishment_id}`;
+              if (!serviceSales[key]) {
+                serviceSales[key] = {
+                  id: item.id || item.product_id, name: item.name, code: item.code || 'N/A', quantity: 0, revenue: 0, last_sold: inv.invoice_date, establishment_id: inv.establishment_id
+                };
+              }
+              const qty = item.quantity || 1;
+              serviceSales[key].quantity += qty;
+              serviceSales[key].revenue += item.total || (qty * (item.price || 0));
+              if (new Date(inv.invoice_date) > new Date(serviceSales[key].last_sold)) serviceSales[key].last_sold = inv.invoice_date;
+            }
+          });
+        }
+      } catch (e) {}
+    });
+
+    // 3. Service Sheets (only if no doc generated yet)
+    const sheets = db.prepare(`SELECT * FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL`).all(...establishmentIds) as any[];
+    sheets.forEach(s => {
+      const key = `${s.service_id || 0}_${s.establishment_id}`;
+      if (!serviceSales[key]) {
+        serviceSales[key] = {
+          id: s.service_id || 0, name: s.service_description, code: 'N/A', quantity: 0, revenue: 0, last_sold: s.scheduled_date, establishment_id: s.establishment_id
+        };
       }
+      serviceSales[key].quantity += 1;
+      serviceSales[key].revenue += s.total_amount;
+      if (new Date(s.scheduled_date) > new Date(serviceSales[key].last_sold)) serviceSales[key].last_sold = s.scheduled_date;
     });
 
     // Join with establishment names
@@ -6148,19 +6407,41 @@ async function startServer() {
       params = [...establishmentIds];
     }
     
-    // Sales of the day (Transactions)
+    // Sales of the day (Unified logic)
     const today = new Date().toISOString().split('T')[0];
-    const todaySalesRes = db.prepare(`
+    const financialToday = db.prepare(`
       SELECT 
-        (SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) FROM transactions WHERE ${whereClause} AND date(timestamp) = ?) as trans_total,
-        (SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) FROM credit_invoices WHERE ${whereClause} AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')) as credit_total,
-        (SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) FROM credit_invoices WHERE ${whereClause} AND date(invoice_date) = ? AND doc_type = 'NC') as nc_total,
-        (SELECT COUNT(*) FROM transactions WHERE ${whereClause} AND date(timestamp) = ?) as trans_count,
-        (SELECT COUNT(*) FROM credit_invoices WHERE ${whereClause} AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')) as credit_count
-    `).get(...params, today, ...params, today, ...params, today, ...params, today, ...params, today) as any;
+        SUM(income) as income,
+        SUM(expense) as expense
+      FROM (
+        SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE ${whereClause} AND type = 'income' AND date(date) = ?
+        UNION ALL
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE ${whereClause} AND date(timestamp) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
+        UNION ALL
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE ${whereClause} AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
+        UNION ALL
+        SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE ${whereClause} AND doc_type = 'NC' AND date(invoice_date) = ?
+        UNION ALL
+        SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE ${whereClause} AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) = ?
+        UNION ALL
+        SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE ${whereClause} AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date) = ?
+      )
+    `).get(...params, today, ...params, today, ...params, today, ...params, today, ...params, today, ...params, today) as any;
 
-    const todaySales = (todaySalesRes?.trans_total || 0) + (todaySalesRes?.credit_total || 0) - (todaySalesRes?.nc_total || 0);
-    const todayCount = (todaySalesRes?.trans_count || 0) + (todaySalesRes?.credit_count || 0);
+    const todaySales = financialToday?.income || 0;
+    const todayCountRes = db.prepare(`
+      SELECT COUNT(*) as total 
+      FROM (
+        SELECT id FROM transactions WHERE ${whereClause} AND date(timestamp) = ?
+        UNION ALL
+        SELECT id FROM credit_invoices WHERE ${whereClause} AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ?
+        UNION ALL
+        SELECT id FROM service_sheets WHERE ${whereClause} AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) = ?
+      )
+    `).get(...params, today, ...params, today, ...params, today) as any;
+    
+    const todayCount = todayCountRes?.total || 0;
+    const todayExpense = financialToday?.expense || 0;
 
     // Low stock count (below 5)
     const lowStock = db.prepare(`
@@ -6278,22 +6559,26 @@ async function startServer() {
       GROUP BY name
     `).all(...params, ...params, ...params) as any[];
 
-    // Financial Summary (Real values)
-    const financialToday = db.prepare(`
-      SELECT 
-        SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
-        SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
-      FROM financial_transactions 
-      WHERE ${whereClause} AND date LIKE date('now') || '%'
-    `).get(...params) as any;
-
+    // Use a unified calculation logic across all dashboard stats for the month
+    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
     const financialMonth = db.prepare(`
       SELECT 
-        SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
-        SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
-      FROM financial_transactions 
-      WHERE ${whereClause} AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now')
-    `).get(...params) as any;
+        SUM(income) as income,
+        SUM(expense) as expense
+      FROM (
+        SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE ${whereClause} AND type = 'income' AND date(date) >= ?
+        UNION ALL
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE ${whereClause} AND date(timestamp) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL)
+        UNION ALL
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE ${whereClause} AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL)
+        UNION ALL
+        SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE ${whereClause} AND doc_type = 'NC' AND date(invoice_date) >= ?
+        UNION ALL
+        SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE ${whereClause} AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) >= ?
+        UNION ALL
+        SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE ${whereClause} AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date) >= ?
+      )
+    `).get(...params, monthStart, ...params, monthStart, ...params, monthStart, ...params, monthStart, ...params, monthStart, ...params, monthStart) as any;
 
     // Financial Health for Salaries (Employee Payment Reminder)
     const salaries = db.prepare(`
@@ -6674,26 +6959,132 @@ async function startServer() {
   });
 
   app.post("/api/owner/service-sheets", (req, res) => {
-    const { establishment_id, service_id, client_name, client_nif, client_address, service_description, assigned_staff, scheduled_date } = req.body;
+    const { establishment_id, service_id, client_name, client_nif, client_address, service_description, assigned_staff, scheduled_date, total_amount, selected_fees } = req.body;
     try {
+      let fiscal_document_id = null;
+      const today = new Date().toISOString().split('T')[0];
+
+      // If scheduled date is in the future, generate an FT automatically as per user request
+      if (scheduled_date && scheduled_date > today && total_amount > 0) {
+        try {
+          const items = [{
+            description: service_description || "Serviço Prestado",
+            name: service_description || "Serviço Prestado",
+            quantity: 1,
+            price: total_amount,
+            total: total_amount,
+            tax_rate: 0,
+            type: 'service'
+          }];
+          const inv = createFiscalDocument(db, {
+            establishment_id,
+            client_name: client_name || "Consumidor Final",
+            client_nif,
+            address: client_address,
+            doc_type: 'FT',
+            total_amount,
+            items,
+            currency: 'Kz',
+            due_date: scheduled_date
+          });
+          fiscal_document_id = inv.id;
+        } catch (invErr) {
+          console.error("Error auto-generating FT for future service sheet:", invErr);
+        }
+      }
+
       const result = db.prepare(`
-        INSERT INTO service_sheets (establishment_id, service_id, client_name, client_nif, client_address, service_description, assigned_staff, scheduled_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(establishment_id, service_id || null, client_name, client_nif, client_address, service_description, assigned_staff, scheduled_date);
-      res.json({ id: result.lastInsertRowid });
+        INSERT INTO service_sheets (establishment_id, service_id, client_name, client_nif, client_address, service_description, assigned_staff, scheduled_date, total_amount, selected_fees, fiscal_document_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        establishment_id, 
+        service_id || null, 
+        client_name, 
+        client_nif, 
+        client_address, 
+        service_description, 
+        assigned_staff, 
+        scheduled_date,
+        total_amount || 0,
+        selected_fees ? JSON.stringify(selected_fees) : null,
+        fiscal_document_id
+      );
+      res.json({ id: result.lastInsertRowid, fiscal_document_id });
     } catch (e) {
+      console.error("Error creating service sheet:", e);
       res.status(500).json({ error: "Erro ao criar folha de serviço" });
     }
   });
 
   app.patch("/api/owner/service-sheets/:id/status", (req, res) => {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, payment_method } = req.body;
     try {
-      db.prepare("UPDATE service_sheets SET status = ? WHERE id = ?").run(status, id);
+      db.transaction(() => {
+        if (payment_method) {
+          db.prepare("UPDATE service_sheets SET status = ?, payment_method = ? WHERE id = ?").run(status, payment_method, id);
+        } else {
+          db.prepare("UPDATE service_sheets SET status = ? WHERE id = ?").run(status, id);
+        }
+
+        // If status is concluded, generate FR or RC
+        if (status === 'concluded' || status === 'concluido') {
+          const sheet = db.prepare("SELECT * FROM service_sheets WHERE id = ?").get(id) as any;
+          if (sheet && sheet.total_amount > 0) {
+            try {
+              if (!sheet.fiscal_document_id) {
+                // No document yet: Create FR
+                const items = [{
+                  description: sheet.service_description || "Serviço Prestado",
+                  name: sheet.service_description || "Serviço Prestado",
+                  quantity: 1,
+                  price: sheet.total_amount,
+                  total: sheet.total_amount,
+                  tax_rate: 0,
+                  type: 'service'
+                }];
+                const inv = createFiscalDocument(db, {
+                  establishment_id: sheet.establishment_id,
+                  client_name: sheet.client_name || "Consumidor Final",
+                  client_nif: sheet.client_nif,
+                  address: sheet.client_address,
+                  doc_type: 'FR',
+                  total_amount: sheet.total_amount,
+                  items,
+                  currency: 'Kz',
+                  payment_method: payment_method || sheet.payment_method || 'Dinheiro'
+                });
+                db.prepare("UPDATE service_sheets SET fiscal_document_id = ? WHERE id = ?").run(inv.id, id);
+              } else {
+                // Check if existing document is an FT
+                const existingDoc = db.prepare("SELECT doc_type, status FROM credit_invoices WHERE id = ?").get(sheet.fiscal_document_id) as any;
+                if (existingDoc && existingDoc.doc_type === 'FT' && existingDoc.status !== 'paid') {
+                  // Create RC (Recibo) to liquidate the FT
+                  createFiscalDocument(db, {
+                    establishment_id: sheet.establishment_id,
+                    client_name: sheet.client_name || "Consumidor Final",
+                    client_nif: sheet.client_nif,
+                    address: sheet.client_address,
+                    doc_type: 'RC',
+                    total_amount: sheet.total_amount,
+                    currency: 'Kz',
+                    parent_invoice_id: sheet.fiscal_document_id,
+                    payment_method: payment_method || sheet.payment_method || 'Dinheiro'
+                  });
+                }
+              }
+            } catch (invErr: any) {
+              console.error("Error auto-generating fiscal document on conclusion:", invErr);
+              // We throw here to rollback the status change if fiscal generation fails
+              throw new Error(`Erro ao gerar documento fiscal: ${invErr.message}`);
+            }
+          }
+        }
+      })();
       res.json({ success: true });
-    } catch (e) {
-      res.status(500).json({ error: "Erro ao atualizar status" });
+    } catch (e: any) {
+      console.error("Error updating service sheet status:", e);
+      res.status(400).json({ error: e.message || "Erro ao atualizar status" });
     }
   });
 
@@ -6708,92 +7099,105 @@ async function startServer() {
   });
 
   app.get("/api/owner/global-reports/:ownerId", (req, res) => {
-    const { establishmentIds } = getContextData(req.params.ownerId);
-    
-    if (establishmentIds.length === 0) {
-      return res.json({ 
-        totalRevenue: 0, 
-        totalSales: 0, 
-        revenueByEstablishment: [], 
-        salesByDay: [], 
-        topProducts: [],
-        paymentMethods: [],
-        establishmentComparison: [],
-        promotionsEfficiency: []
-      });
-    }
+    try {
+      const { establishmentIds } = getContextData(req.params.ownerId);
+      
+      if (establishmentIds.length === 0) {
+        return res.json({ 
+          totalRevenue: 0, 
+          totalSales: 0, 
+          revenueByEstablishment: [], 
+          salesByDay: [], 
+          topProducts: [],
+          paymentMethods: [],
+          establishmentComparison: [],
+          promotionsEfficiency: []
+        });
+      }
 
-    const establishments = db.prepare(`SELECT id, name FROM establishments WHERE id IN (${establishmentIds.map(() => '?').join(',')})`).all(...establishmentIds) as any[];
-    
-    const placeholders = establishmentIds.map(() => '?').join(',');
+      console.log(`[GlobalReport] Generating report for owner ${req.params.ownerId} with ${establishmentIds.length} establishments`);
 
-    // Unified Revenue & Sales for global stats
-    const stats = db.prepare(`
-      SELECT SUM(revenue) as totalRevenue, SUM(count) as totalSales
-      FROM (
-        SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM transactions WHERE establishment_id IN (${placeholders})
-        UNION ALL
-        SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND')
-        UNION ALL
-        SELECT -COALESCE(base_amount, total_amount) as revenue, 0 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'
-      )
-    `).get(...[...establishmentIds, ...establishmentIds, ...establishmentIds]) as any;
+      const establishments = db.prepare(`SELECT id, name, nif FROM establishments WHERE id IN (${establishmentIds.map(() => '?').join(',')})`).all(...establishmentIds) as any[];
+      const placeholders = establishmentIds.map(() => '?').join(',');
 
-    // Revenue, Profit, and Comparison by Establishment
-    const establishmentComparison = establishments.map(establishment => {
-      const unifiedRevenue = db.prepare(`
-        SELECT SUM(revenue) as total, SUM(count) as count FROM (
-          SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM transactions WHERE establishment_id = ?
+      // Unified Revenue & Sales for global stats
+      const stats = db.prepare(`
+        SELECT COALESCE(SUM(revenue), 0) as totalRevenue, COALESCE(SUM(count), 0) as totalSales
+        FROM (
+          SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM transactions WHERE establishment_id IN (${placeholders}) AND cancellation_id IS NULL
           UNION ALL
-          SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type IN ('FT', 'FR', 'ND')
+          SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND status != 'canceled'
           UNION ALL
-          SELECT -COALESCE(base_amount, total_amount) as revenue, 0 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type = 'NC'
+          SELECT -COALESCE(base_amount, total_amount) as revenue, 0 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND status != 'canceled'
+          UNION ALL
+          SELECT total_amount as revenue, 1 as count FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded'
         )
-      `).get(establishment.id, establishment.id, establishment.id) as any;
+      `).get(...[...establishmentIds, ...establishmentIds, ...establishmentIds, ...establishmentIds]) as any;
 
-      const purchases = db.prepare(`
-        SELECT SUM(total_amount) as total FROM purchases WHERE establishment_id = ?
-      `).get(establishment.id) as any;
+      // Revenue, Profit, and Comparison by Establishment
+      const establishmentComparison = establishments.map(establishment => {
+        try {
+          const unifiedRevenue = db.prepare(`
+            SELECT SUM(revenue) as total, SUM(count) as count FROM (
+              SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM transactions WHERE establishment_id = ? AND cancellation_id IS NULL
+              UNION ALL
+              SELECT COALESCE(base_amount, total_amount) as revenue, 1 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type IN ('FT', 'FR', 'ND') AND status != 'canceled'
+              UNION ALL
+              SELECT -COALESCE(base_amount, total_amount) as revenue, 0 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type = 'NC' AND status != 'canceled'
+              UNION ALL
+              SELECT total_amount as revenue, 1 as count FROM service_sheets WHERE establishment_id = ? AND status = 'concluded'
+            )
+          `).get(establishment.id, establishment.id, establishment.id, establishment.id) as any;
 
-      const salaries = db.prepare(`
-        SELECT SUM(p.amount) as total 
-        FROM hr_salary_payments p
-        JOIN hr_salaries s ON p.salary_id = s.id
-        JOIN users u ON s.user_id = u.id
-        WHERE u.establishment_id = ?
-      `).get(establishment.id) as any;
+          const purchases = db.prepare(`
+            SELECT SUM(total_amount) as total FROM purchases WHERE establishment_id = ?
+          `).get(establishment.id) as any;
 
-      const totalRevenue = unifiedRevenue?.total || 0;
-      const totalExpenses = (purchases?.total || 0) + (salaries?.total || 0);
-      const profit = totalRevenue - totalExpenses;
-      const salesCount = unifiedRevenue?.count || 0;
-      const ticketMedio = salesCount > 0 ? totalRevenue / salesCount : 0;
+          const salaries = db.prepare(`
+            SELECT COALESCE(SUM(p.amount), 0) as total 
+            FROM hr_salary_payments p
+            JOIN hr_salaries s ON p.salary_id = s.id
+            JOIN users u ON s.user_id = u.id
+            WHERE u.establishment_id = ?
+          `).get(establishment.id) as any;
 
-      return {
-        id: establishment.id,
-        name: establishment.name,
-        revenue: totalRevenue,
-        expenses: totalExpenses,
-        profit: profit,
-        salesCount: salesCount,
-        ticketMedio: ticketMedio,
-        margin: totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0
-      };
-    });
+          const totalRevenue = unifiedRevenue?.total || 0;
+          const totalExpenses = (purchases?.total || 0) + (salaries?.total || 0);
+          const profit = totalRevenue - totalExpenses;
+          const salesCount = unifiedRevenue?.count || 0;
+          const ticketMedio = salesCount > 0 ? totalRevenue / salesCount : 0;
+
+          return {
+            id: establishment.id,
+            name: establishment.name,
+            revenue: totalRevenue,
+            expenses: totalExpenses,
+            profit: profit,
+            salesCount: salesCount,
+            ticketMedio: ticketMedio,
+            margin: totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0
+          };
+        } catch (innerErr) {
+          console.error(`Error in comparison for est ${establishment.id}:`, innerErr);
+          return { id: establishment.id, name: establishment.name, revenue: 0, expenses: 0, profit: 0, salesCount: 0, ticketMedio: 0, margin: 0 };
+        }
+      });
 
     // Sales by Day (last 30 days) - Unified
     const salesByDay = db.prepare(`
       SELECT day as date, SUM(revenue) as revenue
       FROM (
-        SELECT date(timestamp) as day, COALESCE(base_amount, total_amount) as revenue FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= date('now', '-30 days')
+        SELECT date(timestamp) as day, COALESCE(base_amount, total_amount) as revenue FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= date('now', '-30 days') AND cancellation_id IS NULL
         UNION ALL
-        SELECT date(invoice_date) as day, COALESCE(base_amount, total_amount) as revenue FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND date(invoice_date) >= date('now', '-30 days') AND doc_type IN ('FT', 'FR', 'ND')
+        SELECT date(invoice_date) as day, COALESCE(base_amount, total_amount) as revenue FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND date(invoice_date) >= date('now', '-30 days') AND doc_type IN ('FT', 'FR', 'ND') AND status != 'canceled'
         UNION ALL
-        SELECT date(invoice_date) as day, -COALESCE(base_amount, total_amount) as revenue FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND date(invoice_date) >= date('now', '-30 days') AND doc_type = 'NC'
+        SELECT date(invoice_date) as day, -COALESCE(base_amount, total_amount) as revenue FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND date(invoice_date) >= date('now', '-30 days') AND doc_type = 'NC' AND status != 'canceled'
+        UNION ALL
+        SELECT date(scheduled_date) as day, total_amount as revenue FROM service_sheets WHERE establishment_id IN (${placeholders}) AND date(scheduled_date) >= date('now', '-30 days') AND status = 'concluded'
       )
       GROUP BY day
       ORDER BY day ASC
-    `).all(...[...establishmentIds, ...establishmentIds, ...establishmentIds]);
+    `).all(...[...establishmentIds, ...establishmentIds, ...establishmentIds, ...establishmentIds]);
 
     // Top Products - Unified
     const productSales: Record<string, { id: any, name: string, quantity: number, revenue: number }> = {};
@@ -6827,14 +7231,16 @@ async function startServer() {
     const paymentMethods = db.prepare(`
       SELECT name, SUM(value) as value
       FROM (
-        SELECT payment_method as name, total_amount as value FROM transactions WHERE establishment_id IN (${placeholders})
+        SELECT payment_method as name, total_amount as value FROM transactions WHERE establishment_id IN (${placeholders}) AND cancellation_id IS NULL
         UNION ALL
-        SELECT payment_method as name, COALESCE(base_amount, total_amount) as value FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND')
+        SELECT payment_method as name, COALESCE(base_amount, total_amount) as value FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND status != 'canceled'
         UNION ALL
-        SELECT payment_method as name, -COALESCE(base_amount, total_amount) as value FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'
+        SELECT payment_method as name, -COALESCE(base_amount, total_amount) as value FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND status != 'canceled'
+        UNION ALL
+        SELECT COALESCE(payment_method, 'Dinheiro') as name, total_amount as value FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded'
       )
       GROUP BY name
-    `).all(...[...establishmentIds, ...establishmentIds, ...establishmentIds]);
+    `).all(...[...establishmentIds, ...establishmentIds, ...establishmentIds, ...establishmentIds]);
 
     // Promotions Efficiency
     const promotions = db.prepare(`
@@ -6887,7 +7293,11 @@ async function startServer() {
       establishmentComparison,
       promotionsEfficiency
     });
-  });
+  } catch (err) {
+    console.error("Critical error in global-reports:", err);
+    res.status(500).json({ error: "Erro interno ao gerar relatórios globais", details: err instanceof Error ? err.message : String(err) });
+  }
+});
 
   app.put("/api/owner/establishment-settings/:id", (req, res) => {
     const { name, nif, phone, email, address, logo_url, status, bank_accounts } = req.body;
@@ -7109,8 +7519,8 @@ async function startServer() {
           if (establishment) {
             db.prepare(`
               INSERT INTO financial_transactions (
-                establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
-              ) VALUES (?, ?, 'expense', 'Compra de Mercadoria', ?, ?, ?, ?, 'paid', ?)
+                establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id, reference_type
+              ) VALUES (?, ?, 'expense', 'Compra de Mercadoria', ?, ?, ?, ?, 'paid', ?, 'purchase')
             `).run(
               establishment_id, establishment.owner_id, paid_amount, 'cash',
               `Pagamento Inicial - Compra ${finalInvoiceNumber}`, new Date().toISOString(), purchaseId
@@ -7179,8 +7589,8 @@ async function startServer() {
           if (establishment) {
             db.prepare(`
               INSERT INTO financial_transactions (
-                establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
-              ) VALUES (?, ?, 'expense', 'Pagamento Fornecedor', ?, ?, ?, ?, 'paid', ?)
+                establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id, reference_type
+              ) VALUES (?, ?, 'expense', 'Pagamento Fornecedor', ?, ?, ?, ?, 'paid', ?, 'purchase_payment')
             `).run(
               purchase.establishment_id, establishment.owner_id, amount, payment_method || 'cash',
               `Pagamento Fornecedor - Compra ${purchase.invoice_number}`, new Date().toISOString(), purchase_id
@@ -8046,9 +8456,9 @@ async function startServer() {
               
               db.prepare(`
                 INSERT INTO financial_transactions (
-                  establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id,
+                  establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id, reference_type,
                   currency_code, exchange_rate, base_amount
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paid', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paid', ?, 'credit_invoice', ?, ?, ?)
               `).run(
                 establishment_id, establishment.owner_id, finType, finCategory, finAmount, payment_method || 'cash',
                 `${finCategory} - Documento ${finalNumber}${parent_invoice_id ? ' (Ref: ' + parent_invoice_id + ')' : ''} (${currency} ${total_amount})`, 

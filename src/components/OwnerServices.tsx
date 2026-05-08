@@ -93,7 +93,9 @@ export const OwnerServices = ({ user }: { user: User }) => {
     client_address: '',
     service_description: '',
     assigned_staff: '',
-    scheduled_date: new Date().toISOString().split('T')[0]
+    scheduled_date: new Date().toISOString().split('T')[0],
+    total_amount: 0,
+    selected_fees: [] as any[]
   });
 
   useEffect(() => {
@@ -105,12 +107,14 @@ export const OwnerServices = ({ user }: { user: User }) => {
     }
   }, [user.id, activeTab]);
 
-  const fetchServiceSheets = async () => {
+  const fetchServiceSheets = async (estIdProp?: string) => {
     setIsSheetLoading(true);
     try {
-      // Find the first establishment of the user or filter by select
-      const estId = establishments.length > 0 ? establishments[0].id : null;
+      const estId = estIdProp || sheetFormData.establishment_id || (establishments.length > 0 ? establishments[0].id : null);
       if (estId) {
+        if (!sheetFormData.establishment_id) {
+          setSheetFormData(prev => ({ ...prev, establishment_id: estId.toString() }));
+        }
         const res = await fetch(`/api/owner/service-sheets/${estId}`);
         const data = await res.json();
         setServiceSheets(data);
@@ -123,15 +127,11 @@ export const OwnerServices = ({ user }: { user: User }) => {
   };
 
   const handleEstablishmentChangeForSheets = async (estId: string) => {
-    setSheetFormData({ ...sheetFormData, establishment_id: estId });
+    setSheetFormData({ ...sheetFormData, establishment_id: estId, service_id: '' });
     if (estId) {
-      setIsSheetLoading(true);
-      try {
-        const res = await fetch(`/api/owner/service-sheets/${estId}`);
-        const data = await res.json();
-        setServiceSheets(data);
-      } catch (e) {}
-      setIsSheetLoading(false);
+      fetchServiceSheets(estId);
+    } else {
+      setServiceSheets([]);
     }
   };
 
@@ -150,6 +150,8 @@ export const OwnerServices = ({ user }: { user: User }) => {
 
   const hasServicesForSelectedEst = sheetFormData.establishment_id && 
     services.some(s => s.establishment_id.toString() === sheetFormData.establishment_id);
+
+  const [isSubmittingSheet, setIsSubmittingSheet] = useState(false);
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -250,6 +252,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
 
   const handleCreateSheet = async (e: FormEvent) => {
     e.preventDefault();
+    setIsSubmittingSheet(true);
     try {
       const res = await fetch('/api/owner/service-sheets', {
         method: 'POST',
@@ -258,8 +261,13 @@ export const OwnerServices = ({ user }: { user: User }) => {
       });
       
       if (res.ok) {
+        const result = await res.json();
         setIsSheetModalOpen(false);
-        fetchServiceSheets();
+        await fetchServiceSheets(sheetFormData.establishment_id);
+        
+        // Find the newly created sheet to print
+        alert("Folha de serviço gerada com sucesso!");
+        
         // Reset form
         setSheetFormData({
           establishment_id: sheetFormData.establishment_id,
@@ -269,7 +277,9 @@ export const OwnerServices = ({ user }: { user: User }) => {
           client_address: '',
           service_description: '',
           assigned_staff: '',
-          scheduled_date: new Date().toISOString().split('T')[0]
+          scheduled_date: new Date().toISOString().split('T')[0],
+          total_amount: 0,
+          selected_fees: []
         });
       } else {
         const errData = await res.json();
@@ -278,18 +288,28 @@ export const OwnerServices = ({ user }: { user: User }) => {
     } catch (e) {
       console.error('Error creating service sheet:', e);
       alert("Erro de conexão ao criar folha de serviço");
+    } finally {
+      setIsSubmittingSheet(false);
     }
   };
 
-  const updateSheetStatus = async (id: number, status: string) => {
+  const updateSheetStatus = async (id: number, status: string, payment_method?: string) => {
     try {
       const res = await fetch(`/api/owner/service-sheets/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
+        body: JSON.stringify({ status, payment_method: payment_method || 'Dinheiro' })
       });
-      if (res.ok) fetchServiceSheets();
-    } catch (e) {}
+      if (res.ok) {
+        fetchServiceSheets();
+        if (status === 'concluded' || status === 'concluido') alert("Folha de serviço concluída e documento fiscal gerado com sucesso.");
+      } else {
+        const err = await res.json();
+        alert(err.error || "Erro ao atualizar status");
+      }
+    } catch (e) {
+      alert("Erro de conexão ao atualizar status");
+    }
   };
 
   const deleteSheet = async (id: number) => {
@@ -302,110 +322,187 @@ export const OwnerServices = ({ user }: { user: User }) => {
 
   const printServiceSheet = (sheet: any) => {
     const doc = new jsPDF() as any;
-    const establishment = establishments.find(e => e.id === sheet.establishment_id);
+    const establishment = establishments.find(e => e.id === Number(sheet.establishment_id));
     
-    // Header colors
-    const orange: [number, number, number] = [249, 115, 22]; // #f97316
+    // palette variables
+    const orange: [number, number, number] = [234, 88, 12]; // #ea580c (Professional Orange)
     const black: [number, number, number] = [0, 0, 0];
+    const gray: [number, number, number] = [100, 100, 100];
     const white: [number, number, number] = [255, 255, 255];
 
-    // Top Bar (Orange)
-    doc.setFillColor(...orange);
-    doc.rect(0, 0, 210, 40, 'F');
+    // Background 80% white is naturally the page
     
-    // Header Text
-    doc.setFontSize(24);
+    // Header Section - 15% orange total space
+    doc.setFillColor(...orange);
+    doc.rect(0, 0, 210, 45, 'F');
+    
     doc.setTextColor(...white);
     doc.setFont("helvetica", "bold");
-    doc.text("FOLHA DE SERVIÇO", 20, 25);
+    doc.setFontSize(28);
+    doc.text("FOLHA DE TRABALHO", 20, 28);
     
     doc.setFontSize(10);
-    doc.text(`Nº DOCUMENTO: ${sheet.id.toString().padStart(6, '0')}`, 190, 15, { align: 'right' });
-    doc.text(`EMITIDO EM: ${new Date(sheet.created_at).toLocaleDateString()}`, 190, 22, { align: 'right' });
-    doc.text(`STATUS: ${sheet.status.toUpperCase()}`, 190, 29, { align: 'right' });
+    doc.setFont("helvetica", "normal");
+    doc.text(`ORDEM DE SERVIÇO: #${sheet.id.toString().padStart(6, '0')}`, 190, 18, { align: 'right' });
+    doc.text(`MISSÃO EM: ${new Date(sheet.scheduled_date).toLocaleDateString()}`, 190, 25, { align: 'right' });
+    doc.text(`SITUAÇÃO: ${sheet.status === 'pending' ? 'AGENDADO' : 'CONCLUÍDO'}`, 190, 32, { align: 'right' });
 
-    // Establishment Info (Orange Accents)
+    // Dividers and Accents
+    doc.setDrawColor(...black);
+    doc.setLineWidth(0.1);
+    
+    // Body Content starts at 60
+    let currentY = 65;
+
+    // Grid Layout for Info
+    // Provider Section
+    doc.setTextColor(...orange);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("PRESTADOR DE SERVIÇOS", 20, currentY);
+    
     doc.setTextColor(...black);
-    doc.setFontSize(12);
-    doc.setFont("helvetica", "bold");
-    doc.text("DADOS DO PRESTADOR", 20, 55);
-    doc.setDrawColor(...orange);
-    doc.setLineWidth(1);
-    doc.line(20, 57, 60, 57);
-    
     doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    const estY = 65;
-    doc.text(`Empresa: ${establishment?.name || 'N/A'}`, 20, estY);
-    doc.text(`NIF: ${establishment?.nif || 'N/A'}`, 20, estY + 6);
-    doc.text(`Telefone: ${establishment?.phone || 'N/A'}`, 20, estY + 12);
-    doc.text(`Endereço: ${establishment?.address || 'N/A'}`, 20, estY + 18);
-
-    // Client Info (Orange Accents)
-    doc.setFontSize(12);
     doc.setFont("helvetica", "bold");
-    doc.text("DADOS DO CLIENTE / LOCAL", 110, 55);
-    doc.line(110, 57, 150, 57);
+    doc.text(establishment?.name || 'EMPRESA NÃO IDENTIFICADA', 20, currentY + 8);
     
-    doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    const cliY = 65;
-    doc.text(`Nome: ${sheet.client_name}`, 110, cliY);
-    doc.text(`NIF: ${sheet.client_nif || 'CONSUMIDOR FINAL'}`, 110, cliY + 6);
-    doc.text(`Local: ${sheet.client_address || 'N/A'}`, 110, cliY + 12);
+    doc.setTextColor(...gray);
+    doc.text(`NIF: ${establishment?.nif || '---'}`, 20, currentY + 14);
+    doc.text(`TEL: ${establishment?.phone || '---'}`, 20, currentY + 20);
+    doc.text(`END: ${establishment?.address || '---'}`, 20, currentY + 26);
 
-    // Service Description
-    doc.setFontSize(12);
+    // Client Section
+    doc.setTextColor(...orange);
     doc.setFont("helvetica", "bold");
-    doc.text("DESCRIÇÃO DOS TRABALHOS", 20, 100);
-    doc.line(20, 102, 190, 102);
+    doc.text("CLIENTE / DESTINATÁRIO", 110, currentY);
     
-    doc.setFontSize(10);
+    doc.setTextColor(...black);
+    doc.setFont("helvetica", "bold");
+    doc.text(sheet.client_name, 110, currentY + 8);
+    
     doc.setFont("helvetica", "normal");
-    const splitDesc = doc.splitTextToSize(sheet.service_description, 170);
-    doc.text(splitDesc, 20, 110);
+    doc.setTextColor(...gray);
+    doc.text(`NIF: ${sheet.client_nif || 'CONSUMIDOR FINAL'}`, 110, currentY + 14);
+    doc.text(`LOCAL: ${sheet.client_address || '---'}`, 110, currentY + 20);
 
-    // Staff Info
+    currentY += 45;
+
+    // Service Main Block
     doc.setFillColor(250, 250, 250);
-    doc.rect(20, 135, 170, 15, 'F');
+    doc.rect(20, currentY, 170, 50, 'F');
+    doc.setDrawColor(...orange);
+    doc.setLineWidth(0.5);
+    doc.line(20, currentY, 20, currentY + 50); // Left orange accent
+    
+    doc.setTextColor(...orange);
     doc.setFont("helvetica", "bold");
-    doc.text(`Funcionário Designado:`, 25, 144);
+    doc.text("DETALHES DO SERVIÇO", 25, currentY + 10);
+    
+    const serviceInfo = services.find(s => s.id.toString() === sheet.service_id?.toString());
+    doc.setTextColor(...black);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text(`${serviceInfo?.name || 'Serviço Geral'} ${serviceInfo?.code ? `(${serviceInfo.code})` : ''}`, 25, currentY + 18);
+    
+    doc.setTextColor(...gray);
     doc.setFont("helvetica", "normal");
-    doc.text(`${sheet.assigned_staff || 'Pendente'}`, 70, 144);
-    doc.text(`Data Agendada: ${new Date(sheet.scheduled_date).toLocaleDateString()}`, 130, 144);
+    doc.setFontSize(10);
+    const splitDesc = doc.splitTextToSize(sheet.service_description, 160);
+    doc.text(splitDesc, 25, currentY + 26);
 
-    // Controls Table (Professional Look)
+    // Selected Fees
+    if (sheet.selected_fees) {
+      try {
+        const fees = JSON.parse(sheet.selected_fees);
+        if (fees.length > 0) {
+          doc.setFontSize(9);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(...orange);
+          doc.text("TAXAS ADICIONAIS:", 25, currentY + 38);
+          doc.setFont("helvetica", "normal");
+          doc.setTextColor(...gray);
+          const feesList = fees.map((f: any) => `${f.name}`).join(", ");
+          doc.text(feesList, 62, currentY + 38);
+        }
+      } catch (e) {}
+    }
+
+    currentY += 60;
+
+    // Financial Summary
+    doc.setFillColor(...orange);
+    const summaryY = currentY - 5;
+    doc.rect(130, summaryY, 60, 25, 'F');
+    doc.setTextColor(...white);
+    doc.setFontSize(10);
+    doc.text("VALOR TOTAL", 135, summaryY + 10);
+    doc.setFontSize(14);
+    doc.text(`Kz ${Number(sheet.total_amount || 0).toLocaleString()}`, 135, summaryY + 20);
+
+    doc.setTextColor(...black);
+    currentY += 25;
+
+    // Staff and Timing
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text("EQUIPA TÉCNICA", 20, currentY);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...gray);
+    doc.text(`${sheet.assigned_staff || 'Técnico Externo Designado'}`, 20, currentY + 8);
+
+    currentY += 20;
+
+    // Table for On-Site Control
     autoTable(doc, {
-      startY: 160,
-      head: [['CONTROLO DE CAMPO', 'REGISTO (Preencher no Local)']],
+      startY: currentY,
+      head: [['CONTROLO OPERACIONAL', 'REGISTO TÉCNICO']],
       body: [
-        ['Hora de Chegada', ''],
-        ['Hora de Saída', ''],
-        ['Materiais / Peças', ''],
-        ['Observações Técnicas', ''],
+        ['HORA DE CHEGADA', ''],
+        ['HORA DE SAÍDA', ''],
+        ['MATERIAIS UTILIZADOS', ''],
+        ['ESTADO FINAL / NOTAS', ''],
       ],
       theme: 'grid',
       headStyles: { fillColor: orange, textColor: white, fontStyle: 'bold' },
-      styles: { cellPadding: 6, fontSize: 9, cellWidth: 'wrap' },
-      columnStyles: { 0: { cellWidth: 50, fontStyle: 'bold' }, 1: { cellWidth: 120 } }
+      styles: { cellPadding: 8, fontSize: 10, textColor: black },
+      columnStyles: { 0: { cellWidth: 60, fontStyle: 'bold', fillColor: [245, 245, 245] }, 1: { cellWidth: 110 } }
     });
 
-    // Signatures
-    const finalY = (doc as any).lastAutoTable.finalY + 35;
-    doc.setDrawColor(200, 200, 200);
-    doc.setLineWidth(0.5);
+    const finalY = (doc as any).lastAutoTable.finalY + 40;
+
+    // Signatures with Orange accents
+    doc.setDrawColor(...orange);
+    doc.setLineWidth(0.2);
     
-    doc.line(30, finalY, 90, finalY);
-    doc.setFontSize(8);
-    doc.text("ASSINATURA DO TÉCNICO", 60, finalY + 5, { align: 'center' });
+    doc.line(25, finalY, 90, finalY);
+    doc.setTextColor(...black);
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "bold");
+    doc.text("O TÉCNICO RESPONSÁVEL", 57.5, finalY + 6, { align: 'center' });
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...gray);
+    doc.text("(Assinatura e Data)", 57.5, finalY + 12, { align: 'center' });
     
-    doc.line(120, finalY, 180, finalY);
-    doc.text("CARIMBO / ASSINATURA CLIENTE", 150, finalY + 5, { align: 'center' });
+    doc.setDrawColor(...orange);
+    doc.line(120, finalY, 185, finalY);
+    doc.setTextColor(...black);
+    doc.setFont("helvetica", "bold");
+    doc.text("CONFIRMAÇÃO DO CLIENTE", 152.5, finalY + 6, { align: 'center' });
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...gray);
+    doc.text("(Assinatura e Carimbo)", 152.5, finalY + 12, { align: 'center' });
 
     // Footer
-    doc.setFontSize(7);
-    doc.setTextColor(150, 150, 150);
-    doc.text("Este documento não serve como fatura. Destina-se apenas ao registo de prestação de serviços externos.", 105, 285, { align: 'center' });
+    currentY = 280;
+    doc.setDrawColor(...black);
+    doc.setLineWidth(0.1);
+    doc.line(20, currentY, 190, currentY);
+    
+    doc.setFontSize(8);
+    doc.setTextColor(...gray);
+    doc.text("Este documento é um anexo técnico ao contrato de prestação de serviços. Não tem valor fiscal.", 105, currentY + 6, { align: 'center' });
+    doc.text(`Gerado por Fatu-R Sistema de Gestão Inteligente - ID: ${sheet.id}`, 105, currentY + 11, { align: 'center' });
 
     doc.save(`FOLHA_SERVICO_${sheet.id}.pdf`);
   };
@@ -683,7 +780,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
                        {sheet.status === 'pending' ? (
                           <div className="flex gap-2">
                              <button 
-                               onClick={() => updateSheetStatus(sheet.id, 'completed')}
+                               onClick={() => updateSheetStatus(sheet.id, 'concluded')}
                                className="flex-1 py-3 bg-orange-500 text-white rounded-xl text-xs font-bold hover:bg-orange-600 transition-all shadow-md flex items-center justify-center"
                                title="Concluir"
                              >
@@ -754,6 +851,58 @@ export const OwnerServices = ({ user }: { user: User }) => {
               </div>
             </Card>
           </div>
+
+          <Card>
+            <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
+              <h3 className="font-black text-zinc-900 uppercase tracking-tight">Histórico de Serviços</h3>
+            </div>
+            <div className="p-0 overflow-x-auto">
+               <table className="w-full text-left">
+                  <thead>
+                     <tr className="bg-zinc-50/50 border-b border-zinc-100">
+                        <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data</th>
+                        <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente</th>
+                        <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Serviço</th>
+                        <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Valor</th>
+                        <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Doc Fiscal</th>
+                     </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-50">
+                     {serviceSheets.filter(s => s.status === 'concluded' || s.status === 'concluido').map(sheet => (
+                        <tr key={sheet.id} className="hover:bg-zinc-50/50 transition-colors">
+                           <td className="px-6 py-4 text-xs font-medium text-zinc-500">
+                              {new Date(sheet.scheduled_date).toLocaleDateString()}
+                           </td>
+                           <td className="px-6 py-4">
+                              <p className="text-sm font-bold text-zinc-900">{sheet.client_name}</p>
+                              <p className="text-[10px] text-zinc-400 uppercase tracking-widest font-black">{sheet.client_nif}</p>
+                           </td>
+                           <td className="px-6 py-4 text-xs font-medium text-zinc-600">
+                              {sheet.service_description}
+                           </td>
+                           <td className="px-6 py-4 text-right">
+                              <span className="text-sm font-black text-orange-600">Kz {sheet.total_amount.toLocaleString()}</span>
+                           </td>
+                           <td className="px-6 py-4 text-right">
+                              {sheet.fiscal_document_id ? (
+                                 <span className="px-2 py-0.5 bg-green-50 text-green-600 rounded text-[10px] font-black uppercase">Gerado</span>
+                              ) : (
+                                 <span className="px-2 py-0.5 bg-zinc-100 text-zinc-400 rounded text-[10px] font-black uppercase">N/A</span>
+                              )}
+                           </td>
+                        </tr>
+                     ))}
+                     {serviceSheets.filter(s => s.status === 'concluded' || s.status === 'concluido').length === 0 && (
+                        <tr>
+                           <td colSpan={5} className="px-6 py-8 text-center text-zinc-400 text-sm">
+                              Nenhuma folha de serviço concluída encontrada nesta seleção.
+                           </td>
+                        </tr>
+                     )}
+                  </tbody>
+               </table>
+            </div>
+          </Card>
 
           <Card>
             <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
@@ -830,238 +979,155 @@ export const OwnerServices = ({ user }: { user: User }) => {
         onClose={() => setIsModalOpen(false)} 
         title={editingService ? "Editar Serviço" : "Novo Serviço"}
       >
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4 max-h-[75vh] overflow-y-auto px-1">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Estabelecimento</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Estabelecimento</label>
               <select 
                 required
                 value={formData.establishment_id}
                 onChange={e => setFormData({...formData, establishment_id: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all font-bold"
               >
-                <option value="">Selecione um estabelecimento</option>
+                <option value="">Selecione...</option>
                 {establishments.map(establishment => (
                   <option key={establishment.id} value={establishment.id}>{establishment.name}</option>
                 ))}
               </select>
             </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2 sm:col-span-1">
-                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Nome do Serviço</label>
-                <input 
-                  type="text" required
-                  value={formData.name}
-                  onChange={e => setFormData({...formData, name: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                  placeholder="Ex: Instalação"
-                />
-              </div>
-              <div className="col-span-2 sm:col-span-1">
-                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Código (ID)</label>
-                <input 
-                  type="text" required
-                  value={formData.code}
-                  onChange={e => setFormData({...formData, code: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                  placeholder="Ex: SERV001"
-                />
-              </div>
-            </div>
-
             <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Descrição</label>
-              <textarea 
-                required
-                value={formData.description}
-                onChange={e => setFormData({...formData, description: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all h-24 resize-none"
-                placeholder="Descreva o serviço..."
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Código (ID)</label>
+              <input 
+                type="text" required
+                value={formData.code}
+                onChange={e => setFormData({...formData, code: e.target.value})}
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all font-bold"
+                placeholder="Ex: SERV001"
               />
             </div>
+          </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Preço (Kz)</label>
-                <input 
-                  type="number" required min="0"
-                  value={isNaN(Number(formData.price)) ? '' : formData.price}
-                  onChange={e => setFormData({...formData, price: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all font-bold"
-                  placeholder="0.00"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Mostrar no PDV</label>
-                <select 
-                  value={formData.show_in_pos}
-                  onChange={e => setFormData({...formData, show_in_pos: Number(e.target.value)})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                >
-                  <option value={1}>SIM</option>
-                  <option value={0}>NÃO</option>
-                </select>
-              </div>
-            </div>
+          <div>
+            <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Nome do Serviço</label>
+            <input 
+              type="text" required
+              value={formData.name}
+              onChange={e => setFormData({...formData, name: e.target.value})}
+              className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all font-bold"
+              placeholder="Ex: Instalação"
+            />
+          </div>
 
+          <div>
+            <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Descrição</label>
+            <textarea 
+              required
+              value={formData.description}
+              onChange={e => setFormData({...formData, description: e.target.value})}
+              className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-orange-500 transition-all h-20 resize-none font-medium"
+              placeholder="Descreva o serviço..."
+            />
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Disponibilidade</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Preço (Kz)</label>
+              <input 
+                type="number" required min="0"
+                value={isNaN(Number(formData.price)) ? '' : formData.price}
+                onChange={e => setFormData({...formData, price: e.target.value})}
+                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all font-bold"
+                placeholder="0.00"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">PDV</label>
               <select 
-                value={formData.availability_condition}
-                onChange={e => setFormData({...formData, availability_condition: e.target.value as any})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                value={formData.show_in_pos}
+                onChange={e => setFormData({...formData, show_in_pos: Number(e.target.value)})}
+                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 font-bold"
               >
-                <option value="always">Sempre Disponível</option>
-                <option value="product_purchased">Só se houver produto comprado</option>
+                <option value={1}>SIM</option>
+                <option value={0}>NÃO</option>
               </select>
             </div>
-
-            <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Imposto Aplicado</label>
+            <div className="md:col-span-1 col-span-2">
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Taxa</label>
               <select 
                 value={formData.tax_id}
                 onChange={e => setFormData({...formData, tax_id: e.target.value})}
                 disabled={user?.fiscal_regime === 'exclusao'}
                 className={cn(
-                  "w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all",
+                  "w-full px-3 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 font-bold",
                   user?.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
                 )}
               >
-                <option value="">Usar Padrão do Estabelecimento</option>
+                <option value="">Padrão</option>
                 {taxes.filter(t => t.establishment_id === Number(formData.establishment_id) && t.status === 'active').map(tax => (
-                  <option key={tax.id} value={tax.id}>{tax.name} ({tax.percentage}%)</option>
+                  <option key={tax.id} value={tax.id}>{tax.percentage}%</option>
                 ))}
               </select>
-              {user?.fiscal_regime === 'exclusao' && (
-                <p className="text-[10px] text-amber-600 mt-1 font-bold">Bloqueado: Regime de Exclusão exige 0% de IVA (ISENTO).</p>
-              )}
             </div>
+          </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Disponibilidade</label>
+              <select 
+                value={formData.availability_condition}
+                onChange={e => setFormData({...formData, availability_condition: e.target.value as any})}
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-orange-500 transition-all font-bold"
+              >
+                <option value="always">Sempre Disponível</option>
+                <option value="product_purchased">Se produto comprado</option>
+              </select>
+            </div>
             <div className={cn(
-              "p-4 rounded-2xl border space-y-4 transition-all",
-              user?.fiscal_regime === 'exclusao' 
-                ? "bg-zinc-50 border-zinc-100 opacity-60" 
-                : "bg-orange-50/50 border-orange-100"
+              "px-3 py-2 rounded-xl border flex items-center justify-between transition-all",
+              user?.fiscal_regime === 'exclusao' ? "bg-zinc-50 border-zinc-100 opacity-60" : "bg-orange-50/50 border-orange-100"
             )}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-xs font-black text-zinc-900 uppercase tracking-widest">Retenção na Fonte</h4>
-                  <p className="text-[10px] text-zinc-500 font-medium">
-                    {user?.fiscal_regime === 'exclusao' 
-                      ? "Não aplicável no Regime de Exclusão" 
-                      : "Aplicar desconto de retenção?"}
-                  </p>
-                </div>
-                <div className="flex bg-zinc-200 p-1 rounded-lg">
-                  <button
-                    type="button"
-                    disabled={user?.fiscal_regime === 'exclusao'}
-                    onClick={() => setFormData({...formData, retention_enabled: 1})}
-                    className={cn(
-                      "px-3 py-1 text-[10px] font-black rounded-md transition-all",
-                      formData.retention_enabled === 1 ? "bg-white text-orange-600 shadow-sm" : "text-zinc-500",
-                      user?.fiscal_regime === 'exclusao' && "cursor-not-allowed"
-                    )}
-                  >
-                    SIM
-                  </button>
-                  <button
-                    type="button"
-                    disabled={user?.fiscal_regime === 'exclusao'}
-                    onClick={() => setFormData({...formData, retention_enabled: 0})}
-                    className={cn(
-                      "px-3 py-1 text-[10px] font-black rounded-md transition-all",
-                      formData.retention_enabled === 0 ? "bg-white text-zinc-600 shadow-sm" : "text-zinc-500",
-                      user?.fiscal_regime === 'exclusao' && "cursor-not-allowed"
-                    )}
-                  >
-                    NÃO
-                  </button>
-                </div>
-              </div>
-
-              {formData.retention_enabled === 1 && user?.fiscal_regime !== 'exclusao' && (
-                <div className="animate-in slide-in-from-top-2 duration-200">
-                  <label className="block text-[10px] font-black text-orange-600 uppercase tracking-widest mb-2">Percentagem de Retenção (%)</label>
-                  <div className="relative">
-                    <input 
-                      type="number" step="0.01" required
-                      value={formData.retention_percentage}
-                      onChange={e => setFormData({...formData, retention_percentage: e.target.value})}
-                      className="w-full pl-4 pr-10 py-3 bg-white border border-orange-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all font-bold text-orange-700"
-                      placeholder="Ex: 6.5"
-                    />
-                    <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
-                      <span className="text-orange-400 font-bold">%</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {user?.fiscal_regime === 'exclusao' && (
-                <p className="text-[10px] text-amber-600 font-bold">
-                  Nota: Empresas no Regime de Exclusão estão isentas de retenção na fonte.
-                </p>
-              )}
-            </div>
-
-            <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100 space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-black text-zinc-900 uppercase tracking-widest">Taxas do Serviço</h4>
-                <button 
-                  type="button"
-                  onClick={() => setFormData({ ...formData, fees: [...formData.fees, { name: '', amount: 0 }] })}
-                  className="flex items-center gap-1 text-[10px] font-black text-orange-600 hover:text-orange-700 uppercase"
-                >
-                  <Plus size={12} /> Adicionar Taxa
-                </button>
-              </div>
-              
-              <div className="space-y-2">
-                {formData.fees.map((fee, idx) => (
-                  <div key={idx} className="flex gap-2 items-center">
-                    <input 
-                      type="text" required
-                      value={fee.name}
-                      onChange={e => {
-                        const newFees = [...formData.fees];
-                        newFees[idx].name = e.target.value;
-                        setFormData({ ...formData, fees: newFees });
-                      }}
-                      placeholder="Ex: Urgência"
-                      className="flex-1 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-[10px] outline-none focus:ring-1 focus:ring-orange-500 font-bold tracking-tight"
-                    />
-                    <input 
-                      type="number" required min="0"
-                      value={fee.amount || ''}
-                      onChange={e => {
-                        const newFees = [...formData.fees];
-                        newFees[idx].amount = Number(e.target.value);
-                        setFormData({ ...formData, fees: newFees });
-                      }}
-                      placeholder="Valor"
-                      className="w-24 px-3 py-2 bg-white border border-zinc-200 rounded-xl text-[10px] outline-none focus:ring-1 focus:ring-orange-500 font-bold"
-                    />
-                    <button 
-                      type="button"
-                      onClick={() => setFormData({ ...formData, fees: formData.fees.filter((_, i) => i !== idx) })}
-                      className="p-1 text-zinc-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
-                {formData.fees.length === 0 && (
-                  <p className="text-[10px] text-zinc-400 font-bold text-center py-2">Nenhuma taxa configurada.</p>
-                )}
+              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600">Retenção</span>
+              <div className="flex bg-zinc-200 p-0.5 rounded-lg">
+                <button type="button" disabled={user?.fiscal_regime === 'exclusao'} onClick={() => setFormData({...formData, retention_enabled: 1})}
+                  className={cn("px-2 py-0.5 text-[9px] font-black rounded transition-all", formData.retention_enabled === 1 ? "bg-white text-orange-600 shadow-sm" : "text-zinc-500")}
+                >SIM</button>
+                <button type="button" disabled={user?.fiscal_regime === 'exclusao'} onClick={() => setFormData({...formData, retention_enabled: 0})}
+                  className={cn("px-2 py-0.5 text-[9px] font-black rounded transition-all", formData.retention_enabled === 0 ? "bg-white text-zinc-600 shadow-sm" : "text-zinc-500")}
+                >NÃO</button>
               </div>
             </div>
           </div>
 
+          {formData.retention_enabled === 1 && user?.fiscal_regime !== 'exclusao' && (
+            <div className="animate-in slide-in-from-top-1 duration-200">
+              <label className="block text-[10px] font-black text-orange-600 uppercase tracking-widest mb-1 ml-1">Percentagem (%)</label>
+              <input type="number" step="0.01" required value={formData.retention_percentage} onChange={e => setFormData({...formData, retention_percentage: e.target.value})}
+                className="w-full px-4 py-2 bg-white border border-orange-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 font-bold text-orange-700" placeholder="Ex: 6.5"
+              />
+            </div>
+          )}
+
+          <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100 space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-[10px] font-black text-zinc-900 uppercase tracking-widest">Taxas Extras</h4>
+              <button type="button" onClick={() => setFormData({ ...formData, fees: [...formData.fees, { name: '', amount: 0 }] })}
+                className="flex items-center gap-1 text-[9px] font-black text-orange-600 uppercase"
+              >
+                <Plus size={10} /> Adicionar
+              </button>
+            </div>
+            {formData.fees.map((fee, idx) => (
+              <div key={idx} className="flex gap-2 items-center">
+                <input type="text" required value={fee.name} onChange={e => { const newFees = [...formData.fees]; newFees[idx].name = e.target.value; setFormData({ ...formData, fees: newFees }); }} placeholder="Nome" className="flex-1 px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[10px] outline-none font-bold" />
+                <input type="number" required min="0" value={fee.amount || ''} onChange={e => { const newFees = [...formData.fees]; newFees[idx].amount = Number(e.target.value); setFormData({ ...formData, fees: newFees }); }} placeholder="Kz" className="w-16 px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[10px] outline-none font-bold" />
+                <button type="button" onClick={() => setFormData({ ...formData, fees: formData.fees.filter((_, i) => i !== idx) })} className="p-1 text-zinc-400 hover:text-rose-500 transition-all"><Trash2 size={12} /></button>
+              </div>
+            ))}
+          </div>
+
           <button 
             type="submit"
-            className="w-full py-4 bg-orange-500 text-white rounded-2xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20 active:scale-95"
+            className="w-full py-4 bg-orange-500 text-white rounded-2xl font-bold hover:bg-orange-600 transition-all shadow-lg active:scale-95"
           >
             {editingService ? 'Actualizar Serviço' : 'Cadastrar Serviço'}
           </button>
@@ -1073,9 +1139,9 @@ export const OwnerServices = ({ user }: { user: User }) => {
         onClose={() => setIsSheetModalOpen(false)}
         title="Nova Folha de Serviço"
       >
-        <form onSubmit={handleCreateSheet} className="space-y-4">
+        <form onSubmit={handleCreateSheet} className="space-y-3 max-h-[75vh] overflow-y-auto px-1">
            <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Serviço a Prestar</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Serviço a Prestar</label>
               <select 
                 required
                 value={sheetFormData.service_id}
@@ -1084,91 +1150,147 @@ export const OwnerServices = ({ user }: { user: User }) => {
                   setSheetFormData({
                     ...sheetFormData, 
                     service_id: e.target.value,
-                    service_description: s ? s.name : ''
+                    service_description: s ? s.description || s.name : '',
+                    total_amount: s ? Number(s.price) : 0,
+                    selected_fees: []
                   });
                 }}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 font-bold"
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 font-bold"
               >
                 <option value="">Selecione o serviço...</option>
                 {services
                   .filter(s => s.establishment_id.toString() === sheetFormData.establishment_id)
                   .map(s => (
-                    <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
+                    <option key={s.id} value={s.id}>{s.name} ({s.code}) - Kz {Number(s.price).toLocaleString()}</option>
                   ))}
               </select>
            </div>
 
+           {sheetFormData.service_id && (
+             <div className="p-3 bg-orange-50/30 rounded-xl border border-orange-100 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[10px] font-black text-orange-800 uppercase tracking-widest">Taxas do Serviço (Opcionais)</h4>
+                  <span className="text-[10px] font-black build text-orange-600 bg-white px-2 py-1 rounded-lg">
+                    Base: Kz {services.find(s => s.id.toString() === sheetFormData.service_id)?.price.toLocaleString()}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {services.find(s => s.id.toString() === sheetFormData.service_id)?.fees.map((fee: any, idx: number) => {
+                    const isSelected = sheetFormData.selected_fees.some(sf => sf.name === fee.name);
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          let newFees = [...sheetFormData.selected_fees];
+                          let newTotal = Number(sheetFormData.total_amount);
+                          
+                          if (isSelected) {
+                            newFees = newFees.filter(sf => sf.name !== fee.name);
+                            newTotal -= Number(fee.amount);
+                          } else {
+                            newFees.push(fee);
+                            newTotal += Number(fee.amount);
+                          }
+                          
+                          setSheetFormData({ ...sheetFormData, selected_fees: newFees, total_amount: newTotal });
+                        }}
+                        className={cn(
+                          "w-full flex items-center justify-between p-2 rounded-lg text-xs font-bold transition-all border",
+                          isSelected 
+                            ? "bg-orange-500 text-white border-orange-600 shadow-sm" 
+                            : "bg-white text-zinc-600 border-zinc-100 hover:border-orange-200"
+                        )}
+                      >
+                        <span>{fee.name}</span>
+                        <span>+ Kz {Number(fee.amount).toLocaleString()}</span>
+                      </button>
+                    );
+                  })}
+                  {(services.find(s => s.id.toString() === sheetFormData.service_id)?.fees?.length || 0) === 0 && (
+                    <p className="text-[10px] text-zinc-400 font-bold italic text-center py-1">Sem taxas adicionais para este serviço.</p>
+                  )}
+                </div>
+                <div className="pt-2 mt-2 border-t border-orange-100 flex items-center justify-between">
+                   <span className="text-xs font-black text-orange-900 tracking-tight uppercase">Valor Total a Faturar</span>
+                   <span className="text-sm font-black text-orange-600">Kz {sheetFormData.total_amount.toLocaleString()}</span>
+                </div>
+             </div>
+           )}
+
            <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Cliente / Entidade</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Cliente / Entidade</label>
               <input 
                 type="text" required
                 value={sheetFormData.client_name}
                 onChange={e => setSheetFormData({...sheetFormData, client_name: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500"
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500"
                 placeholder="Nome do cliente"
               />
            </div>
 
-           <div className="grid grid-cols-2 gap-4">
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">NIF</label>
+                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">NIF</label>
                 <input 
                   type="text"
                   value={sheetFormData.client_nif}
                   onChange={e => setSheetFormData({...sheetFormData, client_nif: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500"
+                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500"
                   placeholder="NIF"
                 />
               </div>
               <div>
-                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Data Agendada</label>
+                <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Data Agendada</label>
                 <input 
                   type="date" required
                   value={sheetFormData.scheduled_date}
                   onChange={e => setSheetFormData({...sheetFormData, scheduled_date: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500"
+                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500"
                 />
               </div>
            </div>
 
            <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Endereço do Local</label>
-              <input 
-                type="text"
-                value={sheetFormData.client_address}
-                onChange={e => setSheetFormData({...sheetFormData, client_address: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500"
-                placeholder="Rua, Bairro, Cidade"
-              />
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Local & Descrição</label>
+              <div className="space-y-2">
+                <input 
+                  type="text"
+                  value={sheetFormData.client_address}
+                  onChange={e => setSheetFormData({...sheetFormData, client_address: e.target.value})}
+                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500"
+                  placeholder="Endereço Completo"
+                />
+                <textarea 
+                  required
+                  value={sheetFormData.service_description}
+                  onChange={e => setSheetFormData({...sheetFormData, service_description: e.target.value})}
+                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-orange-500 h-20 resize-none font-medium"
+                  placeholder="Descreva o que será feito..."
+                />
+              </div>
            </div>
 
            <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Descrição do Serviço</label>
-              <textarea 
-                required
-                value={sheetFormData.service_description}
-                onChange={e => setSheetFormData({...sheetFormData, service_description: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 h-24 resize-none"
-                placeholder="Descreva o que será feito..."
-              />
-           </div>
-
-           <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">Funcionário Responsável</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Funcionário Responsável</label>
               <input 
                 type="text"
                 value={sheetFormData.assigned_staff}
                 onChange={e => setSheetFormData({...sheetFormData, assigned_staff: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500"
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500"
                 placeholder="Nome do funcionário"
               />
            </div>
 
            <button 
             type="submit"
-            className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-black transition-all shadow-lg active:scale-95"
+            disabled={isSubmittingSheet}
+            className={cn(
+              "w-full py-4 bg-orange-600 text-white rounded-2xl font-bold hover:bg-orange-700 transition-all shadow-lg active:scale-95 shadow-orange-200",
+              isSubmittingSheet && "opacity-50 cursor-not-allowed"
+            )}
           >
-            Gerar Folha de Serviço
+            {isSubmittingSheet ? "Gerando..." : "Gerar Folha de Serviço"}
           </button>
         </form>
       </Modal>
