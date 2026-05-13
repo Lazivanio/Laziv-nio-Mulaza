@@ -229,8 +229,13 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
       items: [...purchaseForm.items, {
         product_id: product.id,
         name: product.name,
+        selling_price: product.price || 0,
+        purchase_unit: 'unid',
+        bulk_quantity: 1,
+        units_per_bulk: 1,
+        bulk_price: product.cost || 0,
         quantity: 1,
-        price: product.cost_price || 0,
+        price: product.cost || 0,
         tax_id: finalTax.id,
         tax_percentage: finalTax.percentage,
         tax_code: finalTax.tax_code
@@ -240,7 +245,21 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
 
   const handleUpdatePurchaseItem = (index: number, field: string, value: any) => {
     const newItems = [...purchaseForm.items];
-    newItems[index] = { ...newItems[index], [field]: value };
+    const item = { ...newItems[index], [field]: value };
+    
+    // Recalculate based on bulk fields
+    if (field === 'purchase_unit' || field === 'bulk_quantity' || field === 'units_per_bulk' || field === 'bulk_price') {
+      if (item.purchase_unit === 'unid') {
+        item.units_per_bulk = 1;
+        item.quantity = item.bulk_quantity;
+        item.price = item.bulk_price;
+      } else {
+        item.quantity = (Number(item.bulk_quantity) || 0) * (Number(item.units_per_bulk) || 1);
+        item.price = (Number(item.bulk_price) || 0) / (Math.max(1, Number(item.units_per_bulk) || 1));
+      }
+    }
+    
+    newItems[index] = item;
     setPurchaseForm({ ...purchaseForm, items: newItems });
   };
 
@@ -920,42 +939,81 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
             <table className="w-full text-left">
               <thead className="bg-zinc-50 border-b border-zinc-100">
                 <tr>
-                  <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Produto</th>
-                  <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Qtd</th>
-                  <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Preço Custo</th>
-                  <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase">Imposto</th>
-                  <th className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase text-right">Subtotal</th>
+                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase">Produto</th>
+                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase">Unidade</th>
+                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase">Preço Unidade/Grade</th>
+                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase">Qtd Comprada</th>
+                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase">Preço Custo (Unit)</th>
+                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase text-right">Subtotal</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-50">
                 {purchaseForm.items.map((item, index) => (
                   <tr key={index}>
-                    <td className="px-4 py-3 text-sm font-bold">{item.name}</td>
+                    <td className="px-4 py-3">
+                      <p className="text-sm font-bold">{item.name}</p>
+                      <p className="text-[10px] text-zinc-500 font-bold uppercase">Preço Venda: Kz {item.selling_price.toLocaleString()}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <select 
+                        value={item.purchase_unit}
+                        onChange={e => handleUpdatePurchaseItem(index, 'purchase_unit', e.target.value)}
+                        className="px-2 py-1 bg-zinc-100 rounded border-none text-xs font-bold w-full"
+                      >
+                        <option value="unid">Unid</option>
+                        <option value="grade">Grade</option>
+                        <option value="caixa">Caixa</option>
+                        <option value="pacote">Pacote</option>
+                      </select>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="space-y-1">
+                        <input 
+                          type="number" 
+                          value={isNaN(item.bulk_price) ? '' : item.bulk_price}
+                          onChange={e => handleUpdatePurchaseItem(index, 'bulk_price', parseFloat(e.target.value))}
+                          placeholder="Preço Unit/Bulk"
+                          className="w-full px-2 py-1 bg-zinc-100 rounded border-none text-xs font-bold"
+                        />
+                        {item.purchase_unit !== 'unid' && (
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-zinc-400 font-bold">Unids/Bulk:</span>
+                            <input 
+                              type="number" 
+                              min="1"
+                              value={isNaN(item.units_per_bulk) ? '' : item.units_per_bulk}
+                              onChange={e => handleUpdatePurchaseItem(index, 'units_per_bulk', parseInt(e.target.value))}
+                              className="w-12 px-1 py-0.5 bg-zinc-200 rounded border-none text-[10px] font-bold text-center"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3">
                       <input 
                         type="number" 
                         min="1"
-                        value={isNaN(item.quantity) ? '' : item.quantity}
-                        onChange={e => handleUpdatePurchaseItem(index, 'quantity', parseInt(e.target.value))}
+                        value={isNaN(item.bulk_quantity) ? '' : item.bulk_quantity}
+                        onChange={e => handleUpdatePurchaseItem(index, 'bulk_quantity', parseInt(e.target.value))}
                         className="w-16 px-2 py-1 bg-zinc-100 rounded border-none text-center font-bold"
                       />
+                      <p className="text-[10px] text-center font-bold text-zinc-400 mt-1">Total: {item.quantity} unids</p>
                     </td>
                     <td className="px-4 py-3">
-                      <input 
-                        type="number" 
-                        value={isNaN(item.price) ? '' : item.price}
-                        onChange={e => handleUpdatePurchaseItem(index, 'price', parseFloat(e.target.value))}
-                        className="w-24 px-2 py-1 bg-zinc-100 rounded border-none text-right font-bold"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-black text-zinc-400 uppercase">{item.tax_code}</span>
-                        <span className="text-xs font-bold text-zinc-600">{item.tax_percentage}%</span>
+                      <div className="flex flex-col items-center">
+                        <span className="text-sm font-black text-zinc-900 leading-none">Kz {Math.round(item.price).toLocaleString()}</span>
+                        {item.selling_price > 0 && (
+                          <span className={cn(
+                            "text-[10px] font-black uppercase mt-1",
+                            (item.selling_price - item.price) > 0 ? "text-emerald-500" : "text-rose-500"
+                          )}>
+                            Lucro: Kz {Math.round(item.selling_price - item.price).toLocaleString()}
+                          </span>
+                        )}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right font-bold">
-                      Kz {(item.quantity * item.price * (1 + (item.tax_percentage / 100))).toLocaleString()}
+                    <td className="px-4 py-3 text-right font-bold text-sm whitespace-nowrap">
+                      Kz {(Math.round(item.quantity * item.price * (1 + (item.tax_percentage / 100)))).toLocaleString()}
                     </td>
                   </tr>
                 ))}

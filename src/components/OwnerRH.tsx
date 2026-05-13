@@ -22,6 +22,7 @@ import {
   ArrowRightLeft,
   ShieldAlert,
   Monitor,
+  FileDown,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, HRRole, HRSalary, HRSalaryPayment, HRAttendance, HRVacation, Establishment as EstablishmentType } from '../types';
@@ -119,7 +120,9 @@ export const OwnerRH = ({ user }: { user: User }) => {
     name: '', email: '', username: '', password: '', role: 'seller' as any, establishment_id: '', role_id: '', custom_permissions: [] as string[], base_salary: '', status: 'active' as 'active' | 'suspended',
     is_system_user: true,
     bi_number: '',
-    address: ''
+    address: '',
+    nif: '',
+    social_security_number: ''
   });
   const [roleForm, setRoleForm] = useState({ 
     name: '', 
@@ -130,6 +133,9 @@ export const OwnerRH = ({ user }: { user: User }) => {
   const [salaryPaymentForm, setSalaryPaymentForm] = useState({ 
     amount: '', 
     bonus: '0',
+    absence_discount: '0',
+    ss_discount: '0',
+    irt_tax: '0',
     type: 'full_payment', 
     description: '',
     month: new Date().toISOString().slice(0, 7)
@@ -208,6 +214,8 @@ export const OwnerRH = ({ user }: { user: User }) => {
         base_salary: Number(employeeForm.base_salary) || 0,
         bi_number: employeeForm.bi_number?.trim() || null,
         address: employeeForm.address?.trim() || null,
+        nif: employeeForm.nif?.trim() || null,
+        social_security_number: employeeForm.social_security_number?.trim() || null,
         owner_id: user.id
       };
 
@@ -268,17 +276,39 @@ export const OwnerRH = ({ user }: { user: User }) => {
     setSalaryError(null);
     
     try {
+      const base = Number(selectedSalary.base_salary) || 0;
+      const bonus = Number(salaryPaymentForm.bonus) || 0;
+      const absence = Number(salaryPaymentForm.absence_discount) || 0;
+      
+      const ss_absolute = base * (Number(salaryPaymentForm.ss_discount) / 100);
+      const irt_absolute = base * (Number(salaryPaymentForm.irt_tax) / 100);
+      
+      const finalNetAmount = base + bonus - absence - ss_absolute - irt_absolute;
+
       const res = await fetch('/api/owner/hr/salaries/payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          ...salaryPaymentForm,
           salary_id: selectedSalary.id,
-          ...salaryPaymentForm
+          amount: finalNetAmount,
+          ss_discount: ss_absolute,
+          irt_tax: irt_absolute
         })
       });
       if (res.ok) {
         setIsSalaryPaymentModalOpen(false);
         setSelectedSalary(null);
+        setSalaryPaymentForm({
+          amount: '',
+          bonus: '0',
+          absence_discount: '0',
+          ss_discount: '0',
+          irt_tax: '0',
+          type: 'full_payment',
+          description: '',
+          month: new Date().toISOString().slice(0, 7)
+        });
         fetchData();
       } else {
         const errorData = await res.json();
@@ -472,7 +502,9 @@ export const OwnerRH = ({ user }: { user: User }) => {
                       role_id: '', custom_permissions: [], base_salary: '', status: 'active',
                       is_system_user: true,
                       bi_number: '',
-                      address: ''
+                      address: '',
+                      nif: '',
+                      social_security_number: ''
                     });
                     setIsEmployeeModalOpen(true);
                   }}
@@ -564,7 +596,9 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                     status: emp.status || 'active',
                                     is_system_user: !!(emp.email || emp.username),
                                     bi_number: (emp as any).bi_number || '',
-                                    address: (emp as any).address || ''
+                                    address: (emp as any).address || '',
+                                    nif: emp.nif || '',
+                                    social_security_number: emp.social_security_number || ''
                                   });
                                   setIsEmployeeModalOpen(true);
                                 }}
@@ -762,6 +796,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
                           <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Mês</th>
                           <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Tipo</th>
                           <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Valor</th>
+                          <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider text-right">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-100">
@@ -794,6 +829,24 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                 {Number(payment.bonus) > 0 && (
                                   <div className="text-[10px] text-emerald-600 font-bold">Bónus: Kz {Number(payment.bonus).toLocaleString()}</div>
                                 )}
+                                {Number(payment.absence_discount) > 0 && (
+                                  <div className="text-[10px] text-rose-600 font-bold">Faltas: Kz {Number(payment.absence_discount).toLocaleString()}</div>
+                                )}
+                                {Number(payment.ss_discount) > 0 && (
+                                  <div className="text-[10px] text-rose-600 font-bold">Seg. Social: Kz {Number(payment.ss_discount).toLocaleString()}</div>
+                                )}
+                                {Number(payment.irt_tax) > 0 && (
+                                  <div className="text-[10px] text-rose-600 font-bold">IRT: Kz {Number(payment.irt_tax).toLocaleString()}</div>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <button 
+                                  onClick={() => window.open(`/api/owner/hr/salaries/receipt/${payment.id}`, '_blank')}
+                                  className="p-2 text-zinc-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-all"
+                                  title="Baixar Recibo"
+                                >
+                                  <FileDown size={18} />
+                                </button>
                               </td>
                             </tr>
                           ))
@@ -1040,6 +1093,24 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 value={employeeForm.bi_number}
                 onChange={e => setEmployeeForm({...employeeForm, bi_number: e.target.value})}
                 placeholder="000000000AA000"
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-500 uppercase">NIF</label>
+              <input 
+                type="text" 
+                value={employeeForm.nif}
+                onChange={e => setEmployeeForm({...employeeForm, nif: e.target.value})}
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-500 uppercase">Nº Segurança Social</label>
+              <input 
+                type="text" 
+                value={employeeForm.social_security_number}
+                onChange={e => setEmployeeForm({...employeeForm, social_security_number: e.target.value})}
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
               />
             </div>
@@ -1319,29 +1390,19 @@ export const OwnerRH = ({ user }: { user: User }) => {
           )}
 
           <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Mês de Referência</label>
-              <input 
-                required
-                type="month" 
-                value={salaryPaymentForm.month}
-                onChange={e => setSalaryPaymentForm({...salaryPaymentForm, month: e.target.value})}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
-              />
-            </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase">Valor Base (Kz)</label>
+                <label className="text-xs font-bold text-zinc-500 uppercase">Mês de Referência</label>
                 <input 
                   required
-                  type="number" 
-                  value={isNaN(Number(salaryPaymentForm.amount)) ? '' : salaryPaymentForm.amount}
-                  onChange={e => setSalaryPaymentForm({...salaryPaymentForm, amount: e.target.value})}
+                  type="month" 
+                  value={salaryPaymentForm.month}
+                  onChange={e => setSalaryPaymentForm({...salaryPaymentForm, month: e.target.value})}
                   className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase">Bónus (Kz)</label>
+                <label className="text-xs font-bold text-zinc-500 uppercase">Abonos / Bónus (Kz)</label>
                 <input 
                   required
                   type="number" 
@@ -1351,6 +1412,65 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 />
               </div>
             </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase">Faltas (Kz)</label>
+                <input 
+                  required
+                  type="number" 
+                  value={isNaN(Number(salaryPaymentForm.absence_discount)) ? '' : salaryPaymentForm.absence_discount}
+                  onChange={e => setSalaryPaymentForm({...salaryPaymentForm, absence_discount: e.target.value})}
+                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase">Seg. Social (%)</label>
+                <input 
+                  required
+                  type="number" 
+                  step="0.01"
+                  value={isNaN(Number(salaryPaymentForm.ss_discount)) ? '' : salaryPaymentForm.ss_discount}
+                  onChange={e => setSalaryPaymentForm({...salaryPaymentForm, ss_discount: e.target.value})}
+                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase">IRT (%)</label>
+                <input 
+                  required
+                  type="number" 
+                  step="0.1"
+                  value={isNaN(Number(salaryPaymentForm.irt_tax)) ? '' : salaryPaymentForm.irt_tax}
+                  onChange={e => setSalaryPaymentForm({...salaryPaymentForm, irt_tax: e.target.value})}
+                  className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+                />
+              </div>
+            </div>
+
+            <div className="p-4 bg-orange-50 border border-orange-100 rounded-2xl flex justify-between items-center">
+              <div>
+                <p className="text-[10px] font-bold text-orange-600 uppercase">Valor Líquido a Receber</p>
+                <p className="text-2xl font-black text-orange-950">
+                  Kz {
+                    (
+                      (Number(selectedSalary?.base_salary) || 0) + 
+                      (Number(salaryPaymentForm.bonus) || 0) - 
+                      (Number(salaryPaymentForm.absence_discount) || 0) - 
+                      ((Number(selectedSalary?.base_salary) || 0) * (Number(salaryPaymentForm.ss_discount) || 0) / 100) - 
+                      ((Number(selectedSalary?.base_salary) || 0) * (Number(salaryPaymentForm.irt_tax) || 0) / 100)
+                    ).toLocaleString()
+                  }
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-zinc-400 uppercase font-bold">Salário Base</p>
+                <p className="text-sm font-bold text-zinc-600">
+                  Kz {(Number(selectedSalary?.base_salary) || 0).toLocaleString()}
+                </p>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <label className="text-xs font-bold text-zinc-500 uppercase">Tipo de Pagamento</label>
               <select 
@@ -1359,24 +1479,26 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 onChange={e => setSalaryPaymentForm({...salaryPaymentForm, type: e.target.value as any})}
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
               >
-                <option value="full_payment">Salário Completo</option>
+                <option value="full_payment">Pagamento Integral</option>
                 <option value="advance">Adiantamento</option>
-                <option value="bonus">Bónus Extra</option>
-                <option value="commission">Comissão</option>
+                <option value="bonus">Apenas Bónus</option>
+                <option value="base">Apenas Base</option>
+                <option value="commission">Comissões</option>
               </select>
             </div>
+
             <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-500 uppercase">Observações</label>
+              <label className="text-xs font-bold text-zinc-500 uppercase">Observações (Opcional)</label>
               <textarea 
                 value={salaryPaymentForm.description}
                 onChange={e => setSalaryPaymentForm({...salaryPaymentForm, description: e.target.value})}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5 min-h-[100px]"
-                placeholder="Ex: Pagamento referente ao mês de Março..."
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5 min-h-[80px]"
+                placeholder="Ex: Pagamento referente a horas extras..."
               />
             </div>
           </div>
 
-          <div className="flex justify-end gap-3 pt-4">
+          <div className="flex justify-end gap-3 pt-6 border-t border-zinc-100">
             <button 
               type="button"
               onClick={() => setIsSalaryPaymentModalOpen(false)}
@@ -1386,7 +1508,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
             </button>
             <button 
               type="submit"
-              className="px-8 py-2 bg-emerald-500 text-white text-sm font-bold rounded-xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-200"
+              className="px-8 py-2 bg-orange-600 text-white text-sm font-bold rounded-xl hover:bg-orange-700 transition-all shadow-lg shadow-orange-100"
             >
               Confirmar Pagamento
             </button>

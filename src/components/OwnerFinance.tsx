@@ -22,6 +22,7 @@ import {
   Coins
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { cn } from '../lib/utils';
 import { User, Establishment, FinancialTransaction, AccountReceivable, AccountPayable } from '../types';
 import { OwnerCurrencies } from './OwnerCurrencies';
 
@@ -311,7 +312,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
               Ver Tudo
             </button>
           </div>
-          <div className="overflow-x-auto">
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-left">
               <thead>
                 <tr className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -340,6 +341,31 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
                 ))}
               </tbody>
             </table>
+          </div>
+          {/* Mobile Transactions List */}
+          <div className="md:hidden divide-y divide-zinc-100 px-4">
+            {transactions.slice(0, 5).map((t) => (
+              <div key={t.id} className="py-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className={cn(
+                    "p-2 rounded-xl",
+                    t.type === 'income' ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
+                  )}>
+                    {t.type === 'income' ? <ArrowUpCircle size={20} /> : <ArrowDownCircle size={20} />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-zinc-900 line-clamp-1">{t.description}</p>
+                    <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">{t.category} • {new Date(t.date).toLocaleDateString()}</p>
+                  </div>
+                </div>
+                <div className={cn(
+                  "text-right font-black text-sm",
+                  t.type === 'income' ? "text-emerald-600" : "text-rose-600"
+                )}>
+                  {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>

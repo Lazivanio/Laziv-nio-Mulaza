@@ -4267,6 +4267,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
   const [productForm, setProductForm] = useState({ 
     name: '', 
     price: '', 
+    cost: '', 
     stock: '', 
     category: '', 
     image_url: '', 
@@ -4550,6 +4551,18 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     if (res.ok) fetchData();
   };
 
+  const parseInputNumber = (val: string | number) => {
+    if (typeof val === 'number') return isNaN(val) ? 0 : val;
+    if (!val) return 0;
+    const clean = val.replace(/[^\d.,-]/g, '');
+    if (clean.includes('.') && clean.includes(',')) {
+      return parseFloat(clean.replace(/\./g, '').replace(',', '.')) || 0;
+    } else if (clean.includes(',')) {
+      return parseFloat(clean.replace(',', '.')) || 0;
+    }
+    return parseFloat(clean) || 0;
+  };
+
   const handleAddProduct = async (e: FormEvent) => {
     e.preventDefault();
     const url = editingProduct ? `/api/owner/products/${editingProduct.id}` : '/api/owner/products';
@@ -4562,9 +4575,10 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         ...productForm, 
         establishment_id: Number(establishmentId), 
         warehouse_id: productForm.warehouse_id ? Number(productForm.warehouse_id) : null,
-        price: Number(productForm.price), 
-        stock: Number(productForm.stock),
-        min_stock: Number(productForm.min_stock)
+        price: parseInputNumber(productForm.price), 
+        cost: parseInputNumber(productForm.cost),
+        stock: parseInputNumber(productForm.stock),
+        min_stock: parseInputNumber(productForm.min_stock)
       })
     });
     if (res.ok) {
@@ -4573,6 +4587,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
       setProductForm({ 
         name: '', 
         price: '', 
+        cost: '',
         stock: '', 
         category: '', 
         image_url: '', 
@@ -4591,8 +4606,9 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     setEditingProduct(product);
     setProductForm({
       name: product.name,
-      price: product.price.toString(),
-      stock: product.stock.toString(),
+      price: (product.price || 0).toString(),
+      cost: (product.cost || 0).toString(),
+      stock: (product.stock || 0).toString(),
       category: product.category,
       image_url: product.image_url,
       min_stock: (product.min_stock || 5).toString(),
@@ -5263,6 +5279,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                       <th className="px-6 py-4 font-semibold">Categoria</th>
                       <th className="px-6 py-4 font-semibold">Armazém</th>
                       <th className="px-6 py-4 font-semibold">Preço</th>
+                      <th className="px-6 py-4 font-semibold">Custo</th>
+                      <th className="px-6 py-4 font-semibold">Lucro</th>
                       <th className="px-6 py-4 font-semibold">Stock</th>
                       <th className="px-6 py-4 font-semibold text-right">Ações</th>
                     </tr>
@@ -5290,6 +5308,17 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                           ) : (
                             <span>Kz {product.price.toLocaleString()}</span>
                           )}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-medium text-zinc-500">
+                          Kz {product.cost?.toLocaleString() || 0}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={cn(
+                            "text-sm font-bold",
+                            ((product.discount_percent ? product.price * (1 - product.discount_percent / 100) : product.price) - (product.cost || 0)) > 0 ? "text-emerald-600" : "text-rose-600"
+                          )}>
+                            Kz {((product.discount_percent ? product.price * (1 - product.discount_percent / 100) : product.price) - (product.cost || 0)).toLocaleString()}
+                          </span>
                         </td>
                         <td className="px-6 py-4">
                           <span className={cn(
@@ -7901,14 +7930,23 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="col-span-1">
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Custo (Kz)</label>
+              <input 
+                type="number" required
+                value={isNaN(Number(productForm.cost)) ? '' : productForm.cost}
+                onChange={e => setProductForm({...productForm, cost: e.target.value})}
+                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+              />
+            </div>
             <div className="col-span-1">
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Preço (Kz)</label>
               <input 
                 type="number" required
                 value={isNaN(Number(productForm.price)) ? '' : productForm.price}
                 onChange={e => setProductForm({...productForm, price: e.target.value})}
-                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none text-emerald-600 font-bold" 
               />
             </div>
             <div className="col-span-1">
@@ -7930,7 +7968,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
               />
             </div>
             <div className="col-span-1">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Taxa/IVA</label>
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">IVA</label>
               <select 
                 value={productForm.tax_id}
                 onChange={e => setProductForm({...productForm, tax_id: e.target.value})}
@@ -8490,9 +8528,12 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
 
   if (!invoice || !establishment) return null;
 
-  const subtotal = invoice.items.reduce((acc: number, item: any) => acc + (item.price * item.quantity), 0);
-  const taxTotal = invoice.items.reduce((acc: number, item: any) => acc + (item.price * item.quantity * (item.tax / 100)), 0);
-  const total = subtotal + taxTotal + (invoice.adjustment_amount || 0);
+  const subtotal = (invoice.items || []).reduce((acc: number, item: any) => acc + (Number(item.price || 0) * Number(item.quantity || 0)), 0);
+  const taxTotal = (invoice.items || []).reduce((acc: number, item: any) => {
+    const taxRate = Number(item.tax ?? item.tax_rate ?? 0);
+    return acc + (Number(item.price || 0) * Number(item.quantity || 0) * (taxRate / 100));
+  }, 0);
+  const total = subtotal + taxTotal + (Number(invoice.adjustment_amount || 0));
   const currencyCode = invoice.currency || 'Kz';
 
   if (invoice.doc_type === 'PP') {
@@ -8609,9 +8650,9 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
                     <p className="font-bold">{(item.name || item.description || 'ITEM').toUpperCase()}</p>
                   </td>
                   <td className="py-4 text-center">{item.quantity}</td>
-                  <td className="py-4 text-right">Kz {item.price.toLocaleString()}</td>
-                  <td className="py-4 text-right">{item.tax}%</td>
-                  <td className="py-4 text-right font-bold">Kz {(item.price * item.quantity).toLocaleString()}</td>
+                  <td className="py-4 text-right">Kz {Number(item.price || 0).toLocaleString()}</td>
+                  <td className="py-4 text-right">{item.tax ?? item.tax_rate ?? 0}%</td>
+                  <td className="py-4 text-right font-bold">Kz {(Number(item.price || 0) * Number(item.quantity || 0)).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
@@ -8678,7 +8719,7 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
                 <span>{currencyCode} {subtotal.toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-xs font-bold text-zinc-500 uppercase tracking-widest">
-                <span>IVA ({invoice.items?.[0]?.tax ?? (establishment.fiscal_regime === 'simplificado' ? 7 : (establishment.fiscal_regime === 'exclusao' ? 0 : 14))}%)</span>
+                <span>IVA ({(invoice.items?.[0]?.tax ?? invoice.items?.[0]?.tax_rate ?? (establishment?.fiscal_regime === 'exclusao' ? 0 : 14))}%)</span>
                 <span>{currencyCode} {taxTotal.toLocaleString()}</span>
               </div>
               {invoice.adjustment_amount !== 0 && (
@@ -9177,8 +9218,8 @@ const Invoice = ({ sale, establishment, user }: { sale: any, establishment: any,
             </div>
           )}
           <div className="flex justify-between">
-            <span>IVA ({sale.items?.[0]?.tax_percentage ?? (user?.fiscal_regime === 'exclusao' ? 0 : 14)}%)</span>
-            <span>{sale.currency_code || 'Kz'} {sale.tax_amount.toLocaleString()}</span>
+            <span>IVA ({(sale.items?.[0]?.tax_percentage ?? sale.items?.[0]?.tax ?? sale.items?.[0]?.tax_rate ?? (user?.fiscal_regime === 'exclusao' ? 0 : 14))}%)</span>
+            <span>{sale.currency_code || 'Kz'} {(Number(sale.tax_amount) || 0).toLocaleString()}</span>
           </div>
           {user.fiscal_regime === 'exclusao' && (
             <p className="text-[7px] text-black italic mt-0.5">Isento nos termos do regime de exclusão</p>
@@ -9391,6 +9432,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const [availableCurrencies, setAvailableCurrencies] = useState<any[]>([]);
   const [selectedCurrencyCode, setSelectedCurrencyCode] = useState('Kz');
   const [currentExchangeRate, setCurrentExchangeRate] = useState(1.0);
+  // UI State
+  const [showCartMobile, setShowCartMobile] = useState(false);
 
   const checkActiveSession = async () => {
     if (!user.cash_register_id) {
@@ -9875,6 +9918,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               service_id: i.type === 'service' ? i.item.id : null,
               type: i.type,
               name: i.item.name,
+              unit_cost: i.type === 'product' ? (i.item as Product).cost : 0,
               price: (i.type === 'product' 
                 ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
                 : i.item.price) + (i.selectedFees?.reduce((sum, f) => sum + f.amount, 0) || 0),
@@ -9980,6 +10024,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               name: i.item.name,
               quantity: i.quantity,
               price: price,
+              unit_cost: i.type === 'product' ? (i.item as Product).cost : 0,
               tax_percentage: taxPercentage,
               tax_code: taxCode,
               fees: i.selectedFees // Optional: backend records fees in JSON
@@ -10072,6 +10117,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           name: i.item.name,
           quantity: i.quantity,
           price: price,
+          unit_cost: i.type === 'product' ? (i.item as Product).cost : 0,
           type: i.type,
           code: i.type === 'product' ? (i.item as Product).barcode : (i.item as Service).code,
           tax: taxPercentage,
@@ -10159,9 +10205,12 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   ];
 
   return (
-    <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-0 p-4 md:p-6 pb-24 lg:pb-6">
+    <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-0 p-4 md:p-6 pb-24 lg:pb-6 relative">
       {/* Product Selection */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+      <div className={cn(
+        "flex-1 flex flex-col min-w-0 min-h-0 transition-all",
+        showCartMobile ? "hidden lg:flex" : "flex"
+      )}>
         <div className="mb-6 space-y-6">
           <div className="bg-orange-500 -mx-6 -mt-6 p-6 text-white rounded-b-[2rem] shadow-lg">
             <div className="flex items-center justify-between mb-4">
@@ -10304,16 +10353,27 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         </div>
       </div>
 
-      {/* Cart / Checkout - Hidden on mobile if not active, or shown as sidebar on desktop */}
-      <div className="hidden lg:flex w-80 flex-col">
-        <Card className="flex-1 flex flex-col shadow-2xl border-zinc-200 rounded-[2rem]">
+      {/* Cart / Checkout - Sidebar on desktop, Toggleable on mobile */}
+      <div className={cn(
+        "lg:flex w-full lg:w-80 flex-col transition-all",
+        showCartMobile ? "flex flex-1 fixed inset-0 z-50 p-4 bg-white lg:relative lg:p-0 lg:bg-transparent lg:inset-auto" : "hidden"
+      )}>
+        <Card className="flex-1 flex flex-col shadow-2xl border-zinc-200 rounded-[2rem] overflow-hidden">
           <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
             <h3 className="font-bold text-lg flex items-center gap-2">
               <ShoppingCart size={20} className="text-orange-500" /> Carrinho
             </h3>
-            <span className="bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full text-[10px] font-black">
-              {cart.reduce((acc, item) => acc + item.quantity, 0)} ITENS
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full text-[10px] font-black">
+                {cart.reduce((acc, item) => acc + item.quantity, 0)} ITENS
+              </span>
+              <button 
+                onClick={() => setShowCartMobile(false)}
+                className="lg:hidden p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-full"
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -11070,6 +11130,27 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           </div>
         </div>
       </Modal>
+
+      {/* Mobile Cart FAB */}
+      <div className="lg:hidden fixed bottom-6 right-6 z-40">
+        <button
+          onClick={() => setShowCartMobile(!showCartMobile)}
+          className={cn(
+            "flex items-center gap-3 px-6 py-4 rounded-full font-black text-sm shadow-2xl transition-all active:scale-95 border-2 border-white",
+            cart.length > 0 ? "bg-orange-600 text-white" : "bg-zinc-800 text-white"
+          )}
+        >
+          <div className="relative">
+            <ShoppingCart size={20} />
+            {cart.length > 0 && (
+              <span className="absolute -top-3 -right-3 w-5 h-5 bg-white text-orange-600 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm">
+                {cart.reduce((acc, item) => acc + item.quantity, 0)}
+              </span>
+            )}
+          </div>
+          <span>{selectedCurrencyCode} {totalInSelectedCurrency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </button>
+      </div>
     </div>
   );
 };
@@ -11165,7 +11246,7 @@ const SellerHistory = ({ user }: { user: User }) => {
       </div>
 
       <Card className="overflow-hidden border-zinc-100 shadow-sm rounded-[2rem]">
-        <div className="overflow-x-auto">
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left">
             <thead>
               <tr className="bg-zinc-50 border-b border-zinc-100">
@@ -11228,6 +11309,55 @@ const SellerHistory = ({ user }: { user: User }) => {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile History View */}
+        <div className="md:hidden divide-y divide-zinc-100">
+          {sales.length === 0 ? (
+            <div className="px-6 py-12 text-center text-zinc-400 italic text-sm">Nenhuma venda encontrada.</div>
+          ) : sales.map((sale) => (
+            <div key={`${sale.source || 'trans'}-${sale.id}`} className="p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-mono text-zinc-400">#{sale.id.toString().padStart(6, '0')}</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${
+                      sale.doc_type === 'FR' ? 'bg-blue-100 text-blue-600' :
+                      sale.doc_type === 'FT' ? 'bg-purple-100 text-purple-600' :
+                      'bg-zinc-100 text-zinc-600'
+                    }`}>
+                      {sale.doc_type || 'FR'}
+                    </span>
+                    <span className="text-[10px] text-zinc-500 font-bold">{new Date(sale.timestamp).toLocaleDateString()}</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-black text-sm text-zinc-900">Kz {(sale.total_amount || 0).toLocaleString()}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-bold text-zinc-800">{sale.client_name}</p>
+                  <p className="text-[10px] text-zinc-400">NIF: {sale.client_nif}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => openRequestModal(sale)}
+                    className="p-2 bg-zinc-50 text-zinc-400 rounded-xl"
+                  >
+                    <RefreshCcw size={16} />
+                  </button>
+                  <button 
+                    onClick={() => openInvoice(sale)}
+                    className="p-2 bg-orange-50 text-orange-600 rounded-xl"
+                  >
+                    <Printer size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </Card>
 

@@ -49,6 +49,10 @@ export interface User {
   status?: 'active' | 'suspended';
   fiscal_regime?: 'geral' | 'simplificado' | 'exclusao';
   billing_mode?: 'tradicional' | 'eletronica';
+  nif?: string;
+  bi_number?: string;
+  social_security_number?: string;
+  address?: string;
 }
 
 export interface HRRole {
@@ -78,6 +82,9 @@ export interface HRSalaryPayment {
   salary_id: number;
   amount: number;
   bonus: number;
+  absence_discount: number;
+  ss_discount: number;
+  irt_tax: number;
   type: 'base' | 'bonus' | 'discount' | 'full_payment' | 'advance' | 'commission';
   description?: string;
   month: string;
@@ -143,6 +150,7 @@ export interface Product {
   establishment_id: number;
   name: string;
   price: number;
+  cost: number;
   stock: number;
   category: string;
   image_url: string;

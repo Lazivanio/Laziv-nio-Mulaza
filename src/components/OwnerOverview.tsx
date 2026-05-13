@@ -22,6 +22,7 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { cn } from '../lib/utils';
 import { 
   AreaChart, 
   Area, 
@@ -38,8 +39,6 @@ import {
   Legend
 } from 'recharts';
 import { User, Establishment as EstablishmentType } from '../types';
-
-const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
 const Card = ({ children, className, ...props }: { children: React.ReactNode, className?: string, [key: string]: any }) => (
   <div {...props} className={cn("bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm", className)}>
@@ -207,7 +206,7 @@ export const OwnerOverview = ({ user }: { user: User }) => {
         </AnimatePresence>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
         <StatCard 
           label="Entradas Hoje" 
           value={`Kz ${(stats.todaySales || 0).toLocaleString()}`} 

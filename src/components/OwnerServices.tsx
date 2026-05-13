@@ -298,7 +298,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
       const res = await fetch(`/api/owner/service-sheets/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, payment_method: payment_method || 'Dinheiro' })
+        body: JSON.stringify({ status, payment_method: payment_method || 'Dinheiro', seller_id: user.id })
       });
       if (res.ok) {
         fetchServiceSheets();
@@ -731,10 +731,10 @@ export const OwnerServices = ({ user }: { user: User }) => {
                        <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Doc #{sheet.id.toString().padStart(5, '0')}</span>
                        <div className={cn(
                           "px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider",
-                          sheet.status === 'completed' ? "bg-emerald-500 text-white" : 
+                          (sheet.status === 'concluded' || sheet.status === 'concluido') ? "bg-emerald-500 text-white" : 
                           sheet.status === 'cancelled' ? "bg-zinc-400 text-white" : "bg-orange-500 text-white"
                         )}>
-                          {sheet.status === 'completed' ? 'Concluído' : sheet.status === 'cancelled' ? 'Cancelado' : 'Em curso'}
+                          {(sheet.status === 'concluded' || sheet.status === 'concluido') ? 'Concluído' : sheet.status === 'cancelled' ? 'Cancelado' : 'Em curso'}
                         </div>
                     </div>
                     

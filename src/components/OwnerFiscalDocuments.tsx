@@ -38,6 +38,10 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [series, setSeries] = useState<any[]>([]);
   const [selectedEstablishmentForSeries, setSelectedEstablishmentForSeries] = useState<string>('');
+  
+  // Filters for History
+  const [filterType, setFilterType] = useState<string>('');
+  const [filterDate, setFilterDate] = useState<string>('');
 
   // SAFT Form
   const [saftForm, setSaftForm] = useState({
@@ -171,6 +175,22 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
     window.open(`/api/owner/download-file/${fileId}`, '_blank');
   };
 
+  const filteredHistory = history.filter(file => {
+    const matchesType = filterType === '' || file.type === filterType;
+    const matchesDate = filterDate === '' || file.created_at.startsWith(filterDate);
+    return matchesType && matchesDate;
+  });
+
+  const handleExportProfitSheet = () => {
+    const url = `/api/owner/reports/profit-sheet?ownerId=${user.id}&establishmentId=${saftForm.establishmentId}&startDate=${saftForm.startDate}&endDate=${saftForm.endDate}&userName=${encodeURIComponent(user.name)}`;
+    window.open(url, '_blank');
+    
+    // Refresh history after a short delay since we don't know exactly when it finishes in the other tab
+    setTimeout(() => {
+      fetchHistory();
+    }, 3000);
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -284,6 +304,13 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
             <h2 className="text-lg font-bold">Exportações</h2>
           </div>
 
+          <div className="mb-6 p-4 bg-zinc-50 rounded-xl border border-zinc-100">
+            <p className="text-xs text-zinc-500 flex items-center gap-2">
+              <Calendar size={14} className="text-zinc-400" />
+              <span>O relatório <b>Folha de Lucro</b> utiliza as datas e estabelecimento definidos na secção SAFT.</span>
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <ExportCard 
               title="Faturas em PDF" 
@@ -318,6 +345,13 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
               icon={<FileSpreadsheet size={24} />} 
               color="violet" 
               onClick={() => handleExport('products')}
+              disabled={generating}
+            />
+            <ExportCard 
+              title="Folha de Lucro (PDF)" 
+              icon={<DollarSign size={24} />} 
+              color="emerald" 
+              onClick={handleExportProfitSheet}
               disabled={generating}
             />
           </div>
@@ -367,22 +401,52 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
 
       {/* History Table */}
       <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+        <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-zinc-100 text-zinc-600 rounded-lg">
               <History size={20} />
             </div>
             <h2 className="text-lg font-bold">Histórico de Ficheiros Gerados</h2>
           </div>
-          <button 
-            onClick={fetchHistory}
-            className="p-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50 rounded-lg transition-all"
-          >
-            <Search size={20} />
-          </button>
+          
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={14} />
+              <input 
+                type="date"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+                className="pl-9 pr-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all"
+              />
+            </div>
+
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              className="pl-3 pr-8 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all appearance-none cursor-pointer"
+            >
+              <option value="">Todos os Tipos</option>
+              <option value="SAFT">SAFT (XML)</option>
+              <option value="Excel">Excel (.xlsx)</option>
+              <option value="PDF">PDF (.pdf)</option>
+              <option value="Folha de Lucro">Folha de Lucro</option>
+            </select>
+
+            <button 
+              onClick={() => {
+                setFilterDate('');
+                setFilterType('');
+                fetchHistory();
+              }}
+              className="p-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50 rounded-lg transition-all"
+              title="Limpar filtros e actualizar"
+            >
+              <RefreshCcw size={18} className={loading ? "animate-spin" : ""} />
+            </button>
+          </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-zinc-50/50">
@@ -400,14 +464,14 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
                     <Loader2 className="animate-spin mx-auto text-zinc-300" size={32} />
                   </td>
                 </tr>
-              ) : history.length === 0 ? (
+              ) : filteredHistory.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-12 text-center text-zinc-500">
-                    Nenhum ficheiro gerado ainda.
+                    {history.length === 0 ? "Nenhum ficheiro gerado ainda." : "Nenhum ficheiro corresponde aos filtros seleccionados."}
                   </td>
                 </tr>
               ) : (
-                history.map((file) => (
+                filteredHistory.map((file) => (
                   <tr key={file.id} className="hover:bg-zinc-50/50 transition-colors group">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
@@ -452,6 +516,57 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile View */}
+        <div className="md:hidden divide-y divide-zinc-100">
+          {loading ? (
+            <div className="p-12 text-center">
+              <Loader2 className="animate-spin mx-auto text-zinc-300" size={32} />
+            </div>
+          ) : filteredHistory.length === 0 ? (
+            <div className="p-12 text-center text-zinc-500 text-sm">
+              Nenhum ficheiro encontrado.
+            </div>
+          ) : (
+            filteredHistory.map((file) => (
+              <div key={file.id} className="p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg ${
+                      file.type === 'SAFT' ? 'bg-orange-50 text-orange-600' : 
+                      file.type === 'Excel' ? 'bg-emerald-50 text-emerald-600' : 
+                      'bg-rose-50 text-rose-600'
+                    }`}>
+                      {file.type === 'SAFT' ? <FileCode size={18} /> : 
+                       file.type === 'Excel' ? <FileSpreadsheet size={18} /> : 
+                       <FileIcon size={18} />}
+                    </div>
+                    <div>
+                      <p className="font-bold text-sm text-zinc-900 truncate max-w-[200px]">{file.name}</p>
+                      <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">{file.type}</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => handleDownload(file.id)}
+                    className="p-2 bg-orange-50 text-orange-600 rounded-xl"
+                  >
+                    <Download size={18} />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between text-[10px]">
+                  <div className="flex items-center gap-2 text-zinc-500 font-medium">
+                    <Calendar size={12} />
+                    {new Date(file.created_at).toLocaleDateString()}
+                  </div>
+                  <div className="flex items-center gap-2 text-zinc-500 font-medium">
+                    <Users size={12} />
+                    {file.generated_by}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>

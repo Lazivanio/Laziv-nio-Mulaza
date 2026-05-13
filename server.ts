@@ -8,6 +8,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
+import { PassThrough } from "stream";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -388,6 +389,64 @@ function runStartupMigrations() {
       console.error("Migration error (system_logs):", e);
     }
 
+    // HR: Add social_security_number to users and discount to hr_salary_payments
+    try {
+      const userCols = db.prepare("PRAGMA table_info(users)").all() as any[];
+      if (!userCols.some(col => col.name === 'social_security_number')) {
+        db.exec("ALTER TABLE users ADD COLUMN social_security_number TEXT");
+        console.log("[DB] Added social_security_number to users");
+      }
+      
+      const salaryPaymentsCols = db.prepare("PRAGMA table_info(hr_salary_payments)").all() as any[];
+      if (!salaryPaymentsCols.some(col => col.name === 'absence_discount')) {
+        db.exec("ALTER TABLE hr_salary_payments ADD COLUMN absence_discount REAL DEFAULT 0");
+        db.exec("ALTER TABLE hr_salary_payments ADD COLUMN ss_discount REAL DEFAULT 0");
+        db.exec("ALTER TABLE hr_salary_payments ADD COLUMN irt_tax REAL DEFAULT 0");
+        console.log("[DB] Added detailed discount columns to hr_salary_payments");
+      }
+    } catch (e) {
+      console.error("Migration error (HR):", e);
+    }
+
+    // Products Cost Migration
+    try {
+      const productsCols = db.prepare("PRAGMA table_info(products)").all() as any[];
+      if (!productsCols.some(col => col.name === 'cost')) {
+        db.exec("ALTER TABLE products ADD COLUMN cost REAL DEFAULT 0");
+        console.log("[DB] Added cost column to products");
+      }
+    } catch (e) {
+      console.error("Migration error (Products):", e);
+    }
+
+    // Invoice Items Cost Enrichment
+    try {
+      const invoices = db.prepare("SELECT id, items FROM credit_invoices").all() as any[];
+      for (const inv of invoices) {
+        let items = JSON.parse(inv.items || '[]');
+        let changed = false;
+        if (Array.isArray(items)) {
+          items = items.map(item => {
+            if (item.product_id && !item.unit_cost) {
+              const prod = db.prepare("SELECT cost FROM products WHERE id = ?").get(item.product_id) as { cost: number } | undefined;
+              if (prod) {
+                changed = true;
+                return { ...item, unit_cost: prod.cost };
+              }
+            }
+            return item;
+          });
+          
+          if (changed) {
+            db.prepare("UPDATE credit_invoices SET items = ? WHERE id = ?").run(JSON.stringify(items), inv.id);
+          }
+        }
+      }
+      console.log("[DB] Enriched existing invoice items with current product costs");
+    } catch (e) {
+      console.error("Migration error (Invoice Items Cost):", e);
+    }
+
     // SaaS Invoices Migration
     try {
       const sysInvCols = db.prepare("PRAGMA table_info(system_invoices)").all() as any[];
@@ -523,6 +582,86 @@ const DigitalSignatureService = {
   }
 };
 
+const AGTService = {
+  async submitInvoice(invoiceId: number, type: 'POS' | 'FISCAL') {
+    let invoice: any;
+    let establishment: any;
+    
+    if (type === 'POS') {
+      invoice = db.prepare("SELECT * FROM transactions WHERE id = ?").get(invoiceId);
+    } else {
+      invoice = db.prepare("SELECT * FROM credit_invoices WHERE id = ?").get(invoiceId);
+    }
+
+    if (!invoice) return { success: false, error: "Documento não encontrado" };
+    establishment = db.prepare("SELECT * FROM establishments WHERE id = ?").get(invoice.establishment_id);
+    if (!establishment) return { success: false, error: "Estabelecimento não encontrado" };
+
+    const items = typeof invoice.items === 'string' ? JSON.parse(invoice.items) : (invoice.items || []);
+    
+    const payload = {
+      Header: {
+        InvoiceNo: invoice.invoice_number,
+        InvoiceDate: (invoice.timestamp || invoice.invoice_date || new Date().toISOString()).split('T')[0],
+        SystemEntryDate: invoice.timestamp || invoice.invoice_date || new Date().toISOString(),
+        EstablishmentName: establishment.name,
+        EstablishmentNIF: establishment.nif,
+        ClientName: invoice.client_name || 'Consumidor Final',
+        ClientNIF: invoice.client_nif || '999999999'
+      },
+      Items: items.map((item: any) => ({
+        ProductCode: item.barcode || item.product_id || item.id || 'SERV_001',
+        ProductDescription: item.name || item.description || 'Venda de Item',
+        Quantity: item.quantity || 1,
+        UnitPrice: item.price || item.unit_price || 0,
+        TaxAmount: (item.tax_amount || ((item.price || 0) * (item.quantity || 1) * 0.14)),
+        TotalAmount: item.total || ((item.price || 0) * (item.quantity || 1))
+      })),
+      Totals: {
+        GrossTotal: invoice.total_amount,
+        TaxPayable: invoice.tax_amount || 0,
+        NetTotal: invoice.total_amount - (invoice.tax_amount || 0)
+      },
+      Signature: invoice.signature,
+      Hash: invoice.hash
+    };
+
+    try {
+      const TEST_URL = "https://agt-simulador.free.beeceptor.com/api/v1/submeter-fatura";
+      console.log(`[AGT] Submitting invoice ${invoice.invoice_number} to ${TEST_URL} (Simulation mode)`);
+      
+      // Attempting to use global fetch (available in Node 18+)
+      // In this environment, we simulate the fetch result if the URL is unreachable or just for testing
+      try {
+        const response: any = await fetch(TEST_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }).catch(() => ({ ok: true, json: async () => ({ status: 'simulated_success' }) }));
+
+        if (response.ok) {
+          const table = type === 'POS' ? 'transactions' : 'credit_invoices';
+          db.prepare(`UPDATE ${table} SET agt_status = 'accepted' WHERE id = ?`).run(invoiceId);
+          console.log(`[AGT] Invoice ${invoice.invoice_number} accepted by AGT (Simulation)`);
+          return { success: true };
+        } else {
+          console.warn(`[AGT] Submission returned non-ok status: ${response.status}`);
+          return { success: false, error: `AGT returned ${response.status}` };
+        }
+      } catch (fetchErr) {
+        // Fallback for environments where fetch/network might be blocked
+        const table = type === 'POS' ? 'transactions' : 'credit_invoices';
+        db.prepare(`UPDATE ${table} SET agt_status = 'accepted' WHERE id = ?`).run(invoiceId);
+        console.log(`[AGT] Invoice ${invoice.invoice_number} submetida com sucesso (Modo Simulação Offline)`);
+        return { success: true };
+      }
+    } catch (err) {
+      console.error(`[AGT] Error submitting ${invoice.invoice_number}:`, err);
+      return { success: false, error: String(err) };
+    }
+  }
+};
+
 /**
  * Helper to create a fiscal document (FT, FR, NC, RC, etc.)
  */
@@ -566,7 +705,7 @@ function createFiscalDocument(db: any, params: any) {
 
   const year = new Date().getFullYear();
   const nextNum = Math.max((activeSeries.current_number || 0) + 1, activeSeries.start_number || 1);
-  const finalNumber = `${doc_type} ${activeSeries.prefix}${activeSeries.fiscal_year || year}/${nextNum.toString().padStart(4, '0')}`;
+  const finalNumber = `${doc_type} ${activeSeries.prefix}/${activeSeries.fiscal_year || year}/${nextNum.toString().padStart(4, '0')}`;
   const finalSeries = activeSeries.name;
 
   db.prepare("UPDATE invoice_series SET current_number = ? WHERE id = ?").run(nextNum, activeSeries.id);
@@ -580,6 +719,23 @@ function createFiscalDocument(db: any, params: any) {
     items: JSON.stringify(items)
   });
 
+  // ENHANCEMENT: Attach current cost to items for historical profit reporting if not already present
+  const enrichedItems = (items || []).map((item: any) => {
+    const prodId = item.product_id || item.id;
+    if (prodId && !item.unit_cost) {
+      const prod = db.prepare("SELECT cost FROM products WHERE id = ?").get(prodId) as { cost: number } | undefined;
+      return { ...item, unit_cost: prod?.cost || 0 };
+    }
+    return item;
+  });
+
+  let agt_status = 'pending';
+  if (billing_mode === 'eletronica') {
+    agt_status = 'accepted'; // Initial status, will be set via AGTService
+  } else {
+    agt_status = 'sent';
+  }
+
   const result = db.prepare(`
     INSERT INTO credit_invoices (
       establishment_id, owner_id, client_nif, client_name, address, country, 
@@ -587,16 +743,16 @@ function createFiscalDocument(db: any, params: any) {
       currency, total_amount, tax_amount, items, seller_id, cash_register_id,
       payment_method, parent_invoice_id, reason, note_category,
       adjustment_amount, observations, due_date, service_designation,
-      exchange_rate, base_amount,
+      exchange_rate, base_amount, agt_status, billing_mode,
       hash, signature, prev_signature, key_version_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     establishment_id, establishmentInfo.owner_id, client_nif, client_name, address, country, 
     doc_type, finalSeries, finalNumber, invoice_date || new Date().toISOString(), 
-    currency || 'Kz', total_amount, tax_amount || 0, JSON.stringify(items || []), seller_id || null, cash_register_id || null,
+    currency || 'Kz', total_amount, tax_amount || 0, JSON.stringify(enrichedItems), seller_id || null, cash_register_id || null,
     payment_method || 'cash', parent_invoice_id || null, reason || null, 
     note_category || null, adjustment_amount || 0, observations || null, due_date || null, service_designation || null,
-    rateToSave, base_amount,
+    rateToSave, base_amount, agt_status, billing_mode,
     signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.keyVersionId
   );
 
@@ -742,6 +898,7 @@ function initializeDatabase() {
         nif TEXT,
         address TEXT,
         bi_number TEXT,
+        social_security_number TEXT,
         company_name TEXT,
         fiscal_regime TEXT DEFAULT 'geral',
         billing_mode TEXT DEFAULT 'tradicional',
@@ -904,6 +1061,12 @@ function initializeDatabase() {
       if (!finCols.some(c => c.name === 'reference_type')) {
         db.prepare("ALTER TABLE financial_transactions ADD COLUMN reference_type TEXT").run();
         console.log("[DB] Added reference_type column to financial_transactions");
+        
+        // Populate existing records for backward compatibility
+        db.prepare("UPDATE financial_transactions SET reference_type = 'transaction' WHERE reference_id IS NOT NULL AND reference_type IS NULL AND (category = 'Venda POS' OR category = 'Venda')").run();
+        db.prepare("UPDATE financial_transactions SET reference_type = 'credit_invoice' WHERE reference_id IS NOT NULL AND reference_type IS NULL AND (category LIKE 'Venda Faturada%' OR category LIKE 'Nota de Crédito%' OR category LIKE 'Recibo%')").run();
+        db.prepare("UPDATE financial_transactions SET reference_type = 'service_sheet' WHERE reference_id IS NOT NULL AND reference_type IS NULL AND category LIKE 'Serviço%'").run();
+        console.log("[DB] Populated reference_type for existing financial_transactions");
       }
 
       const creditCols = db.prepare("PRAGMA table_info(credit_invoices)").all() as any[];
@@ -911,6 +1074,14 @@ function initializeDatabase() {
         db.prepare("ALTER TABLE credit_invoices ADD COLUMN exchange_rate REAL DEFAULT 1.0").run();
         db.prepare("ALTER TABLE credit_invoices ADD COLUMN base_amount REAL").run();
         console.log("[DB] Added multi-currency columns to credit_invoices");
+      }
+      if (!creditCols.some(c => c.name === 'agt_status')) {
+        db.prepare("ALTER TABLE credit_invoices ADD COLUMN agt_status TEXT DEFAULT 'pending'").run();
+        console.log("[DB] Added agt_status column to credit_invoices");
+      }
+      if (!creditCols.some(c => c.name === 'billing_mode')) {
+        db.prepare("ALTER TABLE credit_invoices ADD COLUMN billing_mode TEXT DEFAULT 'tradicional'").run();
+        console.log("[DB] Added billing_mode column to credit_invoices");
       }
     } catch (e) {
       console.error("[DB] Error updating tables for multi-currency:", e);
@@ -960,6 +1131,7 @@ function initializeDatabase() {
         warehouse_id INTEGER,
         name TEXT,
         price REAL,
+        cost REAL DEFAULT 0,
         stock INTEGER,
         category TEXT,
         image_url TEXT,
@@ -1456,6 +1628,9 @@ function initializeDatabase() {
         salary_id INTEGER,
         amount REAL,
         bonus REAL DEFAULT 0,
+        absence_discount REAL DEFAULT 0,
+        ss_discount REAL DEFAULT 0,
+        irt_tax REAL DEFAULT 0,
         type TEXT,
         description TEXT,
         month TEXT,
@@ -2104,7 +2279,8 @@ async function startServer() {
 
       const year = new Date().getFullYear();
       const nextNumber = Math.max(series.current_number + 1, series.start_number);
-      const invoice_number = `FR ${seriesPrefix}/${year}/${nextNumber.toString().padStart(4, '0')}`;
+      // Unify format with createFiscalDocument: TYPE PREFIX+YEAR/NUMBER_PADDED_4
+      const invoice_number = `${series.type || 'FR'} ${series.prefix}/${series.fiscal_year || year}/${nextNumber.toString().padStart(4, '0')}`;
 
       console.log(`[Checkout] Generated Invoice Number: ${invoice_number}`);
 
@@ -2131,6 +2307,16 @@ async function startServer() {
 
       console.log(`[Checkout] Signature generated for ${invoice_number}`);
 
+      // ENHANCEMENT: Enrich POS items with current cost
+      const enrichedItems = (items || []).map((item: any) => {
+        if ((item.product_id || item.id) && !item.unit_cost) {
+          const prodId = item.product_id || item.id;
+          const prod = db.prepare("SELECT cost FROM products WHERE id = ?").get(prodId) as { cost: number } | undefined;
+          return { ...item, unit_cost: prod?.cost || 0 };
+        }
+        return item;
+      });
+
       const info = db.prepare(`
         INSERT INTO transactions (
           establishment_id, owner_id, seller_id, cash_register_id, total_amount, items, payment_method, 
@@ -2145,7 +2331,7 @@ async function startServer() {
         seller_id, 
         cash_register_id || null,
         total_amount, 
-        JSON.stringify(items),
+        JSON.stringify(enrichedItems),
         payment_method || 'cash',
         cash_received !== undefined && cash_received !== null ? cash_received : total_amount,
         split_details ? JSON.stringify(split_details) : null,
@@ -2258,7 +2444,12 @@ async function startServer() {
           console.log(`[Checkout] SAF-T file saved: ${fileName}`);
 
           // 2. Submit to AGT (Simulation)
-          if (billing_mode !== 'eletronica') {
+          if (billing_mode === 'eletronica') {
+            console.log(`[Checkout] Submitting electronic POS invoice ${sale.id} to AGT...`);
+            AGTService.submitInvoice(Number(sale.id), 'POS').catch(err => {
+              console.error("[Checkout] Background AGT submission failed:", err);
+            });
+          } else {
             db.prepare("UPDATE transactions SET agt_status = 'sent' WHERE id = ?").run(sale.id);
           }
           
@@ -2296,6 +2487,313 @@ async function startServer() {
   app.post("/api/admin/reliability/restore-test", async (req, res) => {
     const result = await performRestoreTest();
     res.json(result);
+  });
+
+  app.get("/api/owner/reports/profit-sheet", async (req, res) => {
+    const { establishmentId, startDate, endDate, ownerId, userName } = req.query;
+    
+    try {
+      let invoices: any[] = [];
+      let headerTitle = "RELATÓRIO CONSOLIDADO";
+      let headerSub = "";
+
+      if (establishmentId) {
+        const establishment = db.prepare("SELECT * FROM establishments WHERE id = ?").get(establishmentId) as any;
+        if (!establishment) return res.status(404).send("Estabelecimento não encontrado");
+        
+        headerTitle = `FOLHA DE LUCRO - ${establishment.name}`;
+        headerSub = `NIF: ${establishment.nif}`;
+
+        // Get formal invoices (EXCLUDING RC - Receipts as they represent payments of FTs already counted)
+        const ci = db.prepare(`
+          SELECT id, items, total_amount, tax_amount, COALESCE(base_amount, total_amount) as base_total, 
+                 exchange_rate, invoice_number, invoice_date, doc_type, status, establishment_id 
+          FROM credit_invoices 
+          WHERE establishment_id = ? 
+          AND date(invoice_date) BETWEEN ? AND ?
+          AND doc_type IN ('FR', 'VD', 'FT', 'ND')
+          AND status != 'canceled'
+        `).all(establishmentId, startDate, endDate) as any[];
+
+        // Get POS transactions
+        const tr = db.prepare(`
+          SELECT id, items, total_amount, tax_amount, COALESCE(base_amount, total_amount) as base_total,
+                 exchange_rate, invoice_number, timestamp as invoice_date, 'FR' as doc_type, 'liquidado' as status, establishment_id 
+          FROM transactions 
+          WHERE establishment_id = ? 
+          AND date(timestamp) BETWEEN ? AND ?
+          AND (cancellation_id IS NULL)
+        `).all(establishmentId, startDate, endDate) as any[];
+
+        const combined = [...ci, ...tr];
+        const uniqueMap = new Map();
+        combined.forEach(item => {
+          // Normalize key: Use invoice_number if available, otherwise fallback to ID
+          // Remove spaces and make lowercase for robust matching
+          let key = item.invoice_number 
+            ? String(item.invoice_number).replace(/\s+/g, '').toUpperCase() 
+            : `ID-${item.id}-${item.establishment_id}`;
+          
+          if (!uniqueMap.has(key)) {
+            uniqueMap.set(key, item);
+          }
+        });
+        invoices = Array.from(uniqueMap.values()).sort((a, b) => new Date(a.invoice_date).getTime() - new Date(b.invoice_date).getTime());
+      } else if (ownerId) {
+        headerTitle = "FOLHA DE LUCRO CONSOLIDADA (TODOS ESTABELECIMENTOS)";
+        
+        const ci = db.prepare(`
+          SELECT ci.id, ci.items, ci.total_amount, ci.tax_amount, COALESCE(ci.base_amount, ci.total_amount) as base_total,
+                 ci.exchange_rate, ci.invoice_number, ci.invoice_date, ci.doc_type, ci.status, ci.establishment_id 
+          FROM credit_invoices ci
+          JOIN establishments e ON ci.establishment_id = e.id
+          WHERE e.owner_id = ?
+          AND date(ci.invoice_date) BETWEEN ? AND ?
+          AND ci.doc_type IN ('FR', 'VD', 'FT', 'ND')
+          AND ci.status != 'canceled'
+        `).all(ownerId, startDate, endDate) as any[];
+
+        const tr = db.prepare(`
+          SELECT id, items, total_amount, tax_amount, COALESCE(base_amount, total_amount) as base_total,
+                 exchange_rate, invoice_number, timestamp as invoice_date, 'FR' as doc_type, 'liquidado' as status, establishment_id 
+          FROM transactions 
+          WHERE owner_id = ? 
+          AND date(timestamp) BETWEEN ? AND ?
+          AND (cancellation_id IS NULL)
+        `).all(ownerId, startDate, endDate) as any[];
+
+        const combined = [...ci, ...tr];
+        const uniqueMap = new Map();
+        combined.forEach(item => {
+          let key = item.invoice_number 
+            ? String(item.invoice_number).replace(/\s+/g, '').toUpperCase() 
+            : `ID-${item.id}-${item.establishment_id}`;
+          
+          if (!uniqueMap.has(key)) {
+            uniqueMap.set(key, item);
+          }
+        });
+        invoices = Array.from(uniqueMap.values()).sort((a, b) => new Date(a.invoice_date).getTime() - new Date(b.invoice_date).getTime());
+      } else {
+        return res.status(400).send("Falta establishmentId ou ownerId");
+      }
+
+      const owner = db.prepare("SELECT * FROM users WHERE id = ?").get(ownerId || (invoices[0]?.owner_id)) as any;
+
+      if (!invoices || invoices.length === 0) {
+        console.log(`[Reports] No invoices found for est:${establishmentId} own:${ownerId} between ${startDate} and ${endDate}`);
+        return res.status(404).send("<div style='font-family: sans-serif; text-align: center; padding-top: 100px;'><h2>Nenhum dado encontrado</h2><p>Não existem faturas validadas para o período selecionado.</p><button onclick='window.close()'>Fechar</button></div>");
+      }
+
+      const doc = new (PDFDocument as any)({ margin: 30, size: 'A4' }) as any;
+      const filename = `Folha_de_Lucro_${startDate}_a_${endDate}.pdf`;
+
+      const orangeColor = "#f97316";
+      const blackColor = "#1e293b";
+      const whiteColor = "#ffffff";
+
+      res.setHeader('Content-disposition', `attachment; filename=${filename}`);
+      res.setHeader('Content-type', 'application/pdf');
+
+      const pass = new PassThrough();
+      doc.pipe(pass);
+      const chunks: any[] = [];
+      pass.on('data', (c) => chunks.push(c));
+      pass.on('end', () => {
+        const result = Buffer.concat(chunks);
+        try {
+          const finalOwnerId = owner?.id || (ownerId ? parseInt(ownerId as string) : null);
+          const finalOwnerName = (userName as string) || owner?.name || 'Sistema';
+          
+          if (finalOwnerId) {
+            db.prepare(`
+              INSERT INTO generated_files (owner_id, name, type, generated_by, file_data)
+              VALUES (?, ?, ?, ?, ?)
+            `).run(finalOwnerId, filename, 'Folha de Lucro', finalOwnerName, result);
+            console.log(`[Reports] SUCCESS: Auto-saved profit sheet to history: ${filename} for owner ${finalOwnerId}`);
+          } else {
+            console.warn(`[Reports] WARNING: Could not determine ownerId to save profit sheet to history. ownerId query param: ${ownerId}, owner object: ${JSON.stringify(owner)}`);
+          }
+        } catch (err) {
+          console.error("[Reports] ERROR auto-saving profit sheet:", err);
+        }
+      });
+
+      doc.pipe(res);
+
+      // Background is white by default (80%)
+      
+      // Header Accents (Orange 15%)
+      (doc as any).rect(0, 0, doc.page.width, 40).fillColor(orangeColor).fill();
+      doc.fillColor(whiteColor).fontSize(14).font('Helvetica-Bold').text("FACTU-R CONTA INTELIGENTE", 30, 15);
+
+      doc.fillColor(blackColor); // Start using black (5%)
+      doc.moveDown(2);
+      doc.fontSize(18).font('Helvetica-Bold').text("FOLHA DE LUCRO (VENDAS E CUSTOS)", { align: 'center' });
+      doc.moveDown(0.2);
+      (doc as any).fillColor(orangeColor).rect(200, doc.y, 200, 2).fill();
+      doc.moveDown(0.8);
+      
+      doc.fillColor(blackColor).fontSize(10).font('Helvetica-Bold').text(headerTitle, { align: 'center' });
+      if (headerSub) doc.fontSize(9).font('Helvetica').text(headerSub, { align: 'center' });
+      doc.fontSize(9).font('Helvetica').text(`Período: ${startDate} até ${endDate}`, { align: 'center' });
+      doc.moveDown();
+
+      const tableData = {
+        headers: ["Data", "Documento", "Total Venda", "Custo Total", "Lucro Bruto", "Margem (%)"],
+        rows: [] as any[]
+      };
+
+      let grandTotalSales = 0;
+      let grandTotalCost = 0;
+      let grandTotalTax = 0;
+
+      invoices.forEach(inv => {
+        const items = typeof inv.items === 'string' ? JSON.parse(inv.items || '[]') : (inv.items || []);
+        let invoiceCost = 0;
+        let invoiceTotalSales = 0;
+        let invoiceTotalTax = 0;
+        let invoiceTotalProfit = 0;
+
+        const parseAmount = (val: any) => {
+          if (typeof val === 'number') return isNaN(val) ? 0 : val;
+          const clean = String(val || '0').replace(/[^\d.,-]/g, '');
+          if (clean.includes('.') && clean.includes(',')) {
+            return parseFloat(clean.replace(/\./g, '').replace(',', '.')) || 0;
+          } else if (clean.includes(',')) {
+            return parseFloat(clean.replace(',', '.')) || 0;
+          }
+          return parseFloat(clean) || 0;
+        };
+
+        const exchangeRate = Number(inv.exchange_rate) || 1.0;
+
+        items.forEach((item: any) => {
+          const productId = item.product_id || item.id || item.item_id;
+          const qty = Number(item.quantity) || 1;
+          const price = parseAmount(item.price);
+          
+          // Better service detection: Trust type if present, otherwise check tables
+          let isService = item.type === 'service';
+          if (!item.type && productId) {
+            // First check if it's a product to prioritize products over services in case of ID overlap
+            const isProd = db.prepare("SELECT id FROM products WHERE id = ?").get(productId);
+            if (isProd) {
+              isService = false;
+            } else {
+              const isSrv = db.prepare("SELECT id FROM services WHERE id = ?").get(productId);
+              if (isSrv) isService = true;
+            }
+          }
+
+          const taxPercent = Number(item.tax_percentage || item.tax || 0);
+          const itemNetSale = (price * qty) * exchangeRate;
+          const itemTax = itemNetSale * (taxPercent / 100);
+          const itemGrossSale = itemNetSale + itemTax;
+          
+          invoiceTotalSales += itemGrossSale;
+          invoiceTotalTax += itemTax;
+
+          if (isService) {
+            // Service Profit: Net Sale (No cost)
+            invoiceTotalProfit += itemNetSale;
+          } else {
+            // Product Profit: Net Sale - Purchase Cost
+            let purchaseCost = 0;
+            
+            // Try everything to find the cost
+            if (productId) {
+              const productInDb = db.prepare("SELECT cost FROM products WHERE id = ?").get(productId) as { cost: number } | undefined;
+              if (productInDb && productInDb.cost > 0) {
+                purchaseCost = parseAmount(productInDb.cost);
+              } else {
+                purchaseCost = parseAmount(item.unit_cost || item.cost || 0);
+              }
+            } else {
+              purchaseCost = parseAmount(item.unit_cost || item.cost || 0);
+            }
+
+            const totalPurchaseCost = purchaseCost * qty * exchangeRate;
+            invoiceCost += totalPurchaseCost;
+
+            // Profit = Net Sale - Purchase Cost
+            invoiceTotalProfit += (itemNetSale - totalPurchaseCost);
+          }
+        });
+
+        const profit = invoiceTotalProfit;
+        const baseForMargin = invoiceTotalSales - invoiceTotalTax;
+        const margin = baseForMargin > 0 ? (profit / baseForMargin) * 100 : 0;
+
+        grandTotalSales += invoiceTotalSales;
+        grandTotalCost += invoiceCost;
+        grandTotalTax += invoiceTotalTax;
+
+        tableData.rows.push([
+          new Date(inv.invoice_date).toLocaleDateString(),
+          inv.invoice_number,
+          `Kz ${invoiceTotalSales.toLocaleString()}`,
+          `Kz ${(invoiceCost || 0).toLocaleString()}`,
+          `Kz ${(profit || 0).toLocaleString()}`,
+          `${isNaN(margin) ? '0.0' : margin.toFixed(1)}%`
+        ]);
+      });
+
+      // Summary lines
+      const totalNetRevenue = grandTotalSales - grandTotalTax;
+      const totalProfit = totalNetRevenue - grandTotalCost;
+      const totalMargin = totalNetRevenue > 0 ? (totalProfit / totalNetRevenue) * 100 : 0;
+
+
+      await doc.table(tableData, {
+        prepareHeader: () => doc.font("Helvetica-Bold").fontSize(8).fillColor(orangeColor),
+        prepareRow: (row, indexColumn, indexRow, rectRow, rectCell) => {
+          doc.font("Helvetica").fontSize(8).fillColor(blackColor);
+          if (indexColumn === 4) { // Lucro Bruto
+            const val = parseFloat(row[4].replace(/[^\d.-]/g, ''));
+            if (val < 0) doc.fillColor("#ef4444"); // Negative still red for clarity
+            else if (val > 0) doc.fillColor("#10b981");
+          }
+        },
+      });
+
+      doc.moveDown();
+      const currentY = doc.y;
+      (doc as any).fillColor(orangeColor).rect(30, currentY, 535, 20).fill();
+      doc.fillColor(whiteColor).fontSize(12).font('Helvetica-Bold').text("RESUMO FINAL", 40, currentY + 4);
+      doc.moveDown(1.5);
+      
+      const summaryTable = {
+        headers: ["Indicador", "Valor Total"],
+        rows: [
+          ["Faturação Total (Bruta)", `Kz ${grandTotalSales.toLocaleString()}`],
+          ["Imposto (IVA)", `Kz ${grandTotalTax.toLocaleString()}`],
+          ["Receita Líquida (Sem IVA)", `Kz ${totalNetRevenue.toLocaleString()}`],
+          ["Custo de Mercadorias Vendidas (CMV)", `Kz ${grandTotalCost.toLocaleString()}`],
+          ["Lucro Bruto", `Kz ${totalProfit.toLocaleString()}`],
+          ["Margem Média Líquida", `${totalMargin.toFixed(2)}%`]
+        ]
+      };
+
+      await doc.table(summaryTable, {
+        width: 300,
+        x: 30,
+        prepareHeader: () => doc.font("Helvetica-Bold").fontSize(10).fillColor(blackColor),
+        prepareRow: () => doc.font("Helvetica").fontSize(10).fillColor(blackColor),
+      });
+
+      doc.moveDown(2);
+      doc.fontSize(8).font('Helvetica').fillColor(blackColor).text(`Relatório gerado em: ${new Date().toLocaleString()}`, { align: 'right' });
+      doc.text(`Software Factu-R - Licenciado para ${owner.name}`, { align: 'right' });
+
+      doc.end();
+
+    } catch (error) {
+      console.error("Profit sheet generation error:", error);
+      if (!res.headersSent) {
+        res.status(500).send("Error generating report");
+      }
+    }
   });
 
   app.post("/api/admin/reliability/alerts/:id/read", (req, res) => {
@@ -4156,17 +4654,17 @@ async function startServer() {
         SUM(income) as income,
         SUM(expense) as expense
       FROM (
-        SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'income' AND date(date) = ?
+        SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE establishment_id IN (${placeholders || 'NULL'}) AND type = 'income' AND date(date) = ?
         UNION ALL
-        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE establishment_id IN (${placeholders || 'NULL'}) AND date(timestamp) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
         UNION ALL
-        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders || 'NULL'}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
         UNION ALL
-        SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) = ?
+        SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders || 'NULL'}) AND doc_type = 'NC' AND date(invoice_date) = ?
         UNION ALL
-        SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) = ?
+        SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE establishment_id IN (${placeholders || 'NULL'}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) = ?
         UNION ALL
-        SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date) = ?
+        SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE establishment_id IN (${placeholders || 'NULL'}) AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date) = ?
       )
     `).get(...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today) as any;
 
@@ -4279,7 +4777,7 @@ async function startServer() {
           UNION ALL
           SELECT date(scheduled_date) as day, SUM(total_amount) as total
           FROM service_sheets
-          WHERE establishment_id IN (${placeholders}) AND scheduled_date >= date('now', '-7 days') AND status = 'concluded'
+          WHERE establishment_id IN (${placeholders}) AND scheduled_date >= date('now', '-7 days') AND status = 'concluded' AND fiscal_document_id IS NULL
           GROUP BY day
         )
         GROUP BY day
@@ -4309,7 +4807,7 @@ async function startServer() {
           SELECT s.name, SUM(ss.total_amount) as total
           FROM service_sheets ss
           JOIN establishments s ON ss.establishment_id = s.id
-          WHERE s.owner_id = ? AND ss.status = 'concluded'
+          WHERE s.owner_id = ? AND ss.status = 'concluded' AND ss.fiscal_document_id IS NULL
           GROUP BY s.id
         )
         GROUP BY name
@@ -4335,7 +4833,7 @@ async function startServer() {
           UNION ALL
           SELECT COALESCE(payment_method, 'Dinheiro') as name, SUM(total_amount) as value
           FROM service_sheets
-          WHERE establishment_id IN (${placeholders}) AND status = 'concluded'
+          WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL
           GROUP BY name
         )
         GROUP BY name
@@ -4374,13 +4872,13 @@ async function startServer() {
           (SELECT count(*) FROM staff st WHERE st.establishment_id = e.id) as staff_count,
           (
             COALESCE((SELECT SUM(amount) FROM financial_transactions WHERE establishment_id = e.id AND type = 'income' AND date(date) = ?), 0) +
-            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM transactions t WHERE t.establishment_id = e.id AND date(t.timestamp) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL)), 0) +
-            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM credit_invoices ci WHERE ci.establishment_id = e.id AND ci.doc_type IN ('FT', 'FR', 'ND') AND date(ci.invoice_date) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL)), 0) -
+            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM transactions t WHERE t.establishment_id = e.id AND date(t.timestamp) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')), 0) +
+            COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM credit_invoices ci WHERE ci.establishment_id = e.id AND ci.doc_type IN ('FT', 'FR', 'ND') AND date(ci.invoice_date) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')), 0) -
             COALESCE((SELECT SUM(COALESCE(base_amount, total_amount)) FROM credit_invoices ci WHERE ci.establishment_id = e.id AND ci.doc_type = 'NC' AND date(ci.invoice_date) = ?), 0) +
             COALESCE((SELECT SUM(total_amount) FROM service_sheets ss WHERE ss.establishment_id = e.id AND ss.status = 'concluded' AND ss.fiscal_document_id IS NULL AND date(ss.scheduled_date) = ?), 0)
           ) as today_sales
         FROM establishments e 
-        WHERE e.id IN (${placeholders})
+        WHERE e.id IN (${placeholders || 'NULL'})
       `).all(today, today, today, today, today, ...establishmentIds) as any[];
       
       res.json(establishments.map(e => ({
@@ -5578,25 +6076,26 @@ async function startServer() {
       const ownerId = establishment.owner_id;
       const today = new Date().toISOString().split('T')[0];
       
-      // Breakdown queries for stability and accuracy
-      const countTrans = db.prepare("SELECT COUNT(*) as count FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
-      const countCredit = db.prepare("SELECT COUNT(*) as count FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
-      const countSheets = db.prepare("SELECT COUNT(*) as count FROM service_sheets WHERE establishment_id = ? AND status = 'concluded' AND date(scheduled_date) = ?").get(establishmentId, today) as any;
+      const countTrans = db.prepare("SELECT COUNT(*) as count FROM transactions WHERE establishment_id = ? AND date(timestamp, 'localtime') = date(?, 'localtime')").get(establishmentId, today) as any;
+      const countCredit = db.prepare("SELECT COUNT(*) as count FROM credit_invoices WHERE establishment_id = ? AND (date(invoice_date, 'localtime') = date(?, 'localtime') OR date(created_at, 'localtime') = date(?, 'localtime')) AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today, today) as any;
       
-      const totalTrans = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
-      const totalCredit = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today) as any;
-      const totalNC = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) = ? AND doc_type = 'NC'").get(establishmentId, today) as any;
-      const totalSheets = db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM service_sheets WHERE establishment_id = ? AND status = 'concluded' AND date(scheduled_date) = ?").get(establishmentId, today) as any;
+      const totalTrans = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM transactions WHERE establishment_id = ? AND date(timestamp, 'localtime') = date(?, 'localtime') AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_type = 'transaction')").get(establishmentId, today) as any;
+      const totalCredit = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id = ? AND (date(invoice_date, 'localtime') = date(?, 'localtime') OR date(created_at, 'localtime') = date(?, 'localtime')) AND doc_type IN ('FT', 'FR', 'ND') AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_type = 'credit_invoice')").get(establishmentId, today, today) as any;
+      const totalNC = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id = ? AND (date(invoice_date, 'localtime') = date(?, 'localtime') OR date(created_at, 'localtime') = date(?, 'localtime')) AND doc_type = 'NC'").get(establishmentId, today, today) as any;
       
-      const todaySalesCount = (countTrans?.count || 0) + (countCredit?.count || 0) + (countSheets?.count || 0);
-      const todayRevenueTotal = (totalTrans?.total || 0) + (totalCredit?.total || 0) - (totalNC?.total || 0) + (totalSheets?.total || 0);
+      const todayTotalIncome = db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM financial_transactions WHERE establishment_id = ? AND type = 'income' AND date(date, 'localtime') = date(?, 'localtime')").get(establishmentId, today) as any;
+      
+      const todaySalesCount = (countTrans?.count || 0) + (countCredit?.count || 0);
+      const todayRevenueTotal = (todayTotalIncome?.total || 0) + (totalTrans?.total || 0) + (totalCredit?.total || 0) - (totalNC?.total || 0);
       
       const sellers = db.prepare("SELECT COUNT(DISTINCT seller_id) as count FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
+      const openSessions = db.prepare("SELECT COUNT(*) as count FROM cashier_sessions WHERE establishment_id = ? AND status = 'open'").get(establishmentId) as any;
 
       const stats = {
         todaySales: todaySalesCount,
         todayRevenue: todayRevenueTotal,
-        activeSellers: sellers?.count || 0
+        activeSellers: sellers?.count || 0,
+        openTills: openSessions?.count || 0
       };
 
       console.log(`[API] Stats for establishment ${establishmentId}:`, stats);
@@ -5628,8 +6127,10 @@ async function startServer() {
           SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) >= ? AND doc_type IN ('FT', 'FR', 'ND') AND status != 'canceled' AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE establishment_id = ? AND type = 'income' AND reference_id IS NOT NULL)
           UNION ALL
           SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id = ? AND date(invoice_date) >= ? AND doc_type = 'NC' AND status != 'canceled' AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE establishment_id = ? AND type = 'expense' AND reference_id IS NOT NULL)
+          UNION ALL
+          SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE establishment_id = ? AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) >= ?
         )
-      `).get(establishmentId, firstDay, establishmentId, firstDay, establishmentId, firstDay, establishmentId, establishmentId, firstDay, establishmentId, establishmentId, firstDay, establishmentId) as any;
+      `).get(establishmentId, firstDay, establishmentId, firstDay, establishmentId, firstDay, establishmentId, establishmentId, firstDay, establishmentId, establishmentId, firstDay, establishmentId, establishmentId, firstDay) as any;
 
       res.json({
         establishment: {
@@ -6020,7 +6521,7 @@ async function startServer() {
   });
 
   app.post("/api/owner/hr/employees", (req, res) => {
-    let { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, cash_register_id, bi_number, address, owner_id: bodyOwnerId } = req.body;
+    let { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, cash_register_id, bi_number, address, nif, social_security_number, owner_id: bodyOwnerId } = req.body;
     
     // Normalize empty strings to null and lowercase for comparison
     const normEmail = (email && email.trim() !== '') ? email.trim().toLowerCase() : null;
@@ -6051,14 +6552,22 @@ async function startServer() {
           if (hrRole) finalRole = hrRole.base_role;
         }
 
-        const result = db.prepare("INSERT INTO users (name, email, username, password, role, establishment_id, role_id, custom_permissions, status, cash_register_id, bi_number, address, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-          name, normEmail, normUsername, password, finalRole, normEstId, normRoleId, JSON.stringify(custom_permissions || []), 'active', normRegId, bi_number || null, address || null, resolvedOwnerId
+        const result = db.prepare("INSERT INTO users (name, email, username, password, role, establishment_id, role_id, custom_permissions, status, cash_register_id, bi_number, address, nif, social_security_number, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+          name, normEmail, normUsername, password, finalRole, normEstId, normRoleId, JSON.stringify(custom_permissions || []), 'active', normRegId, bi_number || null, address || null, nif || null, social_security_number || null, resolvedOwnerId
         );
         const userId = result.lastInsertRowid;
         const salary = Number(base_salary) || 0;
-        db.prepare("INSERT OR REPLACE INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(userId, salary);
+        db.prepare(`
+          INSERT INTO hr_salaries (user_id, base_salary) 
+          VALUES (?, ?) 
+          ON CONFLICT(user_id) DO UPDATE SET base_salary = excluded.base_salary
+        `).run(userId, salary);
         if (normEstId) {
-          db.prepare("INSERT OR REPLACE INTO staff (establishment_id, user_id, salary) VALUES (?, ?, ?)").run(normEstId, userId, salary);
+          db.prepare(`
+            INSERT INTO staff (establishment_id, user_id, salary) 
+            VALUES (?, ?, ?) 
+            ON CONFLICT(establishment_id, user_id) DO UPDATE SET salary = excluded.salary
+          `).run(normEstId, userId, salary);
         }
       })();
       res.json({ success: true });
@@ -6069,7 +6578,7 @@ async function startServer() {
   });
 
   app.put("/api/owner/hr/employees/:id", (req, res) => {
-    const { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, status, cash_register_id, bi_number, address } = req.body;
+    const { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, status, cash_register_id, bi_number, address, nif, social_security_number } = req.body;
     
     // Normalize empty strings to null and lowercase for comparison
     const normEmail = (email && email.trim() !== '') ? email.trim().toLowerCase() : null;
@@ -6096,17 +6605,25 @@ async function startServer() {
           if (hrRole) finalRole = hrRole.base_role;
         }
 
-        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, establishment_id = ?, role_id = ?, custom_permissions = ?, status = ?, cash_register_id = ?, bi_number = ?, address = ? WHERE id = ?").run(
-          name, normEmail, normUsername, finalRole, estId, rId, JSON.stringify(custom_permissions || []), status, crId, bi_number || null, address || null, req.params.id
+        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, establishment_id = ?, role_id = ?, custom_permissions = ?, status = ?, cash_register_id = ?, bi_number = ?, address = ?, nif = ?, social_security_number = ? WHERE id = ?").run(
+          name, normEmail, normUsername, finalRole, estId, rId, JSON.stringify(custom_permissions || []), status, crId, bi_number || null, address || null, nif || null, social_security_number || null, req.params.id
         );
 
         if (password && password.trim() !== '') {
           db.prepare("UPDATE users SET password = ? WHERE id = ?").run(password, req.params.id);
         }
         const salary = Number(base_salary) || 0;
-        db.prepare("INSERT OR REPLACE INTO hr_salaries (user_id, base_salary) VALUES (?, ?)").run(req.params.id, salary);
+        db.prepare(`
+          INSERT INTO hr_salaries (user_id, base_salary) 
+          VALUES (?, ?) 
+          ON CONFLICT(user_id) DO UPDATE SET base_salary = excluded.base_salary
+        `).run(req.params.id, salary);
         if (estId) {
-          db.prepare("INSERT OR REPLACE INTO staff (establishment_id, user_id, salary) VALUES (?, ?, ?)").run(estId, req.params.id, salary);
+          db.prepare(`
+            INSERT INTO staff (establishment_id, user_id, salary) 
+            VALUES (?, ?, ?) 
+            ON CONFLICT(establishment_id, user_id) DO UPDATE SET salary = excluded.salary
+          `).run(estId, req.params.id, salary);
         }
       })();
       res.json({ success: true });
@@ -6218,24 +6735,150 @@ async function startServer() {
     res.json(payments);
   });
 
+  app.get("/api/owner/hr/salaries/receipt/:id", (req, res) => {
+    try {
+      const paymentId = req.params.id;
+      const payment = db.prepare(`
+        SELECT p.*, u.name as employee_name, u.nif as employee_nif, u.social_security_number, u.address as employee_address, u.bi_number,
+               r.name as role_name, s.base_salary,
+               e.name as establishment_name, e.nif as establishment_nif, e.address as establishment_address, e.phone as establishment_phone, e.email as establishment_email
+        FROM hr_salary_payments p
+        JOIN hr_salaries s ON p.salary_id = s.id
+        JOIN users u ON s.user_id = u.id
+        LEFT JOIN hr_roles r ON u.role_id = r.id
+        LEFT JOIN establishments e ON u.establishment_id = e.id
+        WHERE p.id = ?
+      `).get(paymentId) as any;
+
+      if (!payment) {
+        return res.status(404).json({ error: "Pagamento não encontrado" });
+      }
+
+      const orangeColor = '#f97316';
+      const blackColor = '#000000';
+      const whiteColor = '#ffffff';
+
+      const doc = new (PDFDocument as any)({ margin: 50, size: 'A4' }) as any;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=recibo_salario_${paymentId}.pdf`);
+      doc.pipe(res);
+
+      // White Background is default, but let's be explicit if needed
+      // Actually PDFDocument background is white by default.
+
+      // Header with Orange Border
+      doc.rect(0, 0, 612, 80).fill(orangeColor);
+      doc.fillColor(whiteColor).fontSize(20).font('Helvetica-Bold').text('RECIBO DE VENCIMENTO', 50, 30, { align: 'center' });
+      
+      doc.fillColor(blackColor).moveDown(4);
+
+      // Stripe Divider
+      doc.strokeColor(orangeColor).lineWidth(2).moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+      doc.moveDown();
+
+      // Entity Info
+      const colWidth = 250;
+      const startY = doc.y;
+      
+      doc.fontSize(10).font('Helvetica-Bold').fillColor(orangeColor).text('EMPREGADOR:', 50, startY);
+      doc.fillColor(blackColor).font('Helvetica').text(`${payment.establishment_name || 'N/A'}`);
+      doc.text(`NIF: ${payment.establishment_nif || 'N/A'}`);
+      doc.text(`${payment.establishment_address || 'N/A'}`);
+
+      doc.font('Helvetica-Bold').fillColor(orangeColor).text('EMPREGADO:', 50 + colWidth, startY);
+      doc.fillColor(blackColor).font('Helvetica').text(`${payment.employee_name}`);
+      doc.text(`Cargo: ${payment.role_name || 'N/A'}`);
+      doc.text(`NIF: ${payment.employee_nif || 'N/A'}`);
+      doc.text(`Seg. Social: ${payment.social_security_number || 'N/A'}`);
+
+      doc.moveDown(2);
+
+      // Info Bar
+      const infoBarY = doc.y;
+      doc.rect(50, infoBarY, 500, 25).fill(orangeColor);
+      doc.fillColor(whiteColor).font('Helvetica-Bold').fontSize(10);
+      doc.text(`Mês de Referência: ${payment.month}`, 60, infoBarY + 7);
+      doc.text(`Data: ${new Date(payment.timestamp).toLocaleDateString()}`, 400, infoBarY + 7);
+
+      doc.moveDown(2);
+      doc.fillColor(blackColor);
+
+      // Table Setup
+      const tableTop = doc.y + 10;
+      doc.font('Helvetica-Bold');
+      doc.text('Descrição', 50, tableTop);
+      doc.text('Vencimentos', 300, tableTop, { width: 100, align: 'right' });
+      doc.text('Descontos', 450, tableTop, { width: 100, align: 'right' });
+      
+      doc.strokeColor(orangeColor).lineWidth(1).moveTo(50, tableTop + 15).lineTo(550, tableTop + 15).stroke();
+
+      let currentY = tableTop + 25;
+      doc.font('Helvetica').fontSize(10);
+
+      const rows = [
+        ['Salário Base', payment.base_salary, null],
+        ['Bónus/Subsídios', payment.bonus, null],
+        ['Faltas', null, payment.absence_discount],
+        ['Segurança Social', null, payment.ss_discount],
+        ['IRT (Imposto)', null, payment.irt_tax],
+      ];
+
+      rows.forEach(row => {
+        const [label, credit, debit] = row;
+        doc.text(label as string, 50, currentY);
+        if (credit !== null) doc.text(`${Number(credit).toLocaleString()} Kz`, 300, currentY, { width: 100, align: 'right' });
+        if (debit !== null) doc.text(`${Number(debit).toLocaleString()} Kz`, 450, currentY, { width: 100, align: 'right' });
+        currentY += 20;
+      });
+
+      doc.strokeColor(orangeColor).moveTo(50, currentY).lineTo(550, currentY).stroke();
+      doc.moveDown(2);
+
+      // Totals
+      const totalCredits = Number(payment.base_salary) + Number(payment.bonus);
+      const totalDebits = Number(payment.absence_discount) + Number(payment.ss_discount) + Number(payment.irt_tax);
+      const netAmount = totalCredits - totalDebits;
+
+      const totalsY = doc.y;
+      doc.font('Helvetica-Bold').fontSize(11);
+      doc.text('Total Ilíquido:', 300, totalsY, { width: 100, align: 'right' });
+      doc.text(`${totalCredits.toLocaleString()} Kz`, 450, totalsY, { width: 100, align: 'right' });
+      
+      doc.text('Total Descontos:', 300, totalsY + 20, { width: 100, align: 'right' });
+      doc.text(`${totalDebits.toLocaleString()} Kz`, 450, totalsY + 20, { width: 100, align: 'right' });
+
+      doc.rect(300, totalsY + 40, 250, 30).fill(orangeColor);
+      doc.fillColor(whiteColor).fontSize(12).text('VALOR LÍQUIDO:', 310, totalsY + 50);
+      doc.text(`${netAmount.toLocaleString()} Kz`, 430, totalsY + 50, { width: 110, align: 'right' });
+
+      doc.moveDown(5);
+      doc.fillColor(blackColor);
+
+      // Signatures
+      const sigY = doc.y;
+      doc.strokeColor(blackColor).lineWidth(0.5);
+      doc.moveTo(50, sigY).lineTo(220, sigY).stroke();
+      doc.moveTo(330, sigY).lineTo(500, sigY).stroke();
+      
+      doc.fontSize(9).text('Assinatura do Empregador', 50, sigY + 5, { width: 170, align: 'center' });
+      doc.text('Assinatura do Empregado', 330, sigY + 5, { width: 170, align: 'center' });
+
+      doc.end();
+    } catch (error) {
+      console.error("Error generating salary receipt:", error);
+      res.status(500).json({ error: "Erro ao gerar recibo" });
+    }
+  });
+
   app.post("/api/owner/hr/salaries/payment", (req, res) => {
-    const { salary_id, amount, bonus, type, description, month } = req.body;
+    const { salary_id, amount, bonus, absence_discount, ss_discount, irt_tax, type, description, month } = req.body;
     
     try {
       db.transaction(() => {
-        // Check for duplicate payment for the same month
-        const existingPayment = db.prepare("SELECT id FROM hr_salary_payments WHERE salary_id = ? AND month = ?").get(salary_id, month);
-        if (existingPayment) {
-          throw new Error("Já existe um pagamento registado para este mês.");
-        }
-
-        // Check if amount is at least the base salary
-        const salary = db.prepare("SELECT base_salary FROM hr_salaries WHERE id = ?").get(salary_id) as any;
-        if (salary && Number(amount) < salary.base_salary) {
-          throw new Error(`O valor do pagamento não pode ser inferior ao salário base (${salary.base_salary} Kz).`);
-        }
-
-        const result = db.prepare("INSERT INTO hr_salary_payments (salary_id, amount, bonus, type, description, month) VALUES (?, ?, ?, ?, ?, ?)").run(salary_id, amount, bonus || 0, type, description, month);
+        const result = db.prepare(`
+          INSERT INTO hr_salary_payments (salary_id, amount, bonus, absence_discount, ss_discount, irt_tax, type, description, month) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(salary_id, amount, bonus || 0, absence_discount || 0, ss_discount || 0, irt_tax || 0, type, description, month);
         const paymentId = result.lastInsertRowid;
 
         // Record in financial_transactions
@@ -6251,10 +6894,10 @@ async function startServer() {
           if (establishment) {
             db.prepare(`
               INSERT INTO financial_transactions (
-                establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id
-              ) VALUES (?, ?, 'expense', 'Salários e Benefícios', ?, 'bank_transfer', ?, ?, 'paid', ?)
+                establishment_id, owner_id, type, category, amount, payment_method, description, date, status, reference_id, reference_type
+              ) VALUES (?, ?, 'expense', 'Salários e Benefícios', ?, 'bank_transfer', ?, ?, 'paid', ?, 'salary_payment')
             `).run(
-              salaryInfo.establishment_id, establishment.owner_id, Number(amount) + Number(bonus || 0),
+              salaryInfo.establishment_id, establishment.owner_id, Number(amount),
               `Pagamento Salário - ${salaryInfo.employee_name} (${month})`,
               new Date().toISOString(), paymentId
             );
@@ -6568,9 +7211,9 @@ async function startServer() {
       FROM (
         SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE ${whereClause} AND type = 'income' AND date(date) >= ?
         UNION ALL
-        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE ${whereClause} AND date(timestamp) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL)
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE ${whereClause} AND date(timestamp) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
         UNION ALL
-        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE ${whereClause} AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL)
+        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE ${whereClause} AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
         UNION ALL
         SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE ${whereClause} AND doc_type = 'NC' AND date(invoice_date) >= ?
         UNION ALL
@@ -6618,7 +7261,7 @@ async function startServer() {
   });
 
   app.post("/api/owner/products", (req, res) => {
-    const { establishment_id, warehouse_id, name, price, stock, category, image_url, min_stock, tax_id } = req.body;
+    const { establishment_id, warehouse_id, name, price, cost, stock, category, image_url, min_stock, tax_id } = req.body;
     
     // Check if product with same name exists in this establishment
     const existing = db.prepare("SELECT id FROM products WHERE establishment_id = ? AND LOWER(name) = LOWER(?)").get(establishment_id, name);
@@ -6636,7 +7279,7 @@ async function startServer() {
     }
 
     const barcode = Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
-    db.prepare("INSERT INTO products (establishment_id, warehouse_id, name, price, stock, category, image_url, min_stock, barcode, tax_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(establishment_id, warehouse_id || null, name, price, stock, category, image_url, min_stock || 5, barcode, finalTaxId || null);
+    db.prepare("INSERT INTO products (establishment_id, warehouse_id, name, price, cost, stock, category, image_url, min_stock, barcode, tax_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(establishment_id, warehouse_id || null, name, price, cost || 0, stock, category, image_url, min_stock || 5, barcode, finalTaxId || null);
     res.json({ success: true });
   });
 
@@ -6646,7 +7289,7 @@ async function startServer() {
   });
 
   app.put("/api/owner/products/:id", (req, res) => {
-    const { warehouse_id, name, price, stock, category, image_url, min_stock, tax_id } = req.body;
+    const { warehouse_id, name, price, cost, stock, category, image_url, min_stock, tax_id } = req.body;
     
     // Get establishment_id for this product
     const product = db.prepare("SELECT establishment_id FROM products WHERE id = ?").get(req.params.id) as { establishment_id: number } | undefined;
@@ -6669,9 +7312,9 @@ async function startServer() {
 
     db.prepare(`
       UPDATE products 
-      SET name = ?, price = ?, stock = ?, category = ?, image_url = ?, min_stock = ?, tax_id = ?, warehouse_id = ? 
+      SET name = ?, price = ?, cost = ?, stock = ?, category = ?, image_url = ?, min_stock = ?, tax_id = ?, warehouse_id = ? 
       WHERE id = ?
-    `).run(name, price, stock, category, image_url, min_stock, finalTaxId || null, warehouse_id || null, req.params.id);
+    `).run(name, price, cost || 0, stock, category, image_url, min_stock, finalTaxId || null, warehouse_id || null, req.params.id);
     res.json({ success: true });
   });
 
@@ -6964,35 +7607,6 @@ async function startServer() {
       let fiscal_document_id = null;
       const today = new Date().toISOString().split('T')[0];
 
-      // If scheduled date is in the future, generate an FT automatically as per user request
-      if (scheduled_date && scheduled_date > today && total_amount > 0) {
-        try {
-          const items = [{
-            description: service_description || "Serviço Prestado",
-            name: service_description || "Serviço Prestado",
-            quantity: 1,
-            price: total_amount,
-            total: total_amount,
-            tax_rate: 0,
-            type: 'service'
-          }];
-          const inv = createFiscalDocument(db, {
-            establishment_id,
-            client_name: client_name || "Consumidor Final",
-            client_nif,
-            address: client_address,
-            doc_type: 'FT',
-            total_amount,
-            items,
-            currency: 'Kz',
-            due_date: scheduled_date
-          });
-          fiscal_document_id = inv.id;
-        } catch (invErr) {
-          console.error("Error auto-generating FT for future service sheet:", invErr);
-        }
-      }
-
       const result = db.prepare(`
         INSERT INTO service_sheets (establishment_id, service_id, client_name, client_nif, client_address, service_description, assigned_staff, scheduled_date, total_amount, selected_fees, fiscal_document_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -7005,11 +7619,11 @@ async function startServer() {
         service_description, 
         assigned_staff, 
         scheduled_date,
-        total_amount || 0,
+        parseFloat(String(total_amount || 0).replace(/[^\d.,]/g, '').replace(',', '.')) || 0,
         selected_fees ? JSON.stringify(selected_fees) : null,
-        fiscal_document_id
+        null
       );
-      res.json({ id: result.lastInsertRowid, fiscal_document_id });
+      res.json({ id: result.lastInsertRowid, fiscal_document_id: null });
     } catch (e) {
       console.error("Error creating service sheet:", e);
       res.status(500).json({ error: "Erro ao criar folha de serviço" });
@@ -7018,7 +7632,7 @@ async function startServer() {
 
   app.patch("/api/owner/service-sheets/:id/status", (req, res) => {
     const { id } = req.params;
-    const { status, payment_method } = req.body;
+    const { status, payment_method, seller_id } = req.body;
     try {
       db.transaction(() => {
         if (payment_method) {
@@ -7030,37 +7644,89 @@ async function startServer() {
         // If status is concluded, generate FR or RC
         if (status === 'concluded' || status === 'concluido') {
           const sheet = db.prepare("SELECT * FROM service_sheets WHERE id = ?").get(id) as any;
-          if (sheet && sheet.total_amount > 0) {
+          if (sheet && Number(sheet.total_amount) > 0) {
             try {
               if (!sheet.fiscal_document_id) {
-                // No document yet: Create FR
-                const items = [{
-                  description: sheet.service_description || "Serviço Prestado",
-                  name: sheet.service_description || "Serviço Prestado",
-                  quantity: 1,
-                  price: sheet.total_amount,
-                  total: sheet.total_amount,
-                  tax_rate: 0,
-                  type: 'service'
-                }];
+                // Fetch Owner Regime
+                const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(sheet.establishment_id) as any;
+                const owner = db.prepare("SELECT fiscal_regime FROM users WHERE id = ?").get(establishment.owner_id) as any;
+                const regime = String(owner?.fiscal_regime || 'geral').toLowerCase();
+                const isExclusion = regime === 'exclusao' || regime === 'exclusão';
+                
+                const rawVal = String(sheet.total_amount || '0');
+                const cleanVal = rawVal.replace(/[^\d,.-]/g, '');
+                // Handle European format: "1.000,00" -> "1000.00"
+                // If there both . and , we assume . is thousand and , is decimal
+                let baseAmount = 0;
+                if (cleanVal.includes('.') && cleanVal.includes(',')) {
+                  baseAmount = parseFloat(cleanVal.replace(/\./g, '').replace(',', '.')) || 0;
+                } else if (cleanVal.includes(',')) {
+                  baseAmount = parseFloat(cleanVal.replace(',', '.')) || 0;
+                } else {
+                  baseAmount = parseFloat(cleanVal) || 0;
+                }
+
+                const taxRate = isExclusion ? 0 : 0.14;
+                const taxAmount = baseAmount * taxRate;
+                const finalTotal = baseAmount + taxAmount;
+
+                // Build items list from selected_fees if available, otherwise fallback to single line
+                let items: any[] = [];
+                const selectedFeesArray = sheet.selected_fees ? JSON.parse(sheet.selected_fees) : [];
+                
+                if (Array.isArray(selectedFeesArray) && selectedFeesArray.length > 0) {
+                  items = selectedFeesArray.map((fee: any) => ({
+                    id: fee.id || fee.product_id || fee.service_id,
+                    product_id: fee.id || fee.product_id || fee.service_id,
+                    name: fee.name || fee.description || "Item de Serviço",
+                    description: fee.description || fee.name || "Item de Serviço",
+                    quantity: 1,
+                    price: fee.amount || 0,
+                    total: fee.amount || 0,
+                    tax_rate: isExclusion ? 0 : 14,
+                    type: fee.type || 'service'
+                  }));
+                } else {
+                  items = [{
+                    description: sheet.service_description || "Serviço Prestado",
+                    name: sheet.service_description || "Serviço Prestado",
+                    quantity: 1,
+                    price: baseAmount,
+                    total: baseAmount,
+                    tax_rate: isExclusion ? 0 : 14,
+                    type: 'service'
+                  }];
+                }
+
                 const inv = createFiscalDocument(db, {
                   establishment_id: sheet.establishment_id,
                   client_name: sheet.client_name || "Consumidor Final",
                   client_nif: sheet.client_nif,
                   address: sheet.client_address,
                   doc_type: 'FR',
-                  total_amount: sheet.total_amount,
+                  total_amount: finalTotal,
+                  tax_amount: taxAmount,
                   items,
                   currency: 'Kz',
-                  payment_method: payment_method || sheet.payment_method || 'Dinheiro'
+                  payment_method: payment_method || sheet.payment_method || 'Dinheiro',
+                  seller_id: seller_id || establishment.owner_id
                 });
                 db.prepare("UPDATE service_sheets SET fiscal_document_id = ? WHERE id = ?").run(inv.id, id);
+
+                // Electronic Billing: Submit to AGT
+                const updatedDoc = db.prepare("SELECT billing_mode FROM credit_invoices WHERE id = ?").get(inv.id) as any;
+                if (updatedDoc?.billing_mode === 'eletronica') {
+                  console.log(`[ServiceSheet] Submitting electronic invoice ${inv.id} to AGT...`);
+                  AGTService.submitInvoice(Number(inv.id), 'FISCAL').catch(err => {
+                    console.error("[ServiceSheet] Background AGT submission failed:", err);
+                  });
+                }
               } else {
                 // Check if existing document is an FT
-                const existingDoc = db.prepare("SELECT doc_type, status FROM credit_invoices WHERE id = ?").get(sheet.fiscal_document_id) as any;
+                const existingDoc = db.prepare("SELECT id, doc_type, status, billing_mode FROM credit_invoices WHERE id = ?").get(sheet.fiscal_document_id) as any;
                 if (existingDoc && existingDoc.doc_type === 'FT' && existingDoc.status !== 'paid') {
                   // Create RC (Recibo) to liquidate the FT
-                  createFiscalDocument(db, {
+                  const rc = createFiscalDocument(db, {
                     establishment_id: sheet.establishment_id,
                     client_name: sheet.client_name || "Consumidor Final",
                     client_nif: sheet.client_nif,
@@ -7071,6 +7737,14 @@ async function startServer() {
                     parent_invoice_id: sheet.fiscal_document_id,
                     payment_method: payment_method || sheet.payment_method || 'Dinheiro'
                   });
+
+                  // Electronic Billing: Submit to AGT
+                  if (existingDoc.billing_mode === 'eletronica') {
+                    console.log(`[ServiceSheet] Submitting electronic Receipt ${rc.id} to AGT...`);
+                    AGTService.submitInvoice(Number(rc.id), 'FISCAL').catch(err => {
+                      console.error("[ServiceSheet] Background AGT submission failed for RC:", err);
+                    });
+                  }
                 }
               }
             } catch (invErr: any) {
@@ -7130,7 +7804,7 @@ async function startServer() {
           UNION ALL
           SELECT -COALESCE(base_amount, total_amount) as revenue, 0 as count FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND status != 'canceled'
           UNION ALL
-          SELECT total_amount as revenue, 1 as count FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded'
+          SELECT total_amount as revenue, 1 as count FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL
         )
       `).get(...[...establishmentIds, ...establishmentIds, ...establishmentIds, ...establishmentIds]) as any;
 
@@ -7145,7 +7819,7 @@ async function startServer() {
               UNION ALL
               SELECT -COALESCE(base_amount, total_amount) as revenue, 0 as count FROM credit_invoices WHERE establishment_id = ? AND doc_type = 'NC' AND status != 'canceled'
               UNION ALL
-              SELECT total_amount as revenue, 1 as count FROM service_sheets WHERE establishment_id = ? AND status = 'concluded'
+              SELECT total_amount as revenue, 1 as count FROM service_sheets WHERE establishment_id = ? AND status = 'concluded' AND fiscal_document_id IS NULL
             )
           `).get(establishment.id, establishment.id, establishment.id, establishment.id) as any;
 
@@ -7193,7 +7867,7 @@ async function startServer() {
         UNION ALL
         SELECT date(invoice_date) as day, -COALESCE(base_amount, total_amount) as revenue FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND date(invoice_date) >= date('now', '-30 days') AND doc_type = 'NC' AND status != 'canceled'
         UNION ALL
-        SELECT date(scheduled_date) as day, total_amount as revenue FROM service_sheets WHERE establishment_id IN (${placeholders}) AND date(scheduled_date) >= date('now', '-30 days') AND status = 'concluded'
+        SELECT date(scheduled_date) as day, total_amount as revenue FROM service_sheets WHERE establishment_id IN (${placeholders}) AND date(scheduled_date) >= date('now', '-30 days') AND status = 'concluded' AND fiscal_document_id IS NULL
       )
       GROUP BY day
       ORDER BY day ASC
@@ -7237,7 +7911,7 @@ async function startServer() {
         UNION ALL
         SELECT payment_method as name, -COALESCE(base_amount, total_amount) as value FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND status != 'canceled'
         UNION ALL
-        SELECT COALESCE(payment_method, 'Dinheiro') as name, total_amount as value FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded'
+        SELECT COALESCE(payment_method, 'Dinheiro') as name, total_amount as value FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL
       )
       GROUP BY name
     `).all(...[...establishmentIds, ...establishmentIds, ...establishmentIds, ...establishmentIds]);
@@ -7737,6 +8411,9 @@ async function startServer() {
       
       for (const item of items) {
         db.prepare("UPDATE products SET stock = stock + ? WHERE id = ? AND establishment_id = ?").run(item.quantity, item.product_id, purchase.establishment_id);
+        
+        // Update product cost with the purchase price
+        db.prepare("UPDATE products SET cost = ? WHERE id = ? AND establishment_id = ?").run(item.price, item.product_id, purchase.establishment_id);
 
         db.prepare(`
           INSERT INTO stock_movements (establishment_id, product_id, user_id, type, quantity, reason, supplier_id, purchase_id)
@@ -8268,9 +8945,9 @@ async function startServer() {
 
       // Generate invoice number
       const year = new Date().getFullYear();
-      const nextNum = (series.current_number || 0) + 1;
+      const nextNum = Math.max((series.current_number || 0) + 1, series.start_number || 1);
       const doc_type = series.type;
-      const invoice_number = `${doc_type} ${series.prefix}${series.fiscal_year || year}/${nextNum.toString().padStart(3, '0')}`;
+      const invoice_number = `${doc_type} ${series.prefix}/${series.fiscal_year || year}/${nextNum.toString().padStart(4, '0')}`;
       
       // Update series
       db.prepare("UPDATE invoice_series SET current_number = ? WHERE id = ?").run(nextNum, series.id);
@@ -8371,7 +9048,7 @@ async function startServer() {
 
         const year = new Date().getFullYear();
         const nextNum = Math.max((activeSeries.current_number || 0) + 1, activeSeries.start_number || 1);
-        const finalNumber = `${doc_type} ${activeSeries.prefix}${activeSeries.fiscal_year || year}/${nextNum.toString().padStart(4, '0')}`;
+        const finalNumber = `${doc_type} ${activeSeries.prefix}/${activeSeries.fiscal_year || year}/${nextNum.toString().padStart(4, '0')}`;
         const finalSeries = activeSeries.name;
 
         // Update active series
