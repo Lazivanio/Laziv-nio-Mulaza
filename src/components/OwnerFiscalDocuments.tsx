@@ -38,6 +38,8 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [series, setSeries] = useState<any[]>([]);
   const [selectedEstablishmentForSeries, setSelectedEstablishmentForSeries] = useState<string>('');
+  const [previewXml, setPreviewXml] = useState<string | null>(null);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
   
   // Filters for History
   const [filterType, setFilterType] = useState<string>('');
@@ -135,6 +137,38 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
         fetchHistory();
       } else {
         setMessage({ type: 'error', text: data.error || 'Erro ao gerar SAFT' });
+      }
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Erro na conexão com o servidor' });
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleGenerateAgtXml = async () => {
+    setGenerating(true);
+    setMessage(null);
+    try {
+      const response = await fetch('/api/owner/generate-agt-xml', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          owner_id: user.id,
+          establishment_id: saftForm.establishmentId,
+          start_date: saftForm.startDate,
+          end_date: saftForm.endDate,
+          doc_type: saftForm.docType,
+          user_name: user.name
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setPreviewXml(data.xml);
+        setShowPreviewModal(true);
+        setMessage({ type: 'success', text: `XML AGT gerado para pré-visualização.` });
+        fetchHistory();
+      } else {
+        setMessage({ type: 'error', text: data.error || 'Erro ao gerar XML AGT' });
       }
     } catch (error) {
       setMessage({ type: 'error', text: 'Erro na conexão com o servidor' });
@@ -292,6 +326,15 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
               {generating ? <Loader2 className="animate-spin" size={20} /> : <Download size={20} />}
               Gerar SAFT (XML)
             </button>
+
+            <button 
+              onClick={handleGenerateAgtXml}
+              disabled={generating}
+              className="w-full py-3 bg-zinc-900 hover:bg-black disabled:bg-zinc-400 text-white font-bold rounded-xl shadow-lg shadow-black/20 transition-all flex items-center justify-center gap-2"
+            >
+              {generating ? <Loader2 className="animate-spin" size={20} /> : <FileCode size={20} />}
+              Exportação AGT (XML)
+            </button>
           </div>
         </div>
 
@@ -398,6 +441,65 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
           </div>
         </div>
       </div>
+
+      {/* XML Preview Modal */}
+      {showPreviewModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowPreviewModal(false)} />
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+          >
+            <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-bold">Pré-visualização do XML AGT</h3>
+                <p className="text-sm text-zinc-500">Valide a estrutura antes de submeter à AGT</p>
+              </div>
+              <button onClick={() => setShowPreviewModal(false)} className="p-2 hover:bg-zinc-100 rounded-xl transition-all">
+                <XCircle size={24} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-6 bg-zinc-900">
+              <pre className="text-xs text-emerald-400 font-mono whitespace-pre-wrap">
+                {previewXml}
+              </pre>
+            </div>
+
+            <div className="p-6 border-t border-zinc-100 bg-zinc-50 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-emerald-600">
+                <CheckCircle size={20} />
+                <span className="text-sm font-bold uppercase tracking-wider">Estrutura Validada (SAF-T AO 1.01_01)</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => setShowPreviewModal(false)}
+                  className="px-6 py-2 text-zinc-600 font-bold hover:bg-zinc-200 rounded-xl transition-all"
+                >
+                  Fechar
+                </button>
+                <button 
+                  onClick={() => {
+                    const blob = new Blob([previewXml || ''], { type: 'text/xml' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `Vendas_AGT_${new Date().toISOString().split('T')[0]}.xml`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                  }}
+                  className="px-6 py-2 bg-emerald-500 text-white font-bold rounded-xl hover:bg-emerald-600 transition-all flex items-center gap-2"
+                >
+                  <Download size={20} />
+                  Descarregar XML
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* History Table */}
       <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">

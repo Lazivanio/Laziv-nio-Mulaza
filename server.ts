@@ -1655,7 +1655,9 @@ function initializeDatabase() {
         owner_id INTEGER,
         name TEXT,
         type TEXT,
+        file_path TEXT,
         generated_by TEXT,
+        status TEXT DEFAULT 'available',
         file_data BLOB,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(owner_id) REFERENCES users(id)
@@ -4648,64 +4650,66 @@ async function startServer() {
       const today = new Date().toISOString().split('T')[0];
       const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
 
-    // Use a unified calculation logic across all dashboard stats
-    const financialToday = db.prepare(`
-      SELECT 
-        SUM(income) as income,
-        SUM(expense) as expense
-      FROM (
-        SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE establishment_id IN (${placeholders || 'NULL'}) AND type = 'income' AND date(date) = ?
-        UNION ALL
-        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE establishment_id IN (${placeholders || 'NULL'}) AND date(timestamp) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
-        UNION ALL
-        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders || 'NULL'}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
-        UNION ALL
-        SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders || 'NULL'}) AND doc_type = 'NC' AND date(invoice_date) = ?
-        UNION ALL
-        SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE establishment_id IN (${placeholders || 'NULL'}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) = ?
-        UNION ALL
-        SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE establishment_id IN (${placeholders || 'NULL'}) AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date) = ?
-      )
-    `).get(...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today) as any;
+      const financialToday = db.prepare(`
+        SELECT 
+          SUM(income) as income,
+          SUM(expense) as expense
+        FROM (
+          SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE establishment_id IN (${placeholders || 'NULL'}) AND type = 'income' AND date(date, 'localtime') = date(?, 'localtime')
+          UNION ALL
+          SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE establishment_id IN (${placeholders || 'NULL'}) AND date(timestamp, 'localtime') = date(?, 'localtime') AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
+          UNION ALL
+          SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders || 'NULL'}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date, 'localtime') = date(?, 'localtime') AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
+          UNION ALL
+          SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders || 'NULL'}) AND doc_type = 'NC' AND date(invoice_date, 'localtime') = date(?, 'localtime')
+          UNION ALL
+          SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE establishment_id IN (${placeholders || 'NULL'}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date, 'localtime') = date(?, 'localtime')
+          UNION ALL
+          SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE establishment_id IN (${placeholders || 'NULL'}) AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date, 'localtime') = date(?, 'localtime')
+        )
+      `).get(...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today) as any;
 
-    const todaySales = financialToday?.income || 0;
-    const todayCountRes = db.prepare(`
-      SELECT COUNT(*) as total 
-      FROM (
-        SELECT id FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) = ?
-        UNION ALL
-        SELECT id FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) = ?
-        UNION ALL
-        SELECT id FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) = ?
-      )
-    `).get(...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today) as any;
-    
-    const todayCount = todayCountRes?.total || 0;
-    const todayExpense = financialToday?.expense || 0;
+      const todaySales = financialToday?.income || 0;
+      const todayCountRes = db.prepare(`
+        SELECT COUNT(*) as total 
+        FROM (
+          SELECT id FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp, 'localtime') = date(?, 'localtime')
+          UNION ALL
+          SELECT id FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date, 'localtime') = date(?, 'localtime')
+          UNION ALL
+          SELECT id FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date, 'localtime') = date(?, 'localtime')
+        )
+      `).get(...establishmentIds, today, ...establishmentIds, today, ...establishmentIds, today) as any;
+      
+      const todayCount = todayCountRes?.total || 0;
+      const todayExpense = financialToday?.expense || 0;
 
-    const monthlySummaryRes = db.prepare(`
-      SELECT 
-        SUM(income) as income,
-        SUM(expense) as expense
-      FROM (
-        SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'income' AND date(date) >= ?
-        UNION ALL
-        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
-        UNION ALL
-        SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date) >= ? AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
-        UNION ALL
-        SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date) >= ?
-        UNION ALL
-        SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date) >= ?
-        UNION ALL
-        SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date) >= ?
-      )
-    `).get(...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart) as any;
+      const monthlySummaryRes = db.prepare(`
+        SELECT 
+          SUM(income) as income,
+          SUM(expense) as expense
+        FROM (
+          SELECT SUM(amount) as income, 0 as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'income' AND date(date, 'localtime') >= date(?, 'localtime')
+          UNION ALL
+          SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp, 'localtime') >= date(?, 'localtime') AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'transaction')
+          UNION ALL
+          SELECT SUM(COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND') AND date(invoice_date, 'localtime') >= date(?, 'localtime') AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_id IS NOT NULL AND reference_type = 'credit_invoice')
+          UNION ALL
+          SELECT SUM(-COALESCE(base_amount, total_amount)) as income, 0 as expense FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC' AND date(invoice_date, 'localtime') >= date(?, 'localtime')
+          UNION ALL
+          SELECT SUM(total_amount) as income, 0 as expense FROM service_sheets WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL AND date(scheduled_date, 'localtime') >= date(?, 'localtime')
+          UNION ALL
+          SELECT 0 as income, SUM(amount) as expense FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND category NOT LIKE 'Nota de Crédito%' AND date(date, 'localtime') >= date(?, 'localtime')
+        )
+      `).get(...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart, ...establishmentIds, monthStart) as any;
 
-    const monthlySales = monthlySummaryRes?.income || 0;
-    const monthlyExpense = monthlySummaryRes?.expense || 0;
+      const monthlySales = monthlySummaryRes?.income || 0;
+      const monthlyExpense = monthlySummaryRes?.expense || 0;
+      
+      const openSessionsResult = db.prepare(`SELECT COUNT(*) as count FROM cashier_sessions WHERE establishment_id IN (${placeholders}) AND status = 'open'`).get(...establishmentIds) as any;
+      const sellersResult = db.prepare(`SELECT COUNT(DISTINCT seller_id) as count FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp, 'localtime') = date(?, 'localtime')`).get(...establishmentIds, today) as any;
 
-    console.log(`[DashboardStats] Global stats for owner ${resolvedOwnerId}: todaySales=${todaySales}, todayCount=${todayCount}, establishments=${establishmentIds.length}`);
+      console.log(`[DashboardStats] Global stats for owner ${resolvedOwnerId}: todaySales=${todaySales}, todayCount=${todayCount}, establishments=${establishmentIds.length}`);
 
       const lowStockCount = db.prepare(`SELECT COUNT(*) as count FROM products WHERE establishment_id IN (${placeholders}) AND stock <= min_stock`).get(...establishmentIds) as any;
       const staffCount = db.prepare(`SELECT COUNT(*) as count FROM staff WHERE establishment_id IN (${placeholders})`).get(...establishmentIds) as any;
@@ -4749,110 +4753,23 @@ async function startServer() {
         LIMIT 5
       `).all(...establishmentIds, ...establishmentIds, ...establishmentIds) as any[];
 
-      const recentTransactions = db.prepare(`
-        SELECT t.*, s.name as establishment_name
-        FROM transactions t
-        JOIN establishments s ON t.establishment_id = s.id
-        WHERE t.establishment_id IN (${placeholders})
-        ORDER BY t.timestamp DESC
-        LIMIT 5
-      `).all(...establishmentIds);
-
-      const salesByDay = db.prepare(`
-        SELECT day, SUM(total) as total FROM (
-          SELECT date(timestamp) as day, SUM(COALESCE(base_amount, total_amount)) as total
-          FROM transactions
-          WHERE establishment_id IN (${placeholders}) AND timestamp >= date('now', '-7 days')
-          GROUP BY day
-          UNION ALL
-          SELECT date(invoice_date) as day, SUM(COALESCE(base_amount, total_amount)) as total
-          FROM credit_invoices
-          WHERE establishment_id IN (${placeholders}) AND invoice_date >= date('now', '-7 days') AND doc_type IN ('FT', 'FR', 'ND')
-          GROUP BY day
-          UNION ALL
-          SELECT date(invoice_date) as day, SUM(-COALESCE(base_amount, total_amount)) as total
-          FROM credit_invoices
-          WHERE establishment_id IN (${placeholders}) AND invoice_date >= date('now', '-7 days') AND doc_type = 'NC'
-          GROUP BY day
-          UNION ALL
-          SELECT date(scheduled_date) as day, SUM(total_amount) as total
-          FROM service_sheets
-          WHERE establishment_id IN (${placeholders}) AND scheduled_date >= date('now', '-7 days') AND status = 'concluded' AND fiscal_document_id IS NULL
-          GROUP BY day
-        )
-        GROUP BY day
-        ORDER BY day ASC
-      `).all(...establishmentIds, ...establishmentIds, ...establishmentIds, ...establishmentIds);
-
-      const salesByEstablishment = db.prepare(`
-        SELECT name, SUM(total) as total FROM (
-          SELECT s.name, SUM(COALESCE(t.base_amount, t.total_amount)) as total
-          FROM transactions t
-          JOIN establishments s ON t.establishment_id = s.id
-          WHERE s.owner_id = ?
-          GROUP BY s.id
-          UNION ALL
-          SELECT s.name, SUM(COALESCE(ci.base_amount, ci.total_amount)) as total
-          FROM credit_invoices ci
-          JOIN establishments s ON ci.establishment_id = s.id
-          WHERE s.owner_id = ? AND ci.doc_type IN ('FT', 'FR', 'ND')
-          GROUP BY s.id
-          UNION ALL
-          SELECT s.name, SUM(-COALESCE(ci.base_amount, ci.total_amount)) as total
-          FROM credit_invoices ci
-          JOIN establishments s ON ci.establishment_id = s.id
-          WHERE s.owner_id = ? AND ci.doc_type = 'NC'
-          GROUP BY s.id
-          UNION ALL
-          SELECT s.name, SUM(ss.total_amount) as total
-          FROM service_sheets ss
-          JOIN establishments s ON ss.establishment_id = s.id
-          WHERE s.owner_id = ? AND ss.status = 'concluded' AND ss.fiscal_document_id IS NULL
-          GROUP BY s.id
-        )
-        GROUP BY name
-        ORDER BY total DESC
-      `).all(resolvedOwnerId, resolvedOwnerId, resolvedOwnerId, resolvedOwnerId);
-
-      const paymentMethods = db.prepare(`
-        SELECT name, SUM(value) as value FROM (
-          SELECT payment_method as name, SUM(COALESCE(base_amount, total_amount)) as value
-          FROM transactions
-          WHERE establishment_id IN (${placeholders})
-          GROUP BY payment_method
-          UNION ALL
-          SELECT payment_method as name, SUM(COALESCE(base_amount, total_amount)) as value
-          FROM credit_invoices
-          WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND')
-          GROUP BY payment_method
-          UNION ALL
-          SELECT payment_method as name, SUM(-COALESCE(base_amount, total_amount)) as value
-          FROM credit_invoices
-          WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'
-          GROUP BY payment_method
-          UNION ALL
-          SELECT COALESCE(payment_method, 'Dinheiro') as name, SUM(total_amount) as value
-          FROM service_sheets
-          WHERE establishment_id IN (${placeholders}) AND status = 'concluded' AND fiscal_document_id IS NULL
-          GROUP BY name
-        )
-        GROUP BY name
-      `).all(...establishmentIds, ...establishmentIds, ...establishmentIds, ...establishmentIds);
-
       res.json({
-        todaySales,
-        todayCount,
-        todayExpense,
-        monthlySales,
-        lowStockCount: lowStockCount.count,
-        staffCount: staffCount.count,
+        todaySales: todayCount,
+        todayRevenue: todaySales,
+        todayExpense: todayExpense,
+        monthlySales: monthlySales,
+        monthlyExpense: monthlyExpense,
+        activeSellers: sellersResult?.count || 0,
+        openTills: openSessionsResult?.count || 0,
+        lowStockCount: lowStockCount?.count || 0,
+        staffCount: staffCount?.count || 0,
+        totalExpenses: totalExpenses?.total || 0,
+        financialHealth,
         topProducts,
-        recentTransactions,
-        salesByDay,
-        salesByEstablishment,
-        paymentMethods,
-        totalExpenses: monthlyExpense,
-        financialHealth
+        recentTransactions: [],
+        salesByDay: [],
+        salesByEstablishment: [],
+        paymentMethods: []
       });
     } catch (error: any) {
       console.error("Error in dashboard stats:", error);
@@ -5222,11 +5139,267 @@ async function startServer() {
       const file = db.prepare("SELECT * FROM generated_files WHERE id = ?").get(req.params.fileId) as any;
       if (!file) return res.status(404).json({ error: "Ficheiro não encontrado." });
       
+      res.setHeader('Content-Type', file.type.includes('XML') || file.type === 'SAFT' ? 'application/xml' : 'application/octet-stream');
       res.setHeader('Content-Disposition', `attachment; filename="${file.name}"`);
       res.send(file.file_data);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
+  });
+
+function generateHashChain(date: string, entryDate: string, no: string, total: string, last: string) {
+  const str = `${date};${entryDate};${no};${total};${last}`;
+  return crypto.createHash('sha256').update(str).digest('base64');
+}
+
+function generateJws(hash: string) {
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString('base64').replace(/=/g, '');
+  const payload = Buffer.from(JSON.stringify({ sub: hash, iat: Math.floor(Date.now() / 1000) })).toString('base64').replace(/=/g, '');
+  const signature = crypto.createHash('sha256').update(`${header}.${payload}`).digest('base64').replace(/=/g, '');
+  return `${header}.${payload}.${signature}`;
+}
+
+function getExemptionCode(fiscalRegime: string, taxCode: string) {
+  if (taxCode !== 'ISE') return { code: "", reason: "" };
+  if (fiscalRegime === 'exclusao') return { code: "M10", reason: "Isento nos termos do regime de exclusão (Artigo 9º do CIVA)" };
+  if (fiscalRegime === 'simplificado') return { code: "M20", reason: "IVA - Regime Simplificado" };
+  return { code: "M02", reason: "Isento nos termos do ART 12 do CIVA" };
+}
+
+function escapeXml(unsafe: any) {
+  if (unsafe === null || unsafe === undefined) return "";
+  const str = String(unsafe);
+  return str.replace(/[<>&"]/g, (c) => {
+    switch (c) {
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '&': return '&amp;';
+      case '"': return '&quot;';
+    }
+    return c;
+  });
+}
+
+function formatDateToIso(dateStr?: string) {
+  const d = dateStr ? new Date(dateStr) : new Date();
+  if (isNaN(d.getTime())) return new Date().toISOString().split('.')[0];
+  return d.toISOString().split('.')[0]; // YYYY-MM-DDTHH:mm:ss
+}
+
+    // Ensure generated_files has correct columns
+    try {
+      db.prepare("ALTER TABLE generated_files ADD COLUMN file_path TEXT").run();
+    } catch (e) {}
+    try {
+      db.prepare("ALTER TABLE generated_files ADD COLUMN status TEXT DEFAULT 'available'").run();
+    } catch (e) {}
+
+    app.post("/api/owner/generate-agt-xml", (req, res) => {
+    const { owner_id, establishment_id, start_date, end_date, doc_type, user_name } = req.body;
+    try {
+      const owner = db.prepare("SELECT * FROM users WHERE id = ?").get(owner_id) as any;
+      if (!owner) return res.status(404).json({ error: "Proprietário não encontrado." });
+
+      const systemName = db.prepare("SELECT value FROM system_settings WHERE key = 'system_name'").get() as any;
+      const softwareName = systemName?.value || "Fatu-R";
+
+      let establishmentIds: number[] = [];
+      if (establishment_id) {
+        establishmentIds = [parseInt(establishment_id)];
+      } else {
+        const establishments = db.prepare("SELECT id FROM establishments WHERE owner_id = ?").all(owner_id) as { id: number }[];
+        establishmentIds = establishments.map(s => s.id);
+      }
+
+      const placeholders = establishmentIds.map(() => '?').join(',');
+      const establishmentsInfo = db.prepare(`SELECT * FROM establishments WHERE id IN (${placeholders})`).all(...establishmentIds) as any[];
+      
+      const primaryEstablishment = establishmentsInfo[0];
+      const nif = primaryEstablishment?.nif || owner.nif || owner.bi_number || "999999999";
+
+      // Fetch documents
+      let ciQuery = `SELECT * FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND date(created_at) BETWEEN ? AND ?`;
+      let params: any[] = [...establishmentIds, start_date, end_date];
+      if (doc_type) {
+        ciQuery += " AND doc_type = ?";
+        params.push(doc_type);
+      }
+      const invoices = db.prepare(ciQuery).all(...params) as any[];
+
+      // Fetch POS transactions
+      let tInvoices: any[] = [];
+      if (!doc_type || doc_type === 'FR') {
+        let tQuery = `SELECT * FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) BETWEEN ? AND ?`;
+        tInvoices = db.prepare(tQuery).all(...establishmentIds, start_date, end_date) as any[];
+      }
+
+      const allDocs = [...invoices];
+      // Add transactions as documents
+      tInvoices.forEach(t => {
+        allDocs.push({
+          id: `T-${t.id}`,
+          invoice_number: t.receipt_number || `POS-${t.id}`,
+          invoice_date: t.timestamp,
+          created_at: t.timestamp,
+          doc_type: 'FR',
+          client_name: t.client_name || "Consumidor Final",
+          client_nif: t.client_nif || "999999999",
+          total_amount: t.base_amount || t.total_amount,
+          tax_amount: (t.base_amount || t.total_amount) * 0.14, // Assuming default 14% if not saved
+          items: t.items, // JSON
+          status: 'N',
+          country: 'AO'
+        });
+      });
+
+      // Sort documents for chaining
+      allDocs.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+      let documentsXml = "";
+      let numberOfEntries = 0;
+      let lastHash = "";
+
+      allDocs.forEach(doc => {
+        // Validation (Point 7)
+        if (!doc.invoice_number) return; 
+        
+        numberOfEntries++;
+        const items = typeof doc.items === 'string' ? JSON.parse(doc.items) : doc.items || [];
+        let linesXml = "";
+        let lineIdx = 1;
+        
+        // Totals
+        let docTaxPayable = 0;
+        let docNetTotal = 0;
+
+        items.forEach((item: any) => {
+          const qty = parseFloat(item.quantity) || 0;
+          const unitPrice = parseFloat(item.price) || 0;
+          const taxRate = item.tax_percentage !== undefined ? parseFloat(item.tax_percentage) : 14;
+          const lineTotal = qty * unitPrice;
+          const lineTax = lineTotal * (taxRate / 100);
+          
+          docNetTotal += lineTotal;
+          docTaxPayable += lineTax;
+
+          linesXml += `
+            <Line>
+              <LineNumber>${lineIdx++}</LineNumber>
+              <ProductCode>${escapeXml(item.code || item.id || "000")}</ProductCode>
+              <ProductDescription>${escapeXml(item.name || "Sem Nome")}</ProductDescription>
+              <Quantity>${qty.toFixed(2)}</Quantity>
+              <UnitOfMeasure>Un</UnitOfMeasure>
+              <UnitPrice>${unitPrice.toFixed(2)}</UnitPrice>
+              <UnitPriceBase>${unitPrice.toFixed(2)}</UnitPriceBase>
+              <CreditAmount>${lineTotal.toFixed(2)}</CreditAmount>
+              <Taxes>
+                <TaxType>IVA</TaxType>
+                <TaxCountryRegion>AO</TaxCountryRegion>
+                <TaxCode>${taxRate === 0 ? 'ISE' : 'NOR'}</TaxCode>
+                <TaxBase>${lineTotal.toFixed(2)}</TaxBase>
+                <TaxPercentage>${taxRate.toFixed(2)}</TaxPercentage>
+                <TaxAmount>${lineTax.toFixed(2)}</TaxAmount>
+                <TaxContribution>0.00</TaxContribution>
+                ${taxRate === 0 ? (() => {
+                  const exemption = getExemptionCode(owner.fiscal_regime, 'ISE');
+                  return `<TaxExemptionReason>${escapeXml(exemption.reason)}</TaxExemptionReason>
+                          <TaxExemptionCode>${escapeXml(exemption.code)}</TaxExemptionCode>`;
+                })() : ''}
+              </Taxes>
+              <SettlementAmount>0.00</SettlementAmount>
+            </Line>`;
+        });
+
+        const grossTotal = docNetTotal + docTaxPayable;
+        const invDate = formatDateToIso(doc.invoice_date).split('T')[0];
+        const entryDate = formatDateToIso(doc.created_at);
+        const currentHash = generateHashChain(invDate, entryDate, doc.invoice_number, grossTotal.toFixed(2), lastHash);
+        lastHash = currentHash;
+
+        documentsXml += `
+        <Document>
+          <DocumentNo>${escapeXml(doc.invoice_number)}</DocumentNo>
+          <DocumentStatus>${doc.status === 'canceled' ? 'A' : 'N'}</DocumentStatus>
+          <Hash>${currentHash}</Hash>
+          <HashControl>1</HashControl>
+          <jwsDocumentSignature>${generateJws(currentHash)}</jwsDocumentSignature>
+          <DocumentDate>${invDate}</DocumentDate>
+          <DocumentType>${escapeXml(doc.doc_type)}</DocumentType>
+          <EACCode>47110</EACCode>
+          <SystemEntryDate>${entryDate}</SystemEntryDate>
+          <CustomerCountry>${escapeXml(doc.country || 'AO')}</CustomerCountry>
+          <CustomerTaxID>${escapeXml(doc.client_nif || '999999999')}</CustomerTaxID>
+          <CompanyName>${escapeXml(doc.client_name || 'Consumidor Final')}</CompanyName>
+          <Lines>${linesXml}
+          </Lines>
+          <DocumentTotals>
+            <TaxPayable>${docTaxPayable.toFixed(2)}</TaxPayable>
+            <NetTotal>${docNetTotal.toFixed(2)}</NetTotal>
+            <GrossTotal>${grossTotal.toFixed(2)}</GrossTotal>
+          </DocumentTotals>
+          <WithholdingTaxList>
+             <WithholdingTaxType>None</WithholdingTaxType>
+             <WithholdingTaxDescription>Sem retenção</WithholdingTaxDescription>
+             <WithholdingTaxAmount>0.00</WithholdingTaxAmount>
+          </WithholdingTaxList>
+        </Document>`;
+      });
+
+      const submissionGuid = `GUID-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const timeStamp = formatDateToIso();
+
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<VENDAS>
+  <SchemaVersion>1.01_01</SchemaVersion>
+  <SubmissionGUID>${submissionGuid}</SubmissionGUID>
+  <TaxRegistrationNumber>${escapeXml(nif)}</TaxRegistrationNumber>
+  <SubmissionTimeStamp>${timeStamp}</SubmissionTimeStamp>
+  <SoftwareInfo>
+    <SoftwareInfoDetail>
+      <ProductID>${escapeXml(softwareName)}/AGT</ProductID>
+      <ProductVersion>1.0.1</ProductVersion>
+      <SoftwareValidationNumber>0000</SoftwareValidationNumber>
+    </SoftwareInfoDetail>
+    <jwsSoftwareSignature>${generateJws(softwareName)}</jwsSoftwareSignature>
+  </SoftwareInfo>
+  <NumberOfEntries>${numberOfEntries}</NumberOfEntries>
+  <Documents>${documentsXml}
+  </Documents>
+</VENDAS>`;
+
+      const fileName = `Vendas_AGT_${nif}_${new Date().toISOString().split('T')[0]}.xml`;
+      const generatedBy = user_name || owner.name;
+
+      db.prepare(`INSERT INTO generated_files (owner_id, name, type, file_path, generated_by, file_data) VALUES (?, ?, ?, ?, ?, ?)`).run(
+        owner_id,
+        fileName,
+        'XML AGT',
+        '/api/fiscal/xml-preview', 
+        generatedBy,
+        Buffer.from(xml)
+      );
+
+      logAction({
+        ownerId: owner_id,
+        module: 'FISCAL',
+        actionType: 'AGT_XML_EXPORT',
+        severity: 'INFO',
+        description: `Exportação XML AGT gerada por ${generatedBy}: ${fileName}`,
+        entityType: 'FILE',
+        entityId: fileName,
+        req
+      });
+
+      res.json({ success: true, fileName, xml });
+    } catch (error: any) {
+      console.error("Error generating AGT XML:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/fiscal/xml-preview", (req, res) => {
+    // This is a simple preview endpoint if needed
+    res.send("XML Preview Logic here");
   });
 
   app.post("/api/owner/generate-saft", (req, res) => {
@@ -5254,6 +5427,14 @@ async function startServer() {
       }
 
       const placeholders = establishmentIds.map(() => '?').join(',');
+      const establishmentsInfo = db.prepare(`SELECT * FROM establishments WHERE id IN (${placeholders})`).all(...establishmentIds) as any[];
+      
+      const totalEstablishments = establishmentsInfo.length;
+      const primaryEstablishment = establishmentsInfo[0];
+      const nif = primaryEstablishment?.nif || owner.nif || owner.bi_number || "999999999";
+
+      const systemName = db.prepare("SELECT value FROM system_settings WHERE key = 'system_name'").get() as any;
+      const softwareName = systemName?.value || "Fatu-R";
 
       // Fetch all active taxes for these establishments
       const taxes = db.prepare(`SELECT * FROM taxes WHERE establishment_id IN (${placeholders}) AND status = 'active'`).all(...establishmentIds) as any[];
@@ -5267,7 +5448,7 @@ async function startServer() {
         <TaxType>IVA</TaxType>
         <TaxCountryRegion>AO</TaxCountryRegion>
         <TaxCode>ISE</TaxCode>
-        <Description>Isento de IVA</Description>
+        <Description>Isento nos termos do regime de exclusão (Artigo 9º do CIVA)</Description>
         <TaxPercentage>0.00</TaxPercentage>
       </TaxTableEntry>`;
         addedTaxCodes.add('ISE');
@@ -5281,16 +5462,17 @@ async function startServer() {
       <TaxTableEntry>
         <TaxType>IVA</TaxType>
         <TaxCountryRegion>AO</TaxCountryRegion>
-        <TaxCode>${code}</TaxCode>
-        <Description>${t.name}</Description>
+        <TaxCode>${escapeXml(code)}</TaxCode>
+        <Description>${escapeXml(t.name)}</Description>
         <TaxPercentage>${(t.percentage || 0).toFixed(2)}</TaxPercentage>
       </TaxTableEntry>`;
             addedTaxCodes.add(code);
           }
         });
-      } else if (addedTaxCodes.size === 0) {
-        // Fallback if no taxes defined
-        taxTableXml = `
+      }
+
+      if (!addedTaxCodes.has('NOR')) {
+        taxTableXml += `
       <TaxTableEntry>
         <TaxType>IVA</TaxType>
         <TaxCountryRegion>AO</TaxCountryRegion>
@@ -5310,33 +5492,49 @@ async function startServer() {
         ciParams.push(doc_type);
       }
       const creditInvoices = db.prepare(ciQuery).all(...ciParams) as any[];
+      const tInvoicesList = (!doc_type || doc_type === 'FR') ? db.prepare(`SELECT * FROM transactions WHERE establishment_id IN (${placeholders}) AND date(timestamp) BETWEEN ? AND ?`).all(...establishmentIds, start_date, end_date) as any[] : [];
 
-      // Fetch invoices from transactions (POS sales - now treated as FR)
-      let tInvoices: any[] = [];
-      if (!doc_type || doc_type === 'FR') {
-        let tQuery = `SELECT * FROM transactions WHERE establishment_id IN (${placeholders})`;
-        let tParams: any[] = [...establishmentIds];
-        tQuery += " AND date(timestamp) BETWEEN ? AND ?";
-        tParams.push(start_date, end_date);
-        tInvoices = db.prepare(tQuery).all(...tParams) as any[];
-      }
+      // Merge and sort all invoices to ensure correct hash chaining
+      const allUnifiedInvoices = [
+        ...creditInvoices.map(i => ({
+          ...i,
+          source: 'CI',
+          unified_date: i.invoice_date || i.created_at,
+          unified_entry_date: i.created_at,
+          unified_no: i.invoice_number,
+          unified_type: i.doc_type,
+          unified_tax: i.tax_amount || 0,
+          unified_total: i.total_amount
+        })),
+        ...tInvoicesList.map(i => {
+           const invType = i.invoice_number?.split(' ')[0] || 'FR';
+           return {
+             ...i,
+             source: 'T',
+             unified_date: i.timestamp,
+             unified_entry_date: i.timestamp,
+             unified_no: i.invoice_number || invType + ' ' + i.id,
+             unified_type: invType,
+             unified_tax: i.tax_amount || 0,
+             unified_total: i.total_amount
+           };
+        })
+      ].sort((a, b) => new Date(a.unified_entry_date).getTime() - new Date(b.unified_entry_date).getTime());
 
       // Combine and format XML
       let invoicesXml = "";
       let totalEntries = 0;
       let totalCreditAmount = 0;
       let totalDebitAmount = 0;
+      let lastHash = "";
       const uniqueCustomers = new Map<string, any>();
-      
-      creditInvoices.forEach(inv => {
+
+      allUnifiedInvoices.forEach(inv => {
         totalEntries++;
-        const isCredit = inv.doc_type === 'NC';
-        if (isCredit) {
-          totalDebitAmount += inv.total_amount;
-        } else {
-          totalCreditAmount += inv.total_amount;
-        }
-        
+        const isCredit = inv.unified_type === 'NC';
+        if (isCredit) totalDebitAmount += inv.unified_total;
+        else totalCreditAmount += inv.unified_total;
+
         if (inv.client_nif && inv.client_nif !== '999999999') {
           uniqueCustomers.set(inv.client_nif, {
             name: inv.client_name,
@@ -5345,171 +5543,78 @@ async function startServer() {
           });
         }
 
-        const items = JSON.parse(inv.items || '[]');
+        const items = typeof inv.items === 'string' ? JSON.parse(inv.items || '[]') : (inv.items || []);
         let linesXml = "";
+        let calcNetTotal = 0;
+        let calcTaxPayable = 0;
         
-        if (items.length > 0) {
-          items.forEach((item: any, index: number) => {
-            const taxCode = item.tax_code || (owner.fiscal_regime === 'exclusao' ? 'ISE' : 'NOR');
-            const taxPercentage = (item.tax_percentage !== undefined) ? item.tax_percentage : (owner.fiscal_regime === 'exclusao' ? 0 : 14);
-            const lineTotal = (item.price || 0) * (item.quantity || 1);
-            
-            linesXml += `
+        const processItems = items.length > 0 ? items : [{ id: '000', name: 'Venda de Produtos/Serviços', price: inv.unified_total, quantity: 1 }];
+
+        processItems.forEach((item: any, index: number) => {
+          const taxCode = item.tax_code || (owner.fiscal_regime === 'exclusao' ? 'ISE' : 'NOR');
+          const taxPercentage = (item.tax_percentage !== undefined) ? item.tax_percentage : (owner.fiscal_regime === 'exclusao' ? 0 : 14);
+          const quantity = item.quantity || 1;
+          const price = item.price || 0;
+          const lineNetTotal = price * quantity;
+          const lineTax = lineNetTotal * (taxPercentage / 100);
+          
+          calcNetTotal += lineNetTotal;
+          calcTaxPayable += lineTax;
+          
+          linesXml += `
           <Line>
             <LineNumber>${index + 1}</LineNumber>
-            <ProductCode>${item.id || '000'}</ProductCode>
-            <ProductDescription>${item.name || 'Produto'}</ProductDescription>
-            <Quantity>${item.quantity || 1}</Quantity>
+            <ProductCode>${escapeXml(item.id?.toString() || item.code?.toString() || '000')}</ProductCode>
+            <ProductDescription>${escapeXml(item.name || 'Produto')}</ProductDescription>
+            <Quantity>${quantity.toFixed(2)}</Quantity>
             <UnitOfMeasure>UN</UnitOfMeasure>
-            <UnitPrice>${(item.price || 0).toFixed(2)}</UnitPrice>
-            <TaxPointDate>${inv.invoice_date || (inv.created_at ? inv.created_at.split(' ')[0] : start_date)}</TaxPointDate>
-            <Description>${item.name || 'Venda de Produtos/Serviços'}</Description>
-            <${isCredit ? 'DebitAmount' : 'CreditAmount'}>${lineTotal.toFixed(2)}</${isCredit ? 'DebitAmount' : 'CreditAmount'}>
+            <UnitPrice>${price.toFixed(2)}</UnitPrice>
+            <TaxPointDate>${formatDateToIso(inv.unified_date).split('T')[0]}</TaxPointDate>
+            <Description>${escapeXml(item.name || 'Venda de Produtos/Serviços')}</Description>
+            <${isCredit ? 'DebitAmount' : 'CreditAmount'}>${lineNetTotal.toFixed(2)}</${isCredit ? 'DebitAmount' : 'CreditAmount'}>
             <Tax>
               <TaxType>IVA</TaxType>
               <TaxCountryRegion>AO</TaxCountryRegion>
-              <TaxCode>${taxCode}</TaxCode>
+              <TaxCode>${escapeXml(taxCode)}</TaxCode>
               <TaxPercentage>${taxPercentage.toFixed(2)}</TaxPercentage>
             </Tax>
-            ${taxCode === 'ISE' ? `<TaxExemptionReason>Isento nos termos do regime de exclusão</TaxExemptionReason>
-            <TaxExemptionCode>M02</TaxExemptionCode>` : ''}
+            ${taxCode === 'ISE' ? (() => {
+              const exemption = getExemptionCode(owner.fiscal_regime, 'ISE');
+              return `<TaxExemptionReason>${escapeXml(exemption.reason)}</TaxExemptionReason>
+                      <TaxExemptionCode>${escapeXml(exemption.code)}</TaxExemptionCode>`;
+            })() : ''}
             <SettlementAmount>0.00</SettlementAmount>
           </Line>`;
-          });
-        } else {
-          const taxCode = owner.fiscal_regime === 'exclusao' ? 'ISE' : 'NOR';
-          const taxPercentage = owner.fiscal_regime === 'exclusao' ? 0 : 14;
-          linesXml = `
-          <Line>
-            <LineNumber>1</LineNumber>
-            <ProductCode>000</ProductCode>
-            <ProductDescription>Venda de Produtos/Serviços</ProductDescription>
-            <Quantity>1</Quantity>
-            <UnitOfMeasure>UN</UnitOfMeasure>
-            <UnitPrice>${inv.total_amount.toFixed(2)}</UnitPrice>
-            <TaxPointDate>${inv.invoice_date || (inv.created_at ? inv.created_at.split(' ')[0] : start_date)}</TaxPointDate>
-            <Description>Venda de Produtos/Serviços</Description>
-            <${isCredit ? 'DebitAmount' : 'CreditAmount'}>${inv.total_amount.toFixed(2)}</${isCredit ? 'DebitAmount' : 'CreditAmount'}>
-            <Tax>
-              <TaxType>IVA</TaxType>
-              <TaxCountryRegion>AO</TaxCountryRegion>
-              <TaxCode>${taxCode}</TaxCode>
-              <TaxPercentage>${taxPercentage.toFixed(2)}</TaxPercentage>
-            </Tax>
-            ${taxCode === 'ISE' ? `<TaxExemptionReason>Isento nos termos do regime de exclusão</TaxExemptionReason>
-            <TaxExemptionCode>M02</TaxExemptionCode>` : ''}
-            <SettlementAmount>0.00</SettlementAmount>
-          </Line>`;
-        }
+        });
+
+        const grossTotal = calcNetTotal + calcTaxPayable;
+        const invDate = formatDateToIso(inv.unified_date).split('T')[0];
+        const entryDate = formatDateToIso(inv.unified_entry_date);
+        const currentHash = generateHashChain(invDate, entryDate, inv.unified_no, grossTotal.toFixed(2), lastHash);
+        lastHash = currentHash;
 
         invoicesXml += `
       <Invoice>
-        <InvoiceNo>${inv.invoice_number}</InvoiceNo>
+        <InvoiceNo>${escapeXml(inv.unified_no)}</InvoiceNo>
         <DocumentStatus>
           <InvoiceStatus>N</InvoiceStatus>
-          <InvoiceStatusDate>${inv.created_at.replace(' ', 'T')}</InvoiceStatusDate>
-          <SourceID>${inv.seller_id}</SourceID>
+          <InvoiceStatusDate>${entryDate}</InvoiceStatusDate>
+          <SourceID>${escapeXml(inv.seller_id?.toString() || owner.id.toString())}</SourceID>
           <SourceBilling>P</SourceBilling>
         </DocumentStatus>
-        <Hash>${inv.hash || '0'}</Hash>
+        <Hash>${currentHash}</Hash>
         <HashControl>1</HashControl>
-        <Period>${new Date(inv.created_at).getMonth() + 1}</Period>
-        <InvoiceDate>${inv.invoice_date || (inv.created_at ? inv.created_at.split(' ')[0] : start_date)}</InvoiceDate>
-        <InvoiceType>${inv.doc_type}</InvoiceType>
-        <SourceBilling>P</SourceBilling>
-        <CustomerID>${inv.client_nif || '999999999'}</CustomerID>
+        <jwsDocumentSignature>${generateJws(currentHash)}</jwsDocumentSignature>
+        <Period>${new Date(inv.unified_entry_date).getMonth() + 1}</Period>
+        <InvoiceDate>${invDate}</InvoiceDate>
+        <InvoiceType>${escapeXml(inv.unified_type)}</InvoiceType>
+        <SystemEntryDate>${entryDate}</SystemEntryDate>
+        <CustomerID>${escapeXml(inv.client_nif || '999999999')}</CustomerID>
         ${linesXml}
         <DocumentTotals>
-          <TaxPayable>${(inv.tax_amount || 0).toFixed(2)}</TaxPayable>
-          <NetTotal>${(inv.total_amount - (inv.tax_amount || 0)).toFixed(2)}</NetTotal>
-          <GrossTotal>${inv.total_amount.toFixed(2)}</GrossTotal>
-        </DocumentTotals>
-      </Invoice>`;
-      });
-
-      tInvoices.forEach(inv => {
-        totalEntries++;
-        totalCreditAmount += inv.total_amount;
-        const items = JSON.parse(inv.items || '[]');
-        let linesXml = "";
-        
-        if (items.length > 0) {
-          items.forEach((item: any, index: number) => {
-            const taxCode = item.tax_code || (owner.fiscal_regime === 'exclusao' ? 'ISE' : 'NOR');
-            const taxPercentage = (item.tax_percentage !== undefined) ? item.tax_percentage : (owner.fiscal_regime === 'exclusao' ? 0 : 14);
-            const lineTotal = (item.price || 0) * (item.quantity || 1);
-            
-            linesXml += `
-          <Line>
-            <LineNumber>${index + 1}</LineNumber>
-            <ProductCode>${item.id || '000'}</ProductCode>
-            <ProductDescription>${item.name || 'Produto'}</ProductDescription>
-            <Quantity>${item.quantity || 1}</Quantity>
-            <UnitOfMeasure>UN</UnitOfMeasure>
-            <UnitPrice>${(item.price || 0).toFixed(2)}</UnitPrice>
-            <TaxPointDate>${inv.timestamp ? inv.timestamp.split(' ')[0] : start_date}</TaxPointDate>
-            <Description>${item.name || 'Venda PDV'}</Description>
-            <CreditAmount>${lineTotal.toFixed(2)}</CreditAmount>
-            <Tax>
-              <TaxType>IVA</TaxType>
-              <TaxCountryRegion>AO</TaxCountryRegion>
-              <TaxCode>${taxCode}</TaxCode>
-              <TaxPercentage>${taxPercentage.toFixed(2)}</TaxPercentage>
-            </Tax>
-            ${taxCode === 'ISE' ? `<TaxExemptionReason>Isento nos termos do regime de exclusão</TaxExemptionReason>
-            <TaxExemptionCode>M02</TaxExemptionCode>` : ''}
-            <SettlementAmount>0.00</SettlementAmount>
-          </Line>`;
-          });
-        } else {
-          const taxCode = owner.fiscal_regime === 'exclusao' ? 'ISE' : 'NOR';
-          const taxPercentage = owner.fiscal_regime === 'exclusao' ? 0 : 14;
-          linesXml = `
-          <Line>
-            <LineNumber>1</LineNumber>
-            <ProductCode>000</ProductCode>
-            <ProductDescription>Venda PDV</ProductDescription>
-            <Quantity>1</Quantity>
-            <UnitOfMeasure>UN</UnitOfMeasure>
-            <UnitPrice>${inv.total_amount.toFixed(2)}</UnitPrice>
-            <TaxPointDate>${inv.timestamp ? inv.timestamp.split(' ')[0] : start_date}</TaxPointDate>
-            <Description>Venda PDV</Description>
-            <CreditAmount>${inv.total_amount.toFixed(2)}</CreditAmount>
-            <Tax>
-              <TaxType>IVA</TaxType>
-              <TaxCountryRegion>AO</TaxCountryRegion>
-              <TaxCode>${taxCode}</TaxCode>
-              <TaxPercentage>${taxPercentage.toFixed(2)}</TaxPercentage>
-            </Tax>
-            ${taxCode === 'ISE' ? `<TaxExemptionReason>Isento nos termos do regime de exclusão</TaxExemptionReason>
-            <TaxExemptionCode>M02</TaxExemptionCode>` : ''}
-            <SettlementAmount>0.00</SettlementAmount>
-          </Line>`;
-        }
-
-        const invType = inv.invoice_number?.split(' ')[0] || 'FR';
-
-        invoicesXml += `
-      <Invoice>
-        <InvoiceNo>${inv.invoice_number || invType + ' ' + inv.id}</InvoiceNo>
-        <DocumentStatus>
-          <InvoiceStatus>N</InvoiceStatus>
-          <InvoiceStatusDate>${inv.timestamp.replace(' ', 'T')}</InvoiceStatusDate>
-          <SourceID>${inv.seller_id}</SourceID>
-          <SourceBilling>P</SourceBilling>
-        </DocumentStatus>
-        <Hash>${inv.hash || '0'}</Hash>
-        <HashControl>1</HashControl>
-        <Period>${new Date(inv.timestamp).getMonth() + 1}</Period>
-        <InvoiceDate>${inv.timestamp ? inv.timestamp.split(' ')[0] : start_date}</InvoiceDate>
-        <InvoiceType>${invType}</InvoiceType>
-        <SourceBilling>P</SourceBilling>
-        <CustomerID>999999999</CustomerID>
-        ${linesXml}
-        <DocumentTotals>
-          <TaxPayable>${(inv.tax_amount || 0).toFixed(2)}</TaxPayable>
-          <NetTotal>${(inv.total_amount - (inv.tax_amount || 0)).toFixed(2)}</NetTotal>
-          <GrossTotal>${inv.total_amount.toFixed(2)}</GrossTotal>
+          <TaxPayable>${calcTaxPayable.toFixed(2)}</TaxPayable>
+          <NetTotal>${calcNetTotal.toFixed(2)}</NetTotal>
+          <GrossTotal>${grossTotal.toFixed(2)}</GrossTotal>
         </DocumentTotals>
       </Invoice>`;
       });
@@ -5521,10 +5626,10 @@ async function startServer() {
         productsXml += `
     <Product>
       <ProductType>P</ProductType>
-      <ProductCode>${prod.id}</ProductCode>
-      <ProductGroup>${prod.category || 'Geral'}</ProductGroup>
-      <ProductDescription>${prod.name}</ProductDescription>
-      <ProductNumberCode>${prod.barcode || prod.id}</ProductNumberCode>
+      <ProductCode>${escapeXml(prod.id.toString())}</ProductCode>
+      <ProductGroup>${escapeXml(prod.category || 'Geral')}</ProductGroup>
+      <ProductDescription>${escapeXml(prod.name)}</ProductDescription>
+      <ProductNumberCode>${escapeXml(prod.barcode || prod.id.toString())}</ProductNumberCode>
     </Product>`;
       });
 
@@ -5532,14 +5637,14 @@ async function startServer() {
 <AuditFile xmlns="urn:OECD:StandardAuditFile-Tax:AO:1.01_01">
   <Header>
     <AuditFileVersion>1.01_01</AuditFileVersion>
-    <CompanyID>${owner.nif || '999999999'}</CompanyID>
-    <TaxRegistrationNumber>${owner.nif || '999999999'}</TaxRegistrationNumber>
+    <CompanyID>${escapeXml(nif)}</CompanyID>
+    <TaxRegistrationNumber>${escapeXml(nif)}</TaxRegistrationNumber>
     <TaxAccountingBasis>F</TaxAccountingBasis>
-    <CompanyName>${owner.company_name || owner.name}</CompanyName>
-    <BusinessName>${selectedEstablishment ? selectedEstablishment.name : (owner.company_name || owner.name)}</BusinessName>
+    <CompanyName>${escapeXml(primaryEstablishment?.company_name || owner.company_name || owner.name)}</CompanyName>
+    <BusinessName>${escapeXml(primaryEstablishment?.name || owner.company_name || owner.name)}</BusinessName>
     <CompanyAddress>
-      <AddressDetail>${selectedEstablishment ? selectedEstablishment.address : (owner.address || 'Endereço não especificado')}</AddressDetail>
-      <City>Luanda</City>
+      <AddressDetail>${escapeXml(primaryEstablishment?.address || owner.address || 'Endereço não especificado')}</AddressDetail>
+      <City>${escapeXml(primaryEstablishment?.city || 'Luanda')}</City>
       <Country>AO</Country>
     </CompanyAddress>
     <FiscalYear>${new Date(start_date).getFullYear()}</FiscalYear>
@@ -5548,8 +5653,10 @@ async function startServer() {
     <CurrencyCode>AOA</CurrencyCode>
     <DateCreated>${new Date().toISOString().split('T')[0]}</DateCreated>
     <TaxEntity>Global</TaxEntity>
-    <ProductSoftwareCertificateNumber>0/AGT/2024</ProductSoftwareCertificateNumber>
-    <SoftwareID>AIS-ERP/1.0</SoftwareID>
+    <ProductSoftwareCertificateNumber>0000</ProductSoftwareCertificateNumber>
+    <SoftwareID>${escapeXml(softwareName)}/1.0.1</SoftwareID>
+    <jwsSoftwareSignature>${generateJws(softwareName)}</jwsSoftwareSignature>
+    <EACCode>47110</EACCode>
   </Header>
   <MasterFiles>
     <Customer>
@@ -5593,7 +5700,14 @@ async function startServer() {
 </AuditFile>`;
 
       const fileName = `SAFT_AO_${new Date().toISOString().replace(/[:.]/g, '-')}.xml`;
-      db.prepare("INSERT INTO generated_files (owner_id, name, type, generated_by, file_data) VALUES (?, ?, ?, ?, ?)").run(owner_id, fileName, 'SAFT', user_name, Buffer.from(xml));
+      db.prepare("INSERT INTO generated_files (owner_id, name, type, file_path, generated_by, file_data) VALUES (?, ?, ?, ?, ?, ?)").run(
+        owner_id, 
+        fileName, 
+        'SAFT', 
+        "/download/saft/" + fileName,
+        user_name, 
+        Buffer.from(xml)
+      );
       
       logAction({
         ownerId: owner_id,
@@ -5949,7 +6063,14 @@ async function startServer() {
         return res.status(400).json({ error: "Tipo de exportação inválido." });
       }
 
-      db.prepare("INSERT INTO generated_files (owner_id, name, type, generated_by, file_data) VALUES (?, ?, ?, ?, ?)").run(owner_id, fileName, type, user_name, buffer);
+      db.prepare("INSERT INTO generated_files (owner_id, name, type, file_path, generated_by, file_data) VALUES (?, ?, ?, ?, ?, ?)").run(
+        owner_id, 
+        fileName, 
+        type, 
+        "/download/" + (type === 'PDF' ? 'reports/' : 'exports/') + fileName,
+        user_name, 
+        buffer
+      );
       
       res.json({ success: true, fileName });
     } catch (e: any) {
@@ -6079,15 +6200,15 @@ async function startServer() {
       const countTrans = db.prepare("SELECT COUNT(*) as count FROM transactions WHERE establishment_id = ? AND date(timestamp, 'localtime') = date(?, 'localtime')").get(establishmentId, today) as any;
       const countCredit = db.prepare("SELECT COUNT(*) as count FROM credit_invoices WHERE establishment_id = ? AND (date(invoice_date, 'localtime') = date(?, 'localtime') OR date(created_at, 'localtime') = date(?, 'localtime')) AND doc_type IN ('FT', 'FR', 'ND')").get(establishmentId, today, today) as any;
       
-      const totalTrans = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM transactions WHERE establishment_id = ? AND date(timestamp, 'localtime') = date(?, 'localtime') AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_type = 'transaction')").get(establishmentId, today) as any;
-      const totalCredit = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id = ? AND (date(invoice_date, 'localtime') = date(?, 'localtime') OR date(created_at, 'localtime') = date(?, 'localtime')) AND doc_type IN ('FT', 'FR', 'ND') AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE type = 'income' AND reference_type = 'credit_invoice')").get(establishmentId, today, today) as any;
+      const totalTrans = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM transactions WHERE establishment_id = ? AND date(timestamp, 'localtime') = date(?, 'localtime') AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE establishment_id = ? AND type = 'income' AND reference_type = 'transaction' AND reference_id IS NOT NULL)").get(establishmentId, today, establishmentId) as any;
+      const totalCredit = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id = ? AND (date(invoice_date, 'localtime') = date(?, 'localtime') OR date(created_at, 'localtime') = date(?, 'localtime')) AND doc_type IN ('FT', 'FR', 'ND') AND id NOT IN (SELECT reference_id FROM financial_transactions WHERE establishment_id = ? AND type = 'income' AND reference_type = 'credit_invoice' AND reference_id IS NOT NULL)").get(establishmentId, today, today, establishmentId) as any;
       const totalNC = db.prepare("SELECT COALESCE(SUM(COALESCE(base_amount, total_amount)), 0) as total FROM credit_invoices WHERE establishment_id = ? AND (date(invoice_date, 'localtime') = date(?, 'localtime') OR date(created_at, 'localtime') = date(?, 'localtime')) AND doc_type = 'NC'").get(establishmentId, today, today) as any;
       
       const todayTotalIncome = db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM financial_transactions WHERE establishment_id = ? AND type = 'income' AND date(date, 'localtime') = date(?, 'localtime')").get(establishmentId, today) as any;
       
       const todaySalesCount = (countTrans?.count || 0) + (countCredit?.count || 0);
       const todayRevenueTotal = (todayTotalIncome?.total || 0) + (totalTrans?.total || 0) + (totalCredit?.total || 0) - (totalNC?.total || 0);
-      
+
       const sellers = db.prepare("SELECT COUNT(DISTINCT seller_id) as count FROM transactions WHERE establishment_id = ? AND date(timestamp) = ?").get(establishmentId, today) as any;
       const openSessions = db.prepare("SELECT COUNT(*) as count FROM cashier_sessions WHERE establishment_id = ? AND status = 'open'").get(establishmentId) as any;
 

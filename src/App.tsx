@@ -5060,6 +5060,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     todaySales: 0, 
     todayRevenue: 0, 
     activeSellers: 0, 
+    openTills: 0,
     lowStockCount: 0, 
     staffCount: 0,
     financialReminder: {
@@ -5176,7 +5177,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="p-4 border border-zinc-100 rounded-2xl">
                         <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1">Caixas Abertos</p>
-                        <p className="text-2xl font-black">{dashboard.activeSellers}</p>
+                        <p className="text-2xl font-black">{dashboard.openTills}</p>
                       </div>
                       <div className="p-4 border border-zinc-100 rounded-2xl">
                         <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1">Clientes Atendidos</p>
