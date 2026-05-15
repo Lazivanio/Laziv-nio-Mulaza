@@ -99,6 +99,7 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
     payment_method: 'transfer',
     payment_term: '7',
     observations: '',
+    category: '',
     status: 'active' as 'active' | 'inactive'
   });
 
@@ -142,6 +143,7 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
       payment_method: 'transfer',
       payment_term: '7',
       observations: '',
+      category: '',
       status: 'active'
     });
   };
@@ -214,6 +216,7 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
               <tr>
                 <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Fornecedor</th>
                 <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Empresa / NIF</th>
+                <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Categoria</th>
                 <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Contacto</th>
                 <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Status</th>
                 <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest text-right">Ações</th>
@@ -236,6 +239,11 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
                   <td className="px-6 py-4">
                     <p className="text-sm font-medium text-zinc-700">{supplier.company_name || '-'}</p>
                     <p className="text-xs text-zinc-400">{supplier.nif || '-'}</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="px-2 py-1 bg-zinc-100 text-zinc-600 rounded-lg text-xs font-bold">
+                      {supplier.category || 'Geral'}
+                    </span>
                   </td>
                   <td className="px-6 py-4">
                     <p className="text-sm text-zinc-600">{supplier.phone}</p>
@@ -277,6 +285,7 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
                                 payment_method: supplier.payment_method || 'transfer',
                                 payment_term: supplier.payment_term || '7',
                                 observations: supplier.observations || '',
+                                category: supplier.category || '',
                                 status: supplier.status || 'active'
                               });
                               setIsModalOpen(true);
@@ -349,6 +358,16 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
                   type="email" 
                   value={formData.email}
                   onChange={e => setFormData({...formData, email: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Categoria</label>
+                <input 
+                  type="text" 
+                  placeholder="Ex: Bebidas, Limpeza, Serviços"
+                  value={formData.category}
+                  onChange={e => setFormData({...formData, category: e.target.value})}
                   className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
                 />
               </div>

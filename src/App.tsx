@@ -9575,7 +9575,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     return acc + (itemDiscountedSubtotal * (taxPercentage / 100));
   }, 0);
 
-  const total = Math.round((taxableAmount + tax) * 100) / 100;
+  const total = Math.ceil((taxableAmount + tax) * 100) / 100;
 
   const [totalInSelectedCurrency, setTotalInSelectedCurrency] = useState(0);
 
@@ -9598,7 +9598,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           .then(data => {
             const rate = data.rate || 1.0;
             setCurrentExchangeRate(rate);
-            setTotalInSelectedCurrency(Math.round((total / rate) * 100) / 100);
+            setTotalInSelectedCurrency(Math.ceil((total / rate) * 100) / 100);
           })
           .catch(() => {
             setCurrentExchangeRate(1.0);
@@ -9623,7 +9623,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             .then(res => res.json())
             .then(data => {
               const rate = data.rate || 1.0;
-              setFormalInvoiceAmount(Math.round((total / rate) * 100) / 100);
+              setFormalInvoiceAmount(Math.ceil((total / rate) * 100) / 100);
             })
             .catch(() => setFormalInvoiceAmount(total));
         }
@@ -10130,7 +10130,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       const rateToUse = (currencyObj && !currencyObj.is_base && formalInvoiceAmount > 0) ? total / formalInvoiceAmount : 1.0;
 
       const total_amount = formalInvoiceAmount;
-      const tax_amount = Math.round((tax / rateToUse) * 100) / 100;
+      const tax_amount = Math.ceil((tax / rateToUse) * 100) / 100;
 
       const res = await fetch('/api/owner/credit-invoices', {
         method: 'POST',
@@ -10139,7 +10139,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           ...formalInvoiceForm, 
           items: items.map(it => ({
             ...it,
-            price: Math.round((it.price / rateToUse) * 100) / 100
+            price: Math.ceil((it.price / rateToUse) * 100) / 100
           })),
           establishment_id: establishmentId,
           total_amount,

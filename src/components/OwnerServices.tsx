@@ -62,6 +62,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
   const [taxes, setTaxes] = useState<any[]>([]);
   const [reportData, setReportData] = useState<any[]>([]);
+  const [historyData, setHistoryData] = useState<any[]>([]);
   const [serviceSheets, setServiceSheets] = useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSheetModalOpen, setIsSheetModalOpen] = useState(false);
@@ -100,12 +101,31 @@ export const OwnerServices = ({ user }: { user: User }) => {
 
   useEffect(() => {
     fetchData();
+  }, [user.id]);
+
+  useEffect(() => {
     if (activeTab === 'report') {
       fetchReport();
+      fetchAllServiceSheets();
     } else if (activeTab === 'service-sheets') {
-      fetchServiceSheets();
+      if (establishments.length > 0) {
+        fetchServiceSheets();
+      }
     }
-  }, [user.id, activeTab]);
+  }, [activeTab, establishments.length]);
+
+  const fetchAllServiceSheets = async () => {
+    setIsSheetLoading(true);
+    try {
+      const res = await fetch(`/api/owner/service-sheets/owner/${user.id}`);
+      const data = await res.json();
+      setServiceSheets(data);
+    } catch (error) {
+      console.error('Error fetching all service sheets:', error);
+    } finally {
+      setIsSheetLoading(false);
+    }
+  };
 
   const fetchServiceSheets = async (estIdProp?: string) => {
     setIsSheetLoading(true);
@@ -140,7 +160,8 @@ export const OwnerServices = ({ user }: { user: User }) => {
     try {
       const res = await fetch(`/api/owner/services-report/${user.id}`);
       const data = await res.json();
-      setReportData(data);
+      setReportData(data.summary || []);
+      setHistoryData(data.history || []);
     } catch (error) {
       console.error('Error fetching report:', error);
     } finally {
@@ -819,7 +840,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
                 <div>
                   <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-1">Receita Total</p>
                   <h3 className="text-2xl font-black text-zinc-900">
-                    Kz {reportData.reduce((acc, curr) => acc + curr.revenue, 0).toLocaleString()}
+                    Kz {reportData.reduce((acc, curr) => acc + (Number(curr.revenue) || 0), 0).toLocaleString()}
                   </h3>
                 </div>
               </div>
@@ -832,7 +853,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
                 <div>
                   <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Total de Vendas</p>
                   <h3 className="text-2xl font-black text-zinc-900">
-                    {reportData.reduce((acc, curr) => acc + curr.quantity, 0)}
+                    {reportData.reduce((acc, curr) => acc + (Number(curr.quantity) || 0), 0)}
                   </h3>
                 </div>
               </div>
@@ -861,41 +882,41 @@ export const OwnerServices = ({ user }: { user: User }) => {
                   <thead>
                      <tr className="bg-zinc-50/50 border-b border-zinc-100">
                         <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data</th>
+                        <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estabelecimento</th>
                         <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente</th>
                         <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Serviço</th>
                         <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Valor</th>
-                        <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Doc Fiscal</th>
+                        <th className="px-6 py-3 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Doc</th>
                      </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-50">
-                     {serviceSheets.filter(s => s.status === 'concluded' || s.status === 'concluido').map(sheet => (
-                        <tr key={sheet.id} className="hover:bg-zinc-50/50 transition-colors">
+                     {historyData.map(item => (
+                        <tr key={item.id} className="hover:bg-zinc-50/50 transition-colors">
                            <td className="px-6 py-4 text-xs font-medium text-zinc-500">
-                              {new Date(sheet.scheduled_date).toLocaleDateString()}
+                              {new Date(item.date).toLocaleDateString()}
                            </td>
                            <td className="px-6 py-4">
-                              <p className="text-sm font-bold text-zinc-900">{sheet.client_name}</p>
-                              <p className="text-[10px] text-zinc-400 uppercase tracking-widest font-black">{sheet.client_nif}</p>
+                              <p className="text-xs font-bold text-zinc-900">{item.establishment_name}</p>
+                           </td>
+                           <td className="px-6 py-4">
+                              <p className="text-sm font-bold text-zinc-900">{item.client_name}</p>
+                              <p className="text-[10px] text-zinc-400 uppercase tracking-widest font-black">{item.client_nif}</p>
                            </td>
                            <td className="px-6 py-4 text-xs font-medium text-zinc-600">
-                              {sheet.service_description}
+                              {item.service_name}
                            </td>
                            <td className="px-6 py-4 text-right">
-                              <span className="text-sm font-black text-orange-600">Kz {sheet.total_amount.toLocaleString()}</span>
+                              <span className="text-sm font-black text-orange-600">Kz {Number(item.amount).toLocaleString()}</span>
                            </td>
                            <td className="px-6 py-4 text-right">
-                              {sheet.fiscal_document_id ? (
-                                 <span className="px-2 py-0.5 bg-green-50 text-green-600 rounded text-[10px] font-black uppercase">Gerado</span>
-                              ) : (
-                                 <span className="px-2 py-0.5 bg-zinc-100 text-zinc-400 rounded text-[10px] font-black uppercase">N/A</span>
-                              )}
+                              <span className="px-2 py-0.5 bg-zinc-100 text-zinc-500 rounded text-[10px] font-black uppercase">{item.doc_type}</span>
                            </td>
                         </tr>
                      ))}
-                     {serviceSheets.filter(s => s.status === 'concluded' || s.status === 'concluido').length === 0 && (
+                     {historyData.length === 0 && (
                         <tr>
-                           <td colSpan={5} className="px-6 py-8 text-center text-zinc-400 text-sm">
-                              Nenhuma folha de serviço concluída encontrada nesta seleção.
+                           <td colSpan={6} className="px-6 py-8 text-center text-zinc-400 text-sm">
+                              Nenhum registo de serviço encontrado.
                            </td>
                         </tr>
                      )}
@@ -996,13 +1017,13 @@ export const OwnerServices = ({ user }: { user: User }) => {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Código (ID)</label>
+              <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Código (Opcional)</label>
               <input 
-                type="text" required
+                type="text"
                 value={formData.code}
                 onChange={e => setFormData({...formData, code: e.target.value})}
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all font-bold"
-                placeholder="Ex: SERV001"
+                placeholder="Vazio para SERVXXX"
               />
             </div>
           </div>
