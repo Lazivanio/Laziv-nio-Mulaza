@@ -108,11 +108,9 @@ export const OwnerServices = ({ user }: { user: User }) => {
       fetchReport();
       fetchAllServiceSheets();
     } else if (activeTab === 'service-sheets') {
-      if (establishments.length > 0) {
-        fetchServiceSheets();
-      }
+      fetchAllServiceSheets();
     }
-  }, [activeTab, establishments.length]);
+  }, [activeTab]);
 
   const fetchAllServiceSheets = async () => {
     setIsSheetLoading(true);

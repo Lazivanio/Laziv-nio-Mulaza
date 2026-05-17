@@ -19,7 +19,8 @@ import {
   PieChart as PieChartIcon,
   Download,
   FileText,
-  Coins
+  Coins,
+  FileBarChart
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../lib/utils';
@@ -28,6 +29,7 @@ import { OwnerCurrencies } from './OwnerCurrencies';
 
 interface OwnerFinanceProps {
   user: User;
+  defaultTab?: 'summary' | 'incomes' | 'expenses' | 'receivable' | 'payable' | 'currencies' | 'billing';
 }
 
 interface FinancialSummary {
@@ -37,17 +39,25 @@ interface FinancialSummary {
   pending: { receivable: number; payable: number };
 }
 
-export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
-  const [activeTab, setActiveTab] = useState<'summary' | 'incomes' | 'expenses' | 'receivable' | 'payable' | 'currencies'>('summary');
+export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user, defaultTab = 'summary' }) => {
+  const [activeTab, setActiveTab] = useState<'summary' | 'incomes' | 'expenses' | 'receivable' | 'payable' | 'currencies' | 'billing'>(defaultTab);
   const [summary, setSummary] = useState<FinancialSummary | null>(null);
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
   const [receivables, setReceivables] = useState<AccountReceivable[]>([]);
   const [payables, setPayables] = useState<AccountPayable[]>([]);
+  const [billing, setBilling] = useState<any[]>([]);
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
   const [selectedEstablishmentId, setSelectedEstablishmentId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState<'income' | 'expense' | 'receivable' | 'payable'>('income');
+
+  // Billing filters
+  const [billingFilters, setBillingFilters] = useState({
+    startDate: '',
+    endDate: '',
+    type: ''
+  });
 
   // Form states
   const [formData, setFormData] = useState({
@@ -65,18 +75,66 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
 
   useEffect(() => {
     fetchData();
-  }, [user.id, selectedEstablishmentId]);
+  }, [user.id, selectedEstablishmentId, billingFilters]);
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = async () => {
+    try {
+      const response = await fetch(`/api/owner/settings/${user.id}`);
+      const data = await response.json();
+      if (data && data.billing_config) {
+        const config = typeof data.billing_config === 'string' ? JSON.parse(data.billing_config) : data.billing_config;
+        setBillingFilters(prev => ({
+          ...prev,
+          ...config
+        }));
+      }
+    } catch (error) {
+      console.error('Error fetching settings:', error);
+    }
+  };
+
+  const saveBillingSettings = async (newConfig: any) => {
+    try {
+      await fetch('/api/owner/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          owner_id: user.id,
+          billing_config: newConfig
+        })
+      });
+    } catch (error) {
+      console.error('Error saving settings:', error);
+    }
+  };
+
+  const updateBillingFilters = (updates: Partial<typeof billingFilters>) => {
+    const newFilters = { ...billingFilters, ...updates };
+    setBillingFilters(newFilters);
+    saveBillingSettings(newFilters);
+  };
 
   const fetchData = async () => {
     setLoading(true);
     try {
       const queryParams = selectedEstablishmentId ? `?establishmentId=${selectedEstablishmentId}` : '';
+      
+      let billingQuery = queryParams;
+      if (billingFilters.startDate) billingQuery += (billingQuery ? '&' : '?') + `startDate=${billingFilters.startDate}`;
+      if (billingFilters.endDate) billingQuery += (billingQuery ? '&' : '?') + `endDate=${billingFilters.endDate}`;
+      if (billingFilters.type) billingQuery += (billingQuery ? '&' : '?') + `type=${billingFilters.type}`;
+
       const endpoints = [
         `/api/owner/financial/summary/${user.id}${queryParams}`,
         `/api/owner/financial/transactions/${user.id}${queryParams}`,
         `/api/owner/financial/receivable/${user.id}${queryParams}`,
         `/api/owner/financial/payable/${user.id}${queryParams}`,
-        `/api/owner/establishments/${user.id}`
+        `/api/owner/establishments/${user.id}`,
+        `/api/owner/billing/${user.id}${billingQuery}`
       ];
 
       const responses = await Promise.all(endpoints.map(url => fetch(url)));
@@ -97,13 +155,14 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
         }
       }));
 
-      const [summaryData, transData, recData, payData, establishmentsData] = data;
+      const [summaryData, transData, recData, payData, establishmentsData, billingData] = data;
 
       if (summaryData) setSummary(summaryData);
       if (transData) setTransactions(transData);
       if (recData) setReceivables(recData);
       if (payData) setPayables(payData);
       if (establishmentsData) setEstablishments(Array.isArray(establishmentsData) ? establishmentsData : []);
+      if (billingData) setBilling(Array.isArray(billingData) ? billingData : []);
     } catch (error) {
       console.error('Error fetching financial data:', error);
     } finally {
@@ -577,6 +636,99 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
     </div>
   );
 
+  const renderBilling = () => (
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+          <FileBarChart className="text-indigo-600" />
+          Faturação e Documentos
+        </h2>
+        
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 bg-white px-3 py-1.5 border border-zinc-200 rounded-lg">
+            <Calendar size={14} className="text-zinc-400" />
+            <input 
+              type="date" 
+              className="text-xs outline-none bg-transparent"
+              value={billingFilters.startDate}
+              onChange={e => updateBillingFilters({ startDate: e.target.value })}
+            />
+            <span className="text-zinc-300">até</span>
+            <input 
+              type="date" 
+              className="text-xs outline-none bg-transparent"
+              value={billingFilters.endDate}
+              onChange={e => updateBillingFilters({ endDate: e.target.value })}
+            />
+          </div>
+
+          <select 
+            className="px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-xs outline-none"
+            value={billingFilters.type}
+            onChange={e => updateBillingFilters({ type: e.target.value })}
+          >
+            <option value="">Todos os Tipos</option>
+            <option value="FT">Fatura (FT)</option>
+            <option value="FR">Fatura Recibo (FR)</option>
+            <option value="NC">Nota de Crédito (NC)</option>
+            <option value="ND">Nota de Débito (ND)</option>
+            <option value="PP">Fatura Proforma (PP)</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3">Número</th>
+                <th className="px-6 py-3">Data</th>
+                <th className="px-6 py-3">Cliente</th>
+                <th className="px-6 py-3">Tipo</th>
+                <th className="px-6 py-3">Método</th>
+                <th className="px-6 py-3 text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {billing.map((item) => (
+                <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-6 py-4 text-sm font-black text-indigo-600">{item.invoice_number}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600">{new Date(item.invoice_date).toLocaleDateString()}</td>
+                  <td className="px-6 py-4 text-sm font-medium text-gray-900">{item.client_name}</td>
+                  <td className="px-6 py-4">
+                    <span className={cn(
+                      "px-2 py-1 text-[10px] font-black rounded-lg uppercase tracking-wider",
+                      item.doc_type === 'NC' ? "bg-rose-50 text-rose-600" :
+                      item.doc_type === 'PP' ? "bg-zinc-100 text-zinc-600" :
+                      "bg-emerald-50 text-emerald-600"
+                    )}>
+                      {item.doc_type}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-600 capitalize">{item.payment_method || '---'}</td>
+                  <td className={cn(
+                    "px-6 py-4 text-sm font-black text-right",
+                    item.doc_type === 'NC' ? "text-rose-600" : "text-zinc-900"
+                  )}>
+                    {item.doc_type === 'NC' ? '-' : ''}{formatCurrency(item.total_amount)}
+                  </td>
+                </tr>
+              ))}
+              {billing.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center text-gray-500 italic">
+                    Nenhum registro de faturação encontrado para os critérios selecionados.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -628,6 +780,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
         <TabButton active={activeTab === 'receivable'} onClick={() => setActiveTab('receivable')} icon={ArrowUpCircle} label="A Receber" />
         <TabButton active={activeTab === 'payable'} onClick={() => setActiveTab('payable')} icon={ArrowDownCircle} label="A Pagar" />
         <TabButton active={activeTab === 'currencies'} onClick={() => setActiveTab('currencies')} icon={Coins} label="Moedas" />
+        <TabButton active={activeTab === 'billing'} onClick={() => setActiveTab('billing')} icon={FileBarChart} label="Faturação" />
       </div>
 
       {/* Content */}
@@ -640,6 +793,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user }) => {
           transition={{ duration: 0.2 }}
         >
           {activeTab === 'summary' && renderSummary()}
+          {activeTab === 'billing' && renderBilling()}
           {activeTab === 'incomes' && renderTransactions('income')}
           {activeTab === 'expenses' && renderTransactions('expense')}
           {activeTab === 'receivable' && renderReceivables()}

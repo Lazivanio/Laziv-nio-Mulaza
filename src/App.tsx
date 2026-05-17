@@ -626,8 +626,15 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
   });
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const handleLogout = () => {
     onLogout();
@@ -800,14 +807,81 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             </h2>
           </div>
           
-          <div className="flex items-center gap-2 md:gap-4">
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-zinc-100 rounded-full text-zinc-600 text-xs font-medium">
+          <div className="flex items-center gap-2 md:gap-4 relative">
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-zinc-100 rounded-full text-zinc-600 text-[10px] font-bold uppercase tracking-wider">
               <Clock size={14} />
-              {new Date().toLocaleDateString()}
+              <span>{currentTime.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+              <span className="w-1 h-1 bg-zinc-300 rounded-full mx-1" />
+              <span>{currentTime.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
             </div>
-            <div className="w-8 h-8 md:w-10 md:h-10 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600">
+            
+            <button 
+              onClick={() => setIsProfileOpen(!isProfileOpen)}
+              className={cn(
+                "w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center transition-all",
+                isProfileOpen ? "bg-black text-white" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+              )}
+            >
               <UserIcon size={18} />
-            </div>
+            </button>
+
+            <AnimatePresence>
+              {isProfileOpen && (
+                <>
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={() => setIsProfileOpen(false)}
+                    className="fixed inset-0 z-40"
+                  />
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-xl border border-zinc-100 p-4 z-50"
+                  >
+                    <div className="flex flex-col items-center text-center p-2 mb-4 border-b border-zinc-50 pb-4">
+                      <div className="w-16 h-16 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600 mb-2">
+                        <UserIcon size={32} />
+                      </div>
+                      <p className="font-black text-zinc-900 uppercase tracking-tight">{user.name}</p>
+                      <p className="text-xs text-zinc-500 font-medium">{user.email}</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between px-3 py-2 bg-zinc-50 rounded-xl">
+                        <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Função</span>
+                        <span className="text-[10px] font-black text-black uppercase tracking-widest">
+                          {user.role === 'owner' ? 'Proprietário' : 
+                           user.role === 'admin' ? 'Administrador' : 
+                           user.role === 'manager' ? 'Gestor' : 
+                           user.role === 'seller' ? 'Vendedor' : 
+                           user.role === 'rh' ? 'Recursos Humanos' : 
+                           user.role === 'warehouse' ? 'Fiel de Armazém' : 
+                           user.role}
+                        </span>
+                      </div>
+                      {user.establishment_name && (
+                        <div className="flex items-center justify-between px-3 py-2 bg-zinc-50 rounded-xl">
+                          <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Local</span>
+                          <span className="text-[10px] font-black text-black uppercase tracking-widest truncate max-w-[120px]">{user.establishment_name}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-4 pt-4 border-t border-zinc-50">
+                      <button 
+                        onClick={handleLogout}
+                        className="w-full flex items-center justify-center gap-2 py-3 bg-rose-50 text-rose-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-rose-100 transition-all"
+                      >
+                        <LogOut size={14} /> Sair da Conta
+                      </button>
+                    </div>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
           </div>
         </header>
 
@@ -861,6 +935,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [activeTab, setActiveTab] = useState('dashboard');
   const [financeSubTab, setFinanceSubTab] = useState<'payments' | 'saas'>('payments');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
   const [dashboardData, setDashboardData] = useState<any>({
     stats: { totalClients: 0, activeClients: 0, totalEstablishments: 0, pendingSupport: 0, expiredLicenses: 0, expiringSoon: 0 },
     recentClients: []
@@ -1422,6 +1497,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
 
   useEffect(() => {
     fetchData();
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
   }, []);
 
   if (isLoading) return <div className="p-8 text-center text-zinc-500">Carregando painel administrativo...</div>;
@@ -1615,8 +1692,10 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                 {activeTab === 'audit' && 'Auditoria e Logs'}
                 {activeTab === 'settings' && 'Configurações'}
               </h2>
-              <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">
-                {new Date().toLocaleDateString('pt-PT', { weekday: 'short', day: 'numeric', month: 'short' })}
+              <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest flex items-center gap-2">
+                <span>{currentTime.toLocaleDateString('pt-PT', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                <span className="w-1 h-1 bg-zinc-300 rounded-full" />
+                <span>{currentTime.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}</span>
               </p>
             </div>
           </div>
@@ -4176,6 +4255,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [editingWarehouse, setEditingWarehouse] = useState<any>(null);
   const [isPromoModalOpen, setIsPromoModalOpen] = useState(false);
+  const [promoProductSearch, setPromoProductSearch] = useState('');
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [creditInvoices, setCreditInvoices] = useState<any[]>([]);
   const [cancellationRequests, setCancellationRequests] = useState<any[]>([]);
@@ -4722,6 +4802,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     });
     if (res.ok) {
       setIsPromoModalOpen(false);
+      setPromoProductSearch('');
       setPromoForm({ name: '', start_date: '', end_date: '', discount_percent: '', product_ids: [] });
       fetchData();
     }
@@ -8191,7 +8272,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         </form>
       </Modal>
 
-      <Modal isOpen={isPromoModalOpen} onClose={() => setIsPromoModalOpen(false)} title="Criar Promoção">
+      <Modal isOpen={isPromoModalOpen} onClose={() => { setIsPromoModalOpen(false); setPromoProductSearch(''); }} title="Criar Promoção">
         <form onSubmit={handleAddPromo} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome da Promoção</label>
@@ -8234,8 +8315,20 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
           </div>
           <div>
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Selecionar Produtos</label>
+            <div className="relative mb-2">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+              <input 
+                type="text"
+                placeholder="Pesquisar produtos..."
+                value={promoProductSearch}
+                onChange={e => setPromoProductSearch(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+              />
+            </div>
             <div className="max-h-48 overflow-y-auto border border-zinc-200 rounded-xl p-2 space-y-1 bg-zinc-50">
-              {products.map(p => (
+              {products
+                .filter(p => !promoProductSearch || p.name.toLowerCase().includes(promoProductSearch.toLowerCase()))
+                .map(p => (
                 <label key={p.id} className="flex items-center gap-3 p-2 hover:bg-white rounded-lg cursor-pointer transition-colors">
                   <input 
                     type="checkbox"
@@ -8255,6 +8348,11 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                   </div>
                 </label>
               ))}
+              {products.filter(p => !promoProductSearch || p.name.toLowerCase().includes(promoProductSearch.toLowerCase())).length === 0 && (
+                <div className="text-center py-4 text-zinc-400 text-xs italic">
+                  Nenhum produto encontrado.
+                </div>
+              )}
             </div>
           </div>
           <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold">Lançar Promoção</button>
@@ -8558,7 +8656,7 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
         </button>
       </div>
 
-      <div ref={invoiceRef} className="bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden">
+      <div ref={invoiceRef} className="bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden invoice-print">
         {/* Header */}
         <div className="flex justify-between items-start mb-12">
           <div className="flex items-center gap-8">
@@ -8746,6 +8844,24 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
           </div>
         </div>
       </div>
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media print {
+          body * { visibility: hidden; }
+          .invoice-print, .invoice-print * { visibility: visible; }
+          .invoice-print { 
+            position: absolute; 
+            left: 0; 
+            top: 0; 
+            width: 100% !important; 
+            margin: 0 !important;
+            padding: 2mm !important;
+            box-shadow: none !important; 
+            border: none !important;
+          }
+          .no-print { display: none !important; }
+        }
+      `}} />
     </div>
   );
 };
@@ -9429,6 +9545,28 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isTerminalSettingsOpen, setIsTerminalSettingsOpen] = useState(false);
+  const [isSavingTerminalSettings, setIsSavingTerminalSettings] = useState(false);
+  const [printConfig, setPrintConfig] = useState({
+    autoPrintPos: true,
+    autoPrintBackoffice: false,
+    defaultFormat: 'ticket' as 'ticket' | 'a4',
+    ticketSize: '80mm' as '58mm' | '80mm',
+    showPreview: true,
+    printSecondCopy: false,
+    defaultPrinter: ''
+  });
+  const [printStatus, setPrintStatus] = useState<{
+    isOpen: boolean;
+    message: string;
+    sale: any;
+    establishment: any;
+  }>({
+    isOpen: false,
+    message: '',
+    sale: null,
+    establishment: null
+  });
   const [activeSeries, setActiveSeries] = useState<any>(null);
   const [availableCurrencies, setAvailableCurrencies] = useState<any[]>([]);
   const [selectedCurrencyCode, setSelectedCurrencyCode] = useState('Kz');
@@ -9478,6 +9616,113 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     setIsCancelConfirmOpen(false);
   };
 
+  const triggerAutoPrint = async (sale: any) => {
+    // Determine if we should attempt auto-print based on setting and environment
+    const isPOS = user.role === 'seller' || user.role === 'manager';
+    const shouldAutoPrint = isPOS ? printConfig.autoPrintPos : printConfig.autoPrintBackoffice;
+
+    if (!shouldAutoPrint) return;
+
+    // RULE 3 & 5: Detect if printer is configured/available (logic based on configuration)
+    if (!printConfig.defaultPrinter) {
+      setPrintStatus({
+        isOpen: true,
+        message: "Impressão não realizada. Nenhuma impressora configurada ou detectada para este terminal. A venda foi concluída com sucesso.",
+        sale,
+        establishment: establishmentInfo
+      });
+      return;
+    }
+
+    // If we have a printer, try to print
+    try {
+      // Optional preview follows the browser print dialog
+      if (printConfig.showPreview) {
+        window.print();
+        if (printConfig.printSecondCopy) {
+          setTimeout(() => window.print(), 1000);
+        }
+      } else {
+        // Silent printing is hard in browsers, so we open the dialog but provide the status modal as a base
+        window.print();
+        if (printConfig.printSecondCopy) {
+          setTimeout(() => window.print(), 1000);
+        }
+      }
+    } catch (e) {
+      console.error("Print failed:", e);
+      setPrintStatus({
+        isOpen: true,
+        message: "Impressão não realizada. Falha ao comunicar com a impressora. A venda foi concluída com sucesso.",
+        sale,
+        establishment: establishmentInfo
+      });
+    }
+  };
+
+  const handleTestPrint = () => {
+    const testContent = `
+      ===============================
+      TESTE DE IMPRESSÃO - POS
+      ===============================
+      Empresa: ${establishmentInfo?.company_name || 'Minha Empresa'}
+      Estabelecimento: ${establishmentInfo?.name || 'Loja Principal'}
+      Caixa: ${user.cash_register_name || 'Terminal Local'}
+      Impressora: ${printConfig.defaultPrinter || 'Padrão do Sistema'}
+      Data/Hora: ${new Date().toLocaleString()}
+      -------------------------------
+      Teste de impressão realizado
+      com sucesso!
+      ===============================
+    `;
+    
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Teste de Impressão</title>
+            <style>
+              body { font-family: 'Courier New', Courier, monospace; font-size: 12px; white-space: pre-wrap; padding: 10px; width: ${printConfig.ticketSize === '58mm' ? '54mm' : '76mm'}; }
+              @media print { body { margin: 0; padding: 5px; } }
+            </style>
+          </head>
+          <body>${testContent}</body>
+        </html>
+      `);
+      printWindow.document.close();
+      setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+      }, 500);
+    }
+  };
+
+  const handleSaveTerminalSettings = async () => {
+    if (!user.cash_register_id) {
+      // If no register, just save to local storage as fallback
+      localStorage.setItem(`print_config_fallback`, JSON.stringify(printConfig));
+      setIsTerminalSettingsOpen(false);
+      return;
+    }
+
+    setIsSavingTerminalSettings(true);
+    try {
+      const res = await fetch(`/api/owner/cash-registers/${user.cash_register_id}/print-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ print_config: printConfig })
+      });
+      if (res.ok) {
+        setIsTerminalSettingsOpen(false);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSavingTerminalSettings(false);
+    }
+  };
+
   const fetchRegisters = () => {
     const establishmentId = user.establishment_id || 1;
     fetch(`/api/owner/establishments/${establishmentId}/cash-registers`)
@@ -9524,6 +9769,35 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
 
     checkActiveSession();
     fetchRegisters();
+
+    // Fetch print settings
+    const loadSettings = async () => {
+      try {
+        // Try local register settings first
+        if (user.cash_register_id) {
+          const regRes = await fetch(`/api/owner/cash-registers/${user.cash_register_id}/print-config`);
+          if (regRes.ok) {
+            const regData = await regRes.json();
+            if (regData && regData.print_config) {
+              setPrintConfig(prev => ({ ...prev, ...regData.print_config }));
+              return;
+            }
+          }
+        }
+
+        // Fallback to owner settings
+        const ownerRes = await fetch(`/api/owner/settings/${user.role === 'owner' ? user.id : user.owner_id}`);
+        const ownerData = await ownerRes.json();
+        if (ownerData && ownerData.print_config) {
+          const config = typeof ownerData.print_config === 'string' ? JSON.parse(ownerData.print_config) : ownerData.print_config;
+          setPrintConfig(prev => ({ ...prev, ...config }));
+        }
+      } catch (err) {
+        console.error("Error loading print settings:", err);
+      }
+    };
+
+    loadSettings();
   }, [user.establishment_id, user.cash_register_id]);
 
 
@@ -10038,7 +10312,12 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         const saleData = await res.json();
         if (saleData.sale) {
           setLastSale(saleData.sale);
-          setIsInvoiceModalOpen(true);
+          if (printConfig.defaultFormat === 'a4') {
+            setLastFormalInvoice(saleData.sale);
+            setIsFormalInvoiceGeneratedModalOpen(true);
+          } else {
+            setIsInvoiceModalOpen(true);
+          }
           setCart([]);
           setIsPaymentModalOpen(false);
           setCashReceived('');
@@ -10046,6 +10325,9 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           setDiscount(0);
           setClient({ name: 'Consumidor Final', nif: '999999999' });
           fetch(`/api/seller/products/${establishmentId}`).then(res => res.json()).then(setProducts);
+          
+          // Trigger Auto Print
+          triggerAutoPrint(saleData.sale);
         } else {
           throw new Error("Dados da venda não recebidos do servidor.");
         }
@@ -10217,7 +10499,16 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-2xl font-bold tracking-tight">PDV - Estabelecimento</h2>
-                <p className="text-orange-100 text-sm opacity-80">Terminal: {user.cash_register_name || 'Caixa'}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-orange-100 text-sm opacity-80">Terminal: {user.cash_register_name || 'Caixa'}</p>
+                  <button 
+                    onClick={() => setIsTerminalSettingsOpen(true)}
+                    className="p-1 hover:bg-orange-400/30 rounded-lg text-orange-100 transition-colors"
+                    title="Configurações do Terminal"
+                  >
+                    <Settings size={14} />
+                  </button>
+                </div>
               </div>
               <div className="flex items-center gap-2 bg-orange-400/30 px-3 py-1 rounded-full text-xs font-bold">
                 <div className="w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
@@ -11132,6 +11423,189 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         </div>
       </Modal>
 
+      {/* Terminal Printer Settings Modal */}
+      <Modal 
+        isOpen={isTerminalSettingsOpen} 
+        onClose={() => setIsTerminalSettingsOpen(false)} 
+        title="Configuração de Impressão do PDV"
+      >
+        <div className="space-y-6">
+          <div className="space-y-4">
+            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+              <Printer size={14} /> Impressora do Caixa
+            </h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Selecionar Impressora</label>
+                <div className="relative">
+                  <Printer className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+                  <input 
+                    type="text"
+                    placeholder="Nome da impressora (ex: Epson, XPrinter...)"
+                    value={printConfig.defaultPrinter}
+                    onChange={e => setPrintConfig({...printConfig, defaultPrinter: e.target.value})}
+                    className="w-full pl-10 pr-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none text-sm"
+                  />
+                </div>
+                <p className="text-[10px] text-zinc-400 mt-1 italic">
+                  * No navegador, selecione a mesma impressora na caixa de diálogo do sistema.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-2">Tipo de Impressão</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: '58mm', label: 'Ticket 58mm' },
+                    { id: '80mm', label: 'Ticket 80mm' },
+                    { id: 'a4', label: 'A4' }
+                  ].map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => {
+                        if (opt.id === 'a4') {
+                          setPrintConfig({...printConfig, defaultFormat: 'a4'});
+                        } else {
+                          setPrintConfig({...printConfig, defaultFormat: 'ticket', ticketSize: opt.id as '58mm' | '80mm'});
+                        }
+                      }}
+                      className={cn(
+                        "py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all",
+                        (printConfig.defaultFormat === 'a4' && opt.id === 'a4') || (printConfig.defaultFormat === 'ticket' && printConfig.ticketSize === opt.id)
+                          ? "bg-black text-white border-black"
+                          : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-300"
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <label className="flex items-center gap-3 p-3 bg-zinc-50 rounded-2xl border border-zinc-100 cursor-pointer hover:bg-zinc-100 transition-colors">
+                  <input 
+                    type="checkbox"
+                    checked={printConfig.autoPrintPos}
+                    onChange={e => setPrintConfig({...printConfig, autoPrintPos: e.target.checked})}
+                    className="w-5 h-5 rounded-lg accent-black"
+                  />
+                  <div>
+                    <p className="text-xs font-bold text-zinc-900">Imprimir automaticamente</p>
+                    <p className="text-[10px] text-zinc-500">Imprimir logo após concluir a venda.</p>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 p-3 bg-zinc-50 rounded-2xl border border-zinc-100 cursor-pointer hover:bg-zinc-100 transition-colors">
+                  <input 
+                    type="checkbox"
+                    checked={printConfig.showPreview}
+                    onChange={e => setPrintConfig({...printConfig, showPreview: e.target.checked})}
+                    className="w-5 h-5 rounded-lg accent-black"
+                  />
+                  <div>
+                    <p className="text-xs font-bold text-zinc-900">Mostrar pré-visualização</p>
+                    <p className="text-[10px] text-zinc-500">Exibir o documento antes de enviar para a impressora.</p>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 p-3 bg-zinc-50 rounded-2xl border border-zinc-100 cursor-pointer hover:bg-zinc-100 transition-colors">
+                  <input 
+                    type="checkbox"
+                    checked={printConfig.printSecondCopy}
+                    onChange={e => setPrintConfig({...printConfig, printSecondCopy: e.target.checked})}
+                    className="w-5 h-5 rounded-lg accent-black"
+                  />
+                  <div>
+                    <p className="text-xs font-bold text-zinc-900">Imprimir segunda cópia</p>
+                    <p className="text-[10px] text-zinc-500">Uma cópia para o cliente e outra para o estabelecimento.</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <button 
+              onClick={handleTestPrint}
+              className="flex-1 py-4 bg-zinc-100 text-zinc-900 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-zinc-200 transition-all flex items-center justify-center gap-2"
+            >
+              <Printer size={16} /> Testar Impressão
+            </button>
+            <button 
+              onClick={handleSaveTerminalSettings}
+              disabled={isSavingTerminalSettings}
+              className="flex-[2] py-4 bg-black text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-zinc-800 transition-all shadow-lg shadow-black/20 disabled:opacity-50"
+            >
+              {isSavingTerminalSettings ? 'A GUARDAR...' : 'GUARDAR CONFIGURAÇÃO'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Print Status Fallback Modal */}
+      <Modal 
+        isOpen={printStatus.isOpen} 
+        onClose={() => setPrintStatus({...printStatus, isOpen: false})} 
+        title="Estado da Impressão"
+      >
+        <div className="space-y-6">
+          <div className="p-6 bg-amber-50 border border-amber-100 rounded-3xl flex flex-col items-center text-center gap-4">
+            <div className="w-16 h-16 bg-white text-amber-600 rounded-full flex items-center justify-center shadow-lg shadow-amber-600/10 border border-amber-200">
+              <Printer size={32} />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-amber-900 leading-relaxed">
+                {printStatus.message}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <button 
+              onClick={() => {
+                window.print();
+                // setPrintStatus({...printStatus, isOpen: false});
+              }}
+              className="w-full py-4 bg-black text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all shadow-lg shadow-black/20 flex items-center justify-center gap-2"
+            >
+              <Printer size={18} /> Imprimir Novamente
+            </button>
+            <div className="flex gap-3">
+              <button 
+                onClick={async () => {
+                  // Reuse the logic from Invoice component if possible, 
+                  // or provide a simple download button link
+                  if (printStatus.sale) {
+                    const res = await fetch(`/api/owner/billing/download/${printStatus.sale.id}`);
+                    if (res.ok) {
+                      const blob = await res.blob();
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `FATURA_${printStatus.sale.invoice_number.replace('/', '_')}.pdf`;
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                    }
+                  }
+                }}
+                className="flex-1 py-4 bg-zinc-100 text-zinc-900 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-200 transition-all flex items-center justify-center gap-2"
+              >
+                <Download size={18} /> Baixar PDF
+              </button>
+              <button 
+                onClick={() => setPrintStatus({...printStatus, isOpen: false})}
+                className="flex-1 py-4 bg-zinc-50 text-zinc-400 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-100 transition-all"
+              >
+                Ignorar
+              </button>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
       {/* Mobile Cart FAB */}
       <div className="lg:hidden fixed bottom-6 right-6 z-40">
         <button
@@ -11557,9 +12031,15 @@ const SellerDashboard = ({ user }: { user: User }) => {
           <h2 className="text-2xl font-bold tracking-tight">Painel e Insights</h2>
           <p className="text-zinc-500">Resumo de desempenho das suas vendas.</p>
         </div>
-        <div className="bg-orange-100 text-orange-600 px-4 py-2 rounded-2xl text-sm font-bold flex items-center gap-2">
-          <Calendar size={18} />
-          {new Date().toLocaleDateString('pt-AO')}
+        <div className="bg-orange-100 text-orange-600 px-4 py-2 rounded-2xl text-xs font-bold flex flex-col items-end">
+          <div className="flex items-center gap-2">
+            <Calendar size={14} />
+            {new Date().toLocaleDateString('pt-AO')}
+          </div>
+          <div className="flex items-center gap-2 mt-0.5">
+            <Clock size={14} />
+            {new Date().toLocaleTimeString('pt-AO', { hour: '2-digit', minute: '2-digit' })}
+          </div>
         </div>
       </div>
 
@@ -12805,6 +13285,7 @@ export default function App() {
                 <Route path="/owner/documents" element={<OwnerFiscalDocuments user={user} />} />
                 <Route path="/owner/warehouses" element={<OwnerWarehouses user={user} />} />
                 <Route path="/owner/finance" element={<OwnerFinance user={user} />} />
+                <Route path="/owner/finance/billing" element={<OwnerFinance user={user} defaultTab="billing" />} />
                 <Route path="/owner/rh" element={<OwnerRH user={user} />} />
                 <Route path="/owner/reports" element={<OwnerReports user = {user} />} />
                 <Route path="/owner/currencies" element={<OwnerCurrencies user={user} />} />

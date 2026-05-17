@@ -44,6 +44,7 @@ export interface User {
   role_id?: number | null;
   cash_register_id?: number | null;
   cash_register_name?: string | null;
+  establishment_name?: string | null;
   custom_permissions?: string | null; // JSON string
   permissions?: string[];
   status?: 'active' | 'suspended';

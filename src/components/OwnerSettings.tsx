@@ -22,7 +22,8 @@ import {
   History,
   Shield,
   Lock,
-  UploadCloud
+  UploadCloud,
+  Printer
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Establishment } from '../types';
@@ -55,7 +56,7 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
 };
 
 export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser?: (u: User) => void }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'series' | 'taxes' | 'backups' | 'billing' | 'signatures'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'series' | 'taxes' | 'backups' | 'billing' | 'signatures' | 'printing'>('profile');
   const [formData, setFormData] = useState({
     name: user.name || '',
     email: user.email || '',
@@ -137,6 +138,13 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
   const [pendingMode, setPendingMode] = useState<'tradicional' | 'eletronica' | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info', message: string } | null>(null);
 
+  const [printConfig, setPrintConfig] = useState({
+    autoPrintPos: true,
+    autoPrintBackoffice: false,
+    defaultFormat: 'ticket' as 'ticket' | 'a4',
+    defaultPrinter: ''
+  });
+
   useEffect(() => {
     fetchData();
     if (activeTab === 'billing') {
@@ -210,6 +218,16 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
         ]);
         setCompanyKeys(await keysRes.json());
         setKeyLogs(await logsRes.json());
+      } else if (activeTab === 'printing') {
+        const res = await fetch(`/api/owner/settings/${user.id}`);
+        const data = await res.json();
+        if (data && data.print_config) {
+          const config = typeof data.print_config === 'string' ? JSON.parse(data.print_config) : data.print_config;
+          setPrintConfig(prev => ({
+            ...prev,
+            ...config
+          }));
+        }
       }
     } catch (e) {
       console.error(e);
@@ -585,6 +603,30 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
     window.open(`/api/owner/backups/download/${id}`, '_blank');
   };
 
+  const handleSavePrintSettings = async () => {
+    setIsSaving(true);
+    try {
+      const res = await fetch('/api/owner/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          owner_id: user.id,
+          print_config: printConfig
+        })
+      });
+      if (res.ok) {
+        setNotification({ type: 'success', message: "Configurações de impressão guardadas!" });
+      } else {
+        setNotification({ type: 'error', message: "Erro ao guardar configurações de impressão" });
+      }
+    } catch (e) {
+      console.error(e);
+      setNotification({ type: 'error', message: "Erro de conexão" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleGenerateInternalKey = async () => {
     if (!window.confirm("Tem certeza que deseja gerar um novo par de chaves? A chave atual será desativada e a nova será usada para todos os novos documentos.")) return;
     
@@ -867,6 +909,104 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
     );
   };
 
+  const renderPrintingTab = () => {
+    return (
+      <div className="space-y-6 max-w-2xl">
+        <div>
+          <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">Configurações de Impressão</h2>
+          <p className="text-sm text-zinc-500">Defina o comportamento das impressoras após a conclusão de vendas.</p>
+        </div>
+
+        <Card className="p-6 space-y-8">
+          <div className="space-y-4">
+            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Impressão Automática</h3>
+            <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+              <div>
+                <p className="font-bold text-zinc-900">Ativar no PDV / Caixa</p>
+                <p className="text-[10px] text-zinc-500">Imprimir automaticamente na frente de caixa por padrão.</p>
+              </div>
+              <button 
+                onClick={() => setPrintConfig({...printConfig, autoPrintPos: !printConfig.autoPrintPos})}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative",
+                  printConfig.autoPrintPos ? "bg-emerald-500" : "bg-zinc-200"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                  printConfig.autoPrintPos ? "right-1" : "left-1"
+                )} />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+              <div>
+                <p className="font-bold text-zinc-900">Ativar na Administração</p>
+                <p className="text-[10px] text-zinc-500">Imprimir automaticamente no backoffice por padrão.</p>
+              </div>
+              <button 
+                onClick={() => setPrintConfig({...printConfig, autoPrintBackoffice: !printConfig.autoPrintBackoffice})}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative",
+                  printConfig.autoPrintBackoffice ? "bg-emerald-500" : "bg-zinc-200"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                  printConfig.autoPrintBackoffice ? "right-1" : "left-1"
+                )} />
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Formato e Impressora</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-2">Tipo Padrão</label>
+                <select 
+                  value={printConfig.defaultFormat}
+                  onChange={(e) => setPrintConfig({...printConfig, defaultFormat: e.target.value as 'ticket' | 'a4'})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none font-bold text-sm"
+                >
+                  <option value="ticket">Ticket Térmico (58mm/80mm)</option>
+                  <option value="a4">Documento A4</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-2">Impressora Padrão</label>
+                <input 
+                  type="text"
+                  placeholder="Nome da impressora (opcional)"
+                  value={printConfig.defaultPrinter}
+                  onChange={(e) => setPrintConfig({...printConfig, defaultPrinter: e.target.value})}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none text-sm font-medium"
+                />
+              </div>
+            </div>
+          </div>
+
+          <button 
+            onClick={handleSavePrintSettings}
+            disabled={isSaving}
+            className="w-full py-4 bg-black text-white rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-800 transition-all disabled:opacity-50"
+          >
+            {isSaving ? 'A GUARDAR...' : 'GUARDAR CONFIGURAÇÕES DE IMPRESSÃO'}
+          </button>
+        </Card>
+
+        <div className="p-6 bg-blue-50 border border-blue-100 rounded-2xl flex gap-3">
+          <Info className="text-blue-500 shrink-0" size={20} />
+          <div>
+            <h4 className="font-black text-blue-900 text-xs uppercase tracking-tight mb-1">Dica de Configuração</h4>
+            <p className="text-[11px] text-blue-800 leading-relaxed">
+              O sistema utiliza a API de impressão do navegador. Para uma melhor experiência de "impressão silenciosa" no PDV, certifique-se de configurar a impressora padrão no seu sistema operativo e desativar os cabeçalhos/rodapés nas definições de impressão do navegador.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  };
   if (isLoading) return <div className="p-12 text-center text-zinc-500">Carregando configurações...</div>;
 
   return (
@@ -892,78 +1032,89 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
           </div>
         )}
       </AnimatePresence>
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black tracking-tight">Configurações</h2>
-          <p className="text-zinc-500">Gerencie sua conta, séries de faturas, impostos e backups.</p>
-        </div>
-        <div className="flex items-center gap-2 bg-zinc-100 p-1 rounded-2xl">
-          <button 
-            onClick={() => setActiveTab('profile')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-              activeTab === 'profile' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
-            )}
-          >
-            Perfil
-          </button>
-          <button 
-            onClick={() => setActiveTab('series')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-              activeTab === 'series' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
-            )}
-          >
-            Séries
-          </button>
-          <button 
-            onClick={() => setActiveTab('taxes')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-              activeTab === 'taxes' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
-            )}
-          >
-            Impostos
-          </button>
-          <button 
-            onClick={() => setActiveTab('backups')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-              activeTab === 'backups' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
-            )}
-          >
-            Backups
-          </button>
-          <button 
-            onClick={() => setActiveTab('billing')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-              activeTab === 'billing' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
-            )}
-          >
-            Modo FTRC
-          </button>
-          <button 
-            onClick={() => setActiveTab('signatures')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-              activeTab === 'signatures' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
-            )}
-          >
-            Assinaturas
-          </button>
-          <button 
-            onClick={() => setIsAboutModalOpen(true)}
-            className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest text-zinc-400 hover:text-zinc-600 transition-all font-bold"
-          >
-            Sobre
-          </button>
-          <button 
-            onClick={() => setIsLogoutModalOpen(true)}
-            className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest text-rose-500 hover:bg-rose-50 transition-all ml-4"
-          >
-            Sair
-          </button>
+      <div className="sticky top-0 z-20 bg-zinc-50/80 backdrop-blur-md pt-2 pb-6 -mx-4 px-4 md:-mx-6 md:px-6 mb-2">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-black tracking-tight">Configurações</h2>
+            <p className="text-zinc-500">Gerencie sua conta, séries de faturas, impostos e backups.</p>
+          </div>
+          <div className="flex items-center gap-2 bg-zinc-100 p-1 rounded-2xl overflow-x-auto no-scrollbar">
+            <button 
+              onClick={() => setActiveTab('profile')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shrink-0",
+                activeTab === 'profile' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+              )}
+            >
+              Perfil
+            </button>
+            <button 
+              onClick={() => setActiveTab('series')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shrink-0",
+                activeTab === 'series' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+              )}
+            >
+              Séries
+            </button>
+            <button 
+              onClick={() => setActiveTab('taxes')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shrink-0",
+                activeTab === 'taxes' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+              )}
+            >
+              Impostos
+            </button>
+            <button 
+              onClick={() => setActiveTab('backups')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shrink-0",
+                activeTab === 'backups' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+              )}
+            >
+              Backups
+            </button>
+            <button 
+              onClick={() => setActiveTab('billing')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shrink-0",
+                activeTab === 'billing' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+              )}
+            >
+              Modo FTRC
+            </button>
+            <button 
+              onClick={() => setActiveTab('signatures')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shrink-0",
+                activeTab === 'signatures' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+              )}
+            >
+              Assinaturas
+            </button>
+            <button 
+              onClick={() => setActiveTab('printing')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shrink-0",
+                activeTab === 'printing' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+              )}
+            >
+              Impressão
+            </button>
+            <button 
+              onClick={() => setIsAboutModalOpen(true)}
+              className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest text-zinc-400 hover:text-zinc-600 transition-all shrink-0 font-bold"
+            >
+              Sobre
+            </button>
+            <button 
+              onClick={() => setIsLogoutModalOpen(true)}
+              className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest text-rose-500 hover:bg-rose-50 transition-all ml-4 shrink-0"
+            >
+              Sair
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1054,6 +1205,9 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
           </div>
         </div>
       </Modal>
+
+      {activeTab === 'signatures' && renderSignaturesTab()}
+      {activeTab === 'printing' && renderPrintingTab()}
 
       {activeTab === 'profile' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

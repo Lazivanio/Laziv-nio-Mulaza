@@ -886,6 +886,9 @@ function initializeDatabase() {
         backup_frequency TEXT DEFAULT 'daily',
         financial_reminder_enabled INTEGER DEFAULT 0,
         eac_code TEXT DEFAULT '47110',
+        saft_config TEXT,
+        billing_config TEXT,
+        print_config TEXT,
         FOREIGN KEY(owner_id) REFERENCES users(id)
       );
 
@@ -1097,9 +1100,34 @@ function initializeDatabase() {
           db.exec("ALTER TABLE owner_settings ADD COLUMN eac_code TEXT DEFAULT '47110';");
           console.log("[DB] Added eac_code column to owner_settings");
         }
+        if (!ownerSettingsCols.some((c: any) => c.name === 'saft_config')) {
+          db.exec("ALTER TABLE owner_settings ADD COLUMN saft_config TEXT;");
+          console.log("[DB] Added saft_config column to owner_settings");
+        }
+        if (!ownerSettingsCols.some((c: any) => c.name === 'billing_config')) {
+          db.exec("ALTER TABLE owner_settings ADD COLUMN billing_config TEXT;");
+          console.log("[DB] Added billing_config column to owner_settings");
+        }
+        if (!ownerSettingsCols.some((c: any) => c.name === 'print_config')) {
+          db.exec("ALTER TABLE owner_settings ADD COLUMN print_config TEXT;");
+          console.log("[DB] Added print_config column to owner_settings");
+        }
       }
     } catch (e) {
       console.error("[DB] Error migrating owner_settings:", e);
+    }
+
+    // Cash Registers Migration
+    try {
+      const cashRegistersCols = db.prepare("PRAGMA table_info(cash_registers)").all() as any[];
+      if (cashRegistersCols.length > 0) {
+        if (!cashRegistersCols.some((c: any) => c.name === 'print_config')) {
+          db.exec("ALTER TABLE cash_registers ADD COLUMN print_config TEXT;");
+          console.log("[DB] Added print_config column to cash_registers");
+        }
+      }
+    } catch (e) {
+      console.error("[DB] Error migrating cash_registers:", e);
     }
 
     // Service Sheets Migration
@@ -1265,6 +1293,7 @@ function initializeDatabase() {
         code TEXT UNIQUE,
         default_initial_balance REAL DEFAULT 0,
         max_limit REAL DEFAULT 0,
+        print_config TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(establishment_id) REFERENCES establishments(id)
       );
@@ -2526,7 +2555,7 @@ async function startServer() {
         // Get formal invoices (EXCLUDING RC - Receipts as they represent payments of FTs already counted)
         const ci = db.prepare(`
           SELECT id, items, total_amount, tax_amount, COALESCE(base_amount, total_amount) as base_total, 
-                 exchange_rate, invoice_number, invoice_date, doc_type, status, establishment_id 
+                 exchange_rate, invoice_number, invoice_date, doc_type, status, establishment_id, 'fiscal' as source 
           FROM credit_invoices 
           WHERE establishment_id = ? 
           AND date(invoice_date) BETWEEN ? AND ?
@@ -2537,7 +2566,7 @@ async function startServer() {
         // Get POS transactions
         const tr = db.prepare(`
           SELECT id, items, total_amount, tax_amount, COALESCE(base_amount, total_amount) as base_total,
-                 exchange_rate, invoice_number, timestamp as invoice_date, 'FR' as doc_type, 'liquidado' as status, establishment_id 
+                 exchange_rate, invoice_number, timestamp as invoice_date, 'FR' as doc_type, 'liquidado' as status, establishment_id, 'pos' as source 
           FROM transactions 
           WHERE establishment_id = ? 
           AND date(timestamp) BETWEEN ? AND ?
@@ -2563,7 +2592,7 @@ async function startServer() {
         
         const ci = db.prepare(`
           SELECT ci.id, ci.items, ci.total_amount, ci.tax_amount, COALESCE(ci.base_amount, ci.total_amount) as base_total,
-                 ci.exchange_rate, ci.invoice_number, ci.invoice_date, ci.doc_type, ci.status, ci.establishment_id 
+                 ci.exchange_rate, ci.invoice_number, ci.invoice_date, ci.doc_type, ci.status, ci.establishment_id, 'fiscal' as source 
           FROM credit_invoices ci
           JOIN establishments e ON ci.establishment_id = e.id
           WHERE e.owner_id = ?
@@ -2574,7 +2603,7 @@ async function startServer() {
 
         const tr = db.prepare(`
           SELECT id, items, total_amount, tax_amount, COALESCE(base_amount, total_amount) as base_total,
-                 exchange_rate, invoice_number, timestamp as invoice_date, 'FR' as doc_type, 'liquidado' as status, establishment_id 
+                 exchange_rate, invoice_number, timestamp as invoice_date, 'FR' as doc_type, 'liquidado' as status, establishment_id, 'pos' as source 
           FROM transactions 
           WHERE owner_id = ? 
           AND date(timestamp) BETWEEN ? AND ?
@@ -2676,7 +2705,23 @@ async function startServer() {
 
         const parseAmount = (val: any) => {
           if (typeof val === 'number') return isNaN(val) ? 0 : val;
-          const clean = String(val || '0').replace(/[^\d.,-]/g, '');
+          if (!val) return 0;
+          let s = String(val).trim();
+          
+          // Better amount parsing for multi-currency/thousands separators
+          // If there's a comma followed by 2 digits at the end, it's likely the decimal separator
+          const commaAtEnd = /,\d{2}$/.test(s);
+          const dotAtEnd = /\.\d{2}$/.test(s);
+          
+          if (commaAtEnd) {
+            // "1.234,56" -> "1234.56"
+            return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+          } else if (dotAtEnd && s.includes(',')) {
+            // "1,234.56" -> "1234.56"
+            return parseFloat(s.replace(/,/g, '')) || 0;
+          }
+          
+          const clean = s.replace(/[^\d.,-]/g, '');
           if (clean.includes('.') && clean.includes(',')) {
             return parseFloat(clean.replace(/\./g, '').replace(',', '.')) || 0;
           } else if (clean.includes(',')) {
@@ -2706,7 +2751,15 @@ async function startServer() {
           }
 
           const taxPercent = Number(item.tax_percentage || item.tax || 0);
-          const itemNetSale = (price * qty);
+          
+          // CRITICAL MULTI-CURRENCY LOGIC:
+          // For POS (source: 'pos'), prices in JSON are ALWAYS stored in Kwanza (Base Currency).
+          // For Fiscal Invoices (source: 'fiscal'), prices are stored in document currency.
+          let itemNetSale = (price * qty);
+          if (inv.source === 'fiscal') {
+            itemNetSale = itemNetSale * exchangeRate;
+          }
+          
           const itemTax = itemNetSale * (taxPercent / 100);
           const itemGrossSale = itemNetSale + itemTax;
           
@@ -2732,7 +2785,7 @@ async function startServer() {
               purchaseCost = parseAmount(item.unit_cost || item.cost || 0);
             }
 
-            const totalPurchaseCost = purchaseCost * qty;
+            const totalPurchaseCost = (purchaseCost * qty);
             invoiceCost += totalPurchaseCost;
 
             // Profit = Net Sale - Purchase Cost
@@ -4579,6 +4632,22 @@ async function startServer() {
     db.prepare("DELETE FROM cash_registers WHERE id = ?").run(id);
     res.json({ success: true });
   });
+  
+  app.get("/api/owner/cash-registers/:id/print-config", (req, res) => {
+    const { id } = req.params;
+    const register = db.prepare("SELECT print_config FROM cash_registers WHERE id = ?").get(id) as any;
+    res.json({ print_config: register?.print_config ? JSON.parse(register.print_config) : null });
+  });
+
+  app.post("/api/owner/cash-registers/:id/print-config", (req, res) => {
+    const { id } = req.params;
+    const { print_config } = req.body;
+    db.prepare("UPDATE cash_registers SET print_config = ? WHERE id = ?").run(
+      JSON.stringify(print_config),
+      id
+    );
+    res.json({ success: true });
+  });
 
 
 
@@ -4892,6 +4961,63 @@ async function startServer() {
   });
 
   // --- Financial Routes ---
+  app.get("/api/owner/billing/:ownerId", (req, res) => {
+    try {
+      const { establishmentIds } = getContextData(req.params.ownerId);
+      if (establishmentIds.length === 0) return res.json([]);
+      const { establishmentId, startDate, endDate, type } = req.query;
+      
+      let creditWhere = [`establishment_id IN (${establishmentIds.map(() => '?').join(',')})`];
+      let posWhere = [`establishment_id IN (${establishmentIds.map(() => '?').join(',')})`];
+      let creditParams = [...establishmentIds];
+      let posParams = [...establishmentIds];
+
+      if (establishmentId) {
+        creditWhere = ['establishment_id = ?'];
+        posWhere = ['establishment_id = ?'];
+        creditParams = [establishmentId];
+        posParams = [establishmentId];
+      }
+
+      if (startDate) {
+        creditWhere.push("date(invoice_date) >= ?");
+        posWhere.push("date(timestamp) >= ?");
+        creditParams.push(startDate);
+        posParams.push(startDate);
+      }
+
+      if (endDate) {
+        creditWhere.push("date(invoice_date) <= ?");
+        posWhere.push("date(timestamp) <= ?");
+        creditParams.push(endDate);
+        posParams.push(endDate);
+      }
+
+      if (type) {
+        creditWhere.push("doc_type = ?");
+        creditParams.push(type);
+        // For POS, we assume doc_type is FR (Fatura Recibo) unless specified otherwise
+        if (type !== 'FR') {
+            // If filtering for something other than FR, POS won't have it (usually)
+            posWhere.push("1=0"); 
+        }
+      }
+
+      const creditSql = `SELECT 'credit' as source, id, invoice_number, invoice_date, client_name, doc_type, payment_method, total_amount FROM credit_invoices WHERE ${creditWhere.join(' AND ')}`;
+      const posSql = `SELECT 'pos' as source, id, invoice_number, timestamp as invoice_date, client_name, 'FR' as doc_type, payment_method, total_amount FROM transactions WHERE ${posWhere.join(' AND ')}`;
+      
+      const billing = db.prepare(`
+        SELECT * FROM (${creditSql} UNION ALL ${posSql}) 
+        ORDER BY invoice_date DESC
+      `).all(...creditParams, ...posParams);
+      
+      res.json(billing);
+    } catch (e: any) {
+      console.error("Error fetching billing:", e);
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   app.get("/api/owner/financial/transactions/:ownerId", (req, res) => {
     try {
       const { establishmentIds } = getContextData(req.params.ownerId);
@@ -5672,7 +5798,7 @@ function formatDateToIso(dateStr?: string) {
       // Fetch invoices from credit_invoices (FR, FT)
       let ciQuery = `SELECT * FROM credit_invoices WHERE establishment_id IN (${placeholders})`;
       let ciParams: any[] = [...establishmentIds];
-      ciQuery += " AND date(created_at) BETWEEN ? AND ?";
+      ciQuery += " AND date(invoice_date) BETWEEN ? AND ?";
       ciParams.push(start_date, end_date);
       if (doc_type) {
         ciQuery += " AND doc_type = ?";
@@ -8264,10 +8390,14 @@ function formatDateToIso(dateStr?: string) {
 
     // Top Products - Unified
     const productSales: Record<string, { id: any, name: string, quantity: number, revenue: number }> = {};
-    const processItems = (rows: any[], isSubtraction = false) => {
+    const processItems = (rows: any[]) => {
       rows.forEach((t: any) => {
         try {
           const items = JSON.parse(t.items);
+          const exchangeRate = Number(t.exchange_rate || 1);
+          const isSubtraction = t.doc_type === 'NC';
+          const isFiscal = t.source === 'fiscal';
+
           items.forEach((item: any) => {
             const id = item.id || item.ProductCode;
             if (!id) return;
@@ -8275,16 +8405,22 @@ function formatDateToIso(dateStr?: string) {
               productSales[id] = { id, name: item.name || item.ProductDescription, quantity: 0, revenue: 0 };
             }
             const factor = isSubtraction ? -1 : 1;
-            productSales[id].quantity += (Number(item.quantity) || 0) * factor;
-            productSales[id].revenue += (Number(item.quantity) || 0) * (Number(item.price) || 0) * factor;
+            const price = Number(item.price) || 0;
+            const qty = Number(item.quantity) || 0;
+
+            // For fiscal documents, prices are in doc currency. For POS (source: pos), they are in Kwanza.
+            const itemRevenue = isFiscal ? (price * qty * exchangeRate) : (price * qty);
+
+            productSales[id].quantity += qty * factor;
+            productSales[id].revenue += itemRevenue * factor;
           });
         } catch (e) {}
       });
     };
 
-    processItems(db.prepare(`SELECT items FROM transactions WHERE establishment_id IN (${placeholders})`).all(...establishmentIds));
-    processItems(db.prepare(`SELECT items FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND')`).all(...establishmentIds));
-    processItems(db.prepare(`SELECT items FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'`).all(...establishmentIds), true);
+    processItems(db.prepare(`SELECT items, exchange_rate, 'pos' as source FROM transactions WHERE establishment_id IN (${placeholders})`).all(...establishmentIds));
+    processItems(db.prepare(`SELECT items, exchange_rate, doc_type, 'fiscal' as source FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND')`).all(...establishmentIds));
+    processItems(db.prepare(`SELECT items, exchange_rate, doc_type, 'fiscal' as source FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'`).all(...establishmentIds));
 
     const topProducts = Object.values(productSales)
       .sort((a, b) => b.revenue - a.revenue)
@@ -9782,25 +9918,63 @@ function formatDateToIso(dateStr?: string) {
     res.json({ success: true });
   });
 
-  // --- Backups ---
+  // --- Owner Settings & Backups ---
+  app.get("/api/owner/settings/:ownerId", (req, res) => {
+    const ownerId = req.params.ownerId;
+    const settings = db.prepare("SELECT * FROM owner_settings WHERE owner_id = ?").get(ownerId) || { 
+      backup_enabled: 0, 
+      backup_frequency: 'daily', 
+      financial_reminder_enabled: 0, 
+      saft_config: null, 
+      billing_config: null,
+      print_config: null
+    };
+    res.json(settings);
+  });
+
+  app.post("/api/owner/settings", (req, res) => {
+    const { owner_id, backup_enabled, backup_frequency, financial_reminder_enabled, saft_config, billing_config, print_config, eac_code } = req.body;
+    
+    const settings = db.prepare("SELECT * FROM owner_settings WHERE owner_id = ?").get(owner_id) as any;
+    
+    db.prepare(`
+      INSERT INTO owner_settings (
+        owner_id, 
+        backup_enabled, 
+        backup_frequency, 
+        financial_reminder_enabled, 
+        saft_config, 
+        billing_config,
+        print_config,
+        eac_code
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(owner_id) DO UPDATE SET
+        backup_enabled = COALESCE(excluded.backup_enabled, backup_enabled),
+        backup_frequency = COALESCE(excluded.backup_frequency, backup_frequency),
+        financial_reminder_enabled = COALESCE(excluded.financial_reminder_enabled, financial_reminder_enabled),
+        saft_config = COALESCE(excluded.saft_config, saft_config),
+        billing_config = COALESCE(excluded.billing_config, billing_config),
+        print_config = COALESCE(excluded.print_config, print_config),
+        eac_code = COALESCE(excluded.eac_code, eac_code)
+    `).run(
+      owner_id, 
+      backup_enabled !== undefined ? (backup_enabled ? 1 : 0) : (settings?.backup_enabled || 0), 
+      backup_frequency || settings?.backup_frequency || 'daily', 
+      financial_reminder_enabled !== undefined ? (financial_reminder_enabled ? 1 : 0) : (settings?.financial_reminder_enabled || 0),
+      saft_config !== undefined ? (typeof saft_config === 'string' ? saft_config : JSON.stringify(saft_config)) : (settings?.saft_config || null),
+      billing_config !== undefined ? (typeof billing_config === 'string' ? billing_config : JSON.stringify(billing_config)) : (settings?.billing_config || null),
+      print_config !== undefined ? (typeof print_config === 'string' ? print_config : JSON.stringify(print_config)) : (settings?.print_config || null),
+      eac_code || settings?.eac_code || '47110'
+    );
+    res.json({ success: true });
+  });
+
   app.get("/api/owner/backups/:ownerId", (req, res) => {
     const ownerId = req.params.ownerId;
     const backups = db.prepare("SELECT * FROM backups WHERE owner_id = ? ORDER BY created_at DESC").all(ownerId);
     const settings = db.prepare("SELECT * FROM owner_settings WHERE owner_id = ?").get(ownerId) || { backup_enabled: 0, backup_frequency: 'daily', financial_reminder_enabled: 0 };
     res.json({ backups, settings });
-  });
-
-  app.post("/api/owner/backups/settings", (req, res) => {
-    const { owner_id, backup_enabled, backup_frequency, financial_reminder_enabled } = req.body;
-    db.prepare(`
-      INSERT INTO owner_settings (owner_id, backup_enabled, backup_frequency, financial_reminder_enabled)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(owner_id) DO UPDATE SET
-        backup_enabled = excluded.backup_enabled,
-        backup_frequency = excluded.backup_frequency,
-        financial_reminder_enabled = excluded.financial_reminder_enabled
-    `).run(owner_id, backup_enabled ? 1 : 0, backup_frequency, financial_reminder_enabled ? 1 : 0);
-    res.json({ success: true });
   });
 
   app.post("/api/owner/backups/generate", (req, res) => {

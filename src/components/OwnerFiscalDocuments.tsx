@@ -56,7 +56,49 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
   useEffect(() => {
     fetchEstablishments();
     fetchHistory();
+    fetchSettings();
   }, []);
+
+  const fetchSettings = async () => {
+    try {
+      const response = await fetch(`/api/owner/settings/${user.id}`);
+      const data = await response.json();
+      if (data && data.saft_config) {
+        const config = typeof data.saft_config === 'string' ? JSON.parse(data.saft_config) : data.saft_config;
+        setSaftForm(prev => ({
+          ...prev,
+          ...config
+        }));
+      }
+    } catch (error) {
+      console.error('Error fetching settings:', error);
+    }
+  };
+
+  const saveSaftSettings = async (newConfig: any) => {
+    try {
+      await fetch('/api/owner/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          owner_id: user.id,
+          saft_config: newConfig
+        })
+      });
+    } catch (error) {
+      console.error('Error saving settings:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (series.length === 0) return; // Wait for initial load if needed, but actually we want to save when user changes it
+  }, [saftForm]);
+
+  const updateSaftForm = (updates: Partial<typeof saftForm>) => {
+    const newForm = { ...saftForm, ...updates };
+    setSaftForm(newForm);
+    saveSaftSettings(newForm);
+  };
 
   useEffect(() => {
     if (selectedEstablishmentForSeries) {
@@ -266,7 +308,7 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
                   <input 
                     type="date"
                     value={saftForm.startDate}
-                    onChange={(e) => setSaftForm({ ...saftForm, startDate: e.target.value })}
+                    onChange={(e) => updateSaftForm({ startDate: e.target.value })}
                     className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all"
                   />
                 </div>
@@ -278,7 +320,7 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
                   <input 
                     type="date"
                     value={saftForm.endDate}
-                    onChange={(e) => setSaftForm({ ...saftForm, endDate: e.target.value })}
+                    onChange={(e) => updateSaftForm({ endDate: e.target.value })}
                     className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all"
                   />
                 </div>
@@ -291,7 +333,7 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
                 <EstablishmentIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
                 <select 
                   value={saftForm.establishmentId}
-                  onChange={(e) => setSaftForm({ ...saftForm, establishmentId: e.target.value })}
+                  onChange={(e) => updateSaftForm({ establishmentId: e.target.value })}
                   className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all appearance-none"
                 >
                   <option value="">Todos os Estabelecimentos</option>
@@ -308,7 +350,7 @@ const OwnerFiscalDocuments = ({ user }: { user: User }) => {
                 <FileText className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
                 <select 
                   value={saftForm.docType}
-                  onChange={(e) => setSaftForm({ ...saftForm, docType: e.target.value })}
+                  onChange={(e) => updateSaftForm({ docType: e.target.value })}
                   className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all appearance-none"
                 >
                   <option value="">Todos os Documentos</option>

@@ -132,3 +132,11 @@
 ::-webkit-scrollbar-thumb {
   @apply bg-zinc-300 rounded-full hover:bg-zinc-400 transition-colors;
 }
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
