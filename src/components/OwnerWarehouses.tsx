@@ -1,6 +1,6 @@
 import React, { useState, useEffect, FormEvent } from 'react';
 import { 
-  Warehouse, 
+  Warehouse as WarehouseIcon, 
   Plus, 
   Trash2, 
   Edit2, 
@@ -8,7 +8,10 @@ import {
   CheckCircle2, 
   XCircle,
   Package,
-  ArrowRight
+  ArrowRight,
+  ChevronDown,
+  ChevronUp,
+  Loader2
 } from 'lucide-react';
 import { User, Establishment } from '../types';
 
@@ -36,6 +39,137 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
         </div>
       </div>
     </div>
+  );
+};
+
+const WarehouseCard: React.FC<{ 
+  w: any, 
+  onEdit: (w: any) => void, 
+  onDelete: (id: number) => void | Promise<void> 
+}> = ({ 
+  w, 
+  onEdit, 
+  onDelete 
+}) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [products, setProducts] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const toggleExpanded = async () => {
+    if (isExpanded) {
+      setIsExpanded(false);
+      return;
+    }
+
+    setIsExpanded(true);
+    setIsLoading(true);
+
+    try {
+      const res = await fetch(`/api/owner/warehouses/${w.id}/products`);
+      if (res.ok) {
+        const data = await res.json();
+        setProducts(data);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <Card className={cn("p-6 space-y-4 group", w.status === 'inactive' && "opacity-60")}>
+      <div className="flex justify-between items-start">
+        <div className="p-3 bg-zinc-100 rounded-xl group-hover:bg-black group-hover:text-white transition-all duration-300">
+          <WarehouseIcon size={24} />
+        </div>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => onEdit(w)}
+            className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
+          >
+            <Edit2 size={18} />
+          </button>
+          <button 
+            onClick={() => onDelete(w.id)}
+            className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+          >
+            <Trash2 size={18} />
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <div className="flex items-center gap-2 mb-1">
+          <span className={cn(
+            "text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider",
+            w.type === 'principal' ? "bg-black text-white" : "bg-zinc-100 text-zinc-600"
+          )}>
+            {w.type}
+          </span>
+          <span className={cn(
+            "text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider",
+            w.status === 'active' ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
+          )}>
+            {w.status === 'active' ? 'Ativo' : 'Inativo'}
+          </span>
+        </div>
+        <h4 className="text-lg font-black text-zinc-900">{w.name}</h4>
+        <p className="text-xs text-zinc-500 flex items-center gap-1 mt-1">
+          <EstablishmentIcon size={12} /> {w.establishment_name}
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <button 
+          onClick={toggleExpanded}
+          className="w-full pt-4 border-t border-zinc-100 flex items-center justify-between text-zinc-400 hover:text-black transition-colors group/link"
+        >
+          <div className="flex items-center gap-2">
+            <Package size={14} />
+            <span className="text-xs font-bold">Produtos vinculados</span>
+          </div>
+          {isExpanded ? (
+            <ChevronUp size={14} />
+          ) : (
+            <ChevronDown size={14} className="group-hover/link:translate-y-0.5 transition-transform" />
+          )}
+        </button>
+
+        {isExpanded && (
+          <div className="space-y-2 animate-in slide-in-from-top-2 duration-200">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 size={16} className="animate-spin text-zinc-400" />
+              </div>
+            ) : products.length > 0 ? (
+              <div className="max-h-48 overflow-y-auto pr-2 space-y-1 custom-scrollbar">
+                {products.map(p => (
+                  <div key={p.id} className="flex items-center justify-between p-2 bg-zinc-50 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-colors">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-black text-zinc-900 truncate max-w-[120px]">{p.name}</span>
+                      <span className="text-[8px] text-zinc-400 font-bold uppercase tracking-widest">{p.category}</span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] font-black text-emerald-600">
+                        {p.stock} un.
+                      </p>
+                      <p className="text-[8px] text-zinc-400">
+                        Min: {p.min_stock}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="bg-zinc-50 rounded-xl p-4 text-center border border-dashed border-zinc-200">
+                <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Nenhum produto vinculado</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 };
 
@@ -142,61 +276,17 @@ export const OwnerWarehouses = ({ user }: { user: User }) => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {warehouses.map(w => (
-          <Card key={w.id} className={cn("p-6 space-y-4 group", w.status === 'inactive' && "opacity-60")}>
-            <div className="flex justify-between items-start">
-              <div className="p-3 bg-zinc-100 rounded-xl group-hover:bg-black group-hover:text-white transition-all duration-300">
-                <Warehouse size={24} />
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => handleEdit(w)}
-                  className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-lg transition-all"
-                >
-                  <Edit2 size={18} />
-                </button>
-                <button 
-                  onClick={() => handleDelete(w.id)}
-                  className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
-                >
-                  <Trash2 size={18} />
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span className={cn(
-                  "text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider",
-                  w.type === 'principal' ? "bg-black text-white" : "bg-zinc-100 text-zinc-600"
-                )}>
-                  {w.type}
-                </span>
-                <span className={cn(
-                  "text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider",
-                  w.status === 'active' ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
-                )}>
-                  {w.status === 'active' ? 'Ativo' : 'Inativo'}
-                </span>
-              </div>
-              <h4 className="text-lg font-black text-zinc-900">{w.name}</h4>
-              <p className="text-xs text-zinc-500 flex items-center gap-1 mt-1">
-                <EstablishmentIcon size={12} /> {w.establishment_name}
-              </p>
-            </div>
-
-            <div className="pt-4 border-t border-zinc-100 flex items-center justify-between text-zinc-400">
-              <div className="flex items-center gap-2">
-                <Package size={14} />
-                <span className="text-xs font-bold">Produtos vinculados</span>
-              </div>
-              <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
-            </div>
-          </Card>
+          <WarehouseCard 
+            key={w.id} 
+            w={w} 
+            onEdit={handleEdit} 
+            onDelete={handleDelete} 
+          />
         ))}
 
         {warehouses.length === 0 && (
           <div className="col-span-full py-16 text-center bg-zinc-50 rounded-3xl border-2 border-dashed border-zinc-200">
-            <Warehouse size={48} className="mx-auto mb-4 text-zinc-300" />
+            <WarehouseIcon size={48} className="mx-auto mb-4 text-zinc-300" />
             <h3 className="text-lg font-bold text-zinc-900">Nenhum armazém extra</h3>
             <p className="text-zinc-500 max-w-xs mx-auto mt-2">
               Por padrão, cada estabelecimento já possui um armazém principal. Crie novos armazéns apenas se precisar de separação avançada.

@@ -10030,6 +10030,17 @@ function formatDateToIso(dateStr?: string) {
     res.json({ success: true });
   });
 
+  app.get("/api/owner/warehouses/:id/products", (req, res) => {
+    const { id } = req.params;
+    const products = db.prepare(`
+      SELECT p.*, w.name as warehouse_name 
+      FROM products p
+      LEFT JOIN warehouses w ON p.warehouse_id = w.id
+      WHERE p.warehouse_id = ?
+    `).all(id);
+    res.json(products);
+  });
+
   app.all("/api/*", (req, res) => {
     res.status(404).json({ error: `Rota API não encontrada: ${req.method} ${req.originalUrl}` });
   });
