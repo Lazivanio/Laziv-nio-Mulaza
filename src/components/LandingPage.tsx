@@ -170,7 +170,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [regLoading, setRegLoading] = useState(false);
 
   // Billing toggle state
-  const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'annually'>('monthly');
+  const [billingPeriod, setBillingPeriod] = useState<'trimestral' | 'semestral' | 'annually'>('annually');
 
   // FAQ state
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
@@ -294,6 +294,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
         return {
           name: plan.name,
           badge: badge,
+          price: Number(plan.price),
           priceAnnually: priceAnnuallyStr,
           priceMonthly: priceMonthlyStr,
           billedAnnuallyTotal: billedAnnuallyTotalStr,
@@ -316,48 +317,61 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
            (simCart.pastel * productMeta.pastel.price);
   };
 
-  const getPaidPrice = () => {
-    // Look up or default base monthly prices from Admin database
+  const getPlanMonthlyPrice = (planName: 'Básico' | 'Profissional' | 'Empresarial') => {
     let basePrice = 7900;
     let profPrice = 15000;
     let empPrice = 19500;
 
     if (dbPlans && dbPlans.length > 0) {
-      const basicPlan = dbPlans.find(p => p.name?.toLowerCase().includes('básico') || p.name?.toLowerCase() === 'base' || p.name?.toLowerCase() === 'básico');
-      const proPlan = dbPlans.find(p => p.name?.toLowerCase().includes('profissional') || p.name?.toLowerCase().includes('flex') || p.name?.toLowerCase().includes('profissional'));
-      const entPlan = dbPlans.find(p => p.name?.toLowerCase().includes('empresarial') || p.name?.toLowerCase().includes('pro'));
+      const cleanPlanName = (name: string) => {
+        return name
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .trim();
+      };
 
-      if (basicPlan) basePrice = Number(basicPlan.price);
-      if (proPlan) profPrice = Number(proPlan.price);
-      if (entPlan) empPrice = Number(entPlan.price);
+      const basicPlan = dbPlans.find(p => {
+        const cn = cleanPlanName(p.name || '');
+        return cn === 'basico' || cn === 'base' || cn.includes('basico') || cn.includes('base');
+      });
+      const proPlan = dbPlans.find(p => {
+        const cn = cleanPlanName(p.name || '');
+        return cn === 'profissional' || cn === 'flex' || cn.includes('profissional') || cn.includes('flex');
+      });
+      const entPlan = dbPlans.find(p => {
+        const cn = cleanPlanName(p.name || '');
+        return cn === 'empresarial' || cn === 'pro' || (cn.includes('pro') && !cn.includes('profissional')) || cn.includes('empresarial');
+      });
+
+      if (basicPlan && basicPlan.price !== undefined && basicPlan.price !== null) basePrice = Number(basicPlan.price);
+      if (proPlan && proPlan.price !== undefined && proPlan.price !== null) profPrice = Number(proPlan.price);
+      if (entPlan && entPlan.price !== undefined && entPlan.price !== null) empPrice = Number(entPlan.price);
     }
 
-    let selectedMonthlyPrice = profPrice;
-    if (paidPlan === 'Básico') {
-      selectedMonthlyPrice = basePrice;
-    } else if (paidPlan === 'Empresarial') {
-      selectedMonthlyPrice = empPrice;
-    }
+    if (planName === 'Básico') return basePrice;
+    if (planName === 'Empresarial') return empPrice;
+    return profPrice;
+  };
+
+  const getPaidPrice = () => {
+    const selectedMonthlyPrice = getPlanMonthlyPrice(paidPlan);
 
     // Calculate total duration (3 months quarterly, 6 months semi-annually, 12 months annually)
     let months = 3;
-    let discountPercent = 5; // 5% flat discount for quarterly
     if (paidPeriod === 'semestral') {
       months = 6;
-      discountPercent = 10; // 10% flat discount for semi-annually
     } else if (paidPeriod === 'anual') {
       months = 12;
-      discountPercent = 20; // 20% flat discount for annually
     }
 
-    const originalTotal = selectedMonthlyPrice * months;
-    const discountedTotal = originalTotal * (1 - discountPercent / 100);
+    const total = selectedMonthlyPrice * months;
 
     return {
-      price: discountedTotal,
-      label: discountedTotal.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' Kz',
-      original: originalTotal.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' Kz',
-      discount: `${discountPercent}%`
+      price: total,
+      label: total.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' Kz',
+      original: total.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' Kz',
+      discount: '0%'
     };
   };
 
@@ -577,7 +591,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
             >
               <span className="text-3xl font-black tracking-tight text-slate-900">
-                fatu<span className="text-orange-500">.R</span>
+                Fatu<span className="text-orange-500">.R</span>
               </span>
               <span className="ml-1 px-2 py-0.5 bg-slate-100 text-slate-500 text-[9px] font-black tracking-widest rounded-md uppercase border border-slate-200">
                 AO
@@ -1592,6 +1606,26 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             {/* Subscriptions selector toggle */}
             <div className="inline-flex items-center gap-1 p-1 bg-slate-200/60 backdrop-blur-md rounded-full border border-slate-300 w-fit">
               <button 
+                onClick={() => setBillingPeriod('trimestral')}
+                className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
+                  billingPeriod === 'trimestral' 
+                    ? 'bg-white text-slate-900 shadow-sm' 
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Trimestral
+              </button>
+              <button 
+                onClick={() => setBillingPeriod('semestral')}
+                className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
+                  billingPeriod === 'semestral' 
+                    ? 'bg-white text-slate-900 shadow-sm' 
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Semestral
+              </button>
+              <button 
                 onClick={() => setBillingPeriod('annually')}
                 className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
                   billingPeriod === 'annually' 
@@ -1599,17 +1633,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Anual <span className="text-[10px] text-emerald-600 font-extrabold ml-1">(Poupa 20%)</span>
-              </button>
-              <button 
-                onClick={() => setBillingPeriod('monthly')}
-                className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
-                  billingPeriod === 'monthly' 
-                    ? 'bg-white text-slate-900 shadow-sm' 
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Mensal
+                Anual
               </button>
             </div>
           </div>
@@ -1617,7 +1641,34 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
           {/* Pricing Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {displayPlans.map((plan, idx) => {
-              const currentPrice = billingPeriod === 'annually' ? plan.priceAnnually : plan.priceMonthly;
+              const getBaseMonthlyPrice = (p: any) => {
+                if (p.price !== undefined && p.price !== null && !isNaN(Number(p.price)) && Number(p.price) > 0) {
+                  return Number(p.price);
+                }
+                const cleanStr = String(p.priceMonthly || '')
+                  .replace(/\s/g, '')
+                  .replace(/\./g, '')
+                  .replace(',', '.');
+                const parsed = parseFloat(cleanStr);
+                if (!isNaN(parsed) && parsed > 0) {
+                  return parsed;
+                }
+                const nameLower = p.name?.toLowerCase() || '';
+                if (nameLower.includes('básico') || nameLower === 'base') return 7900;
+                if (nameLower.includes('flex') || nameLower.includes('profissional')) return 15000;
+                if (nameLower.includes('pro') || nameLower.includes('empresarial')) return 19500;
+                
+                return 15000;
+              };
+
+              const rawPriceMonthly = getBaseMonthlyPrice(plan);
+              const multiplier = billingPeriod === 'annually' ? 12 : billingPeriod === 'semestral' ? 6 : 3;
+              const totalCalculated = rawPriceMonthly * multiplier;
+
+              const formattedMonthly = rawPriceMonthly.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' Kz';
+              const formattedTotal = totalCalculated.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' Kz';
+              const periodLabel = billingPeriod === 'annually' ? 'Calculado para Anual (12 Meses)' : billingPeriod === 'semestral' ? 'Calculado para Semestral (6 Meses)' : 'Calculado para Trimestral (3 Meses)';
+
               return (
                 <div 
                   key={idx} 
@@ -1639,19 +1690,23 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                       <h4 className="text-xl font-extrabold text-slate-900 mt-0.5">{plan.name}</h4>
                     </div>
 
-                    <div className="py-2">
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-2xl font-black text-slate-900">{currentPrice}</span>
-                        <span className="text-xs text-slate-400 font-bold uppercase">Kz/mês</span>
+                    <div className="py-2.5 text-left border-y border-slate-100 space-y-3">
+                      <div>
+                        <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block mb-0.5">Preço por Mês</span>
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-xl font-black text-slate-900">{formattedMonthly}</span>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase">/mês</span>
+                        </div>
                       </div>
-                      {billingPeriod === 'annually' && (
-                        <p className="text-[10.5px] text-emerald-600 font-semibold mt-1">
-                          Facturado {plan.billedAnnuallyTotal} Kz ao ano
+                      <div className="pt-2 border-t border-dashed border-slate-150">
+                        <span className="text-[9px] font-black uppercase tracking-wider text-orange-500 block mb-0.5">{periodLabel}</span>
+                        <p className="text-base font-black text-slate-800">
+                          {formattedTotal}
                         </p>
-                      )}
+                      </div>
                     </div>
 
-                    <div className="border-t border-slate-100 pt-4 space-y-2.5">
+                    <div className="space-y-2.5">
                       {plan.features.map((feat, fidx) => (
                         <div key={fidx} className="flex items-start gap-2 text-xs text-slate-600">
                           <Check size={14} className="text-emerald-500 shrink-0 mt-0.5" />
@@ -1665,12 +1720,31 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                     <button 
                       onClick={() => {
                         setRegError('');
+                        
+                        // Sync current choice with checkout form
+                        const nameLower = plan.name?.toLowerCase() || '';
+                        if (nameLower.includes('básico') || nameLower === 'base') {
+                          setPaidPlan('Básico');
+                        } else if (nameLower.includes('pro') || nameLower.includes('empresarial')) {
+                          setPaidPlan('Empresarial');
+                        } else {
+                          setPaidPlan('Profissional');
+                        }
+
+                        if (billingPeriod === 'annually') {
+                          setPaidPeriod('anual');
+                        } else if (billingPeriod === 'semestral') {
+                          setPaidPeriod('semestral');
+                        } else {
+                          setPaidPeriod('trimestral');
+                        }
+
                         setIsRegisterModalOpen(true);
                       }}
                       className={`w-full py-2.5 text-xs font-bold rounded-xl transition-all ${
                         plan.popular 
                           ? 'bg-orange-500 hover:bg-orange-600 text-white' 
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-705'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                       }`}
                     >
                       {plan.buttonText}
@@ -2114,7 +2188,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             {/* Left: Brand Name only */}
             <div className="flex items-center gap-1">
               <span className="text-xl font-black tracking-tight text-white">
-                fatu<span className="text-orange-500">.R</span>
+                Fatu<span className="text-orange-500">.R</span>
               </span>
             </div>
 
@@ -2488,9 +2562,14 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             >
               {/* Header */}
               <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white">
-                <div className="flex items-center gap-2">
-                  <div className="bg-orange-500/20 p-1.5 rounded-lg text-orange-400">
-                    <Zap className="w-5 h-5 fill-current" />
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 pr-3 border-r border-slate-700">
+                    <img 
+                      src="https://i.ibb.co/Q72rTwRL/ss.png" 
+                      alt="Fatu-R Logo" 
+                      className="w-10 h-10 object-contain bg-white rounded-lg p-1" 
+                      referrerPolicy="no-referrer"
+                    />
                   </div>
                   <div>
                     <h3 className="text-sm font-black tracking-tight">Comprar Licença do Fatu-R</h3>
@@ -2547,7 +2626,10 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                           </div>
                           <p className="text-[10px] text-slate-400 mt-0.5">Gestão de Serviços & Facturas em A4</p>
                         </div>
-                        <span className="text-xs font-black text-slate-900 mt-3 block">7.900 Kz<span className="text-[10px] font-normal text-slate-400">/mês</span></span>
+                        <span className="text-xs font-black text-slate-900 mt-3 block">
+                          {getPlanMonthlyPrice('Básico').toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kz
+                          <span className="text-[10px] font-normal text-slate-400 font-sans">/mês</span>
+                        </span>
                       </div>
 
                       {/* Profissional Card */}
@@ -2569,7 +2651,10 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                           </div>
                           <p className="text-[10px] text-slate-400 mt-0.5">Ideal para POS Retalho, Stock e Caixa Duplo</p>
                         </div>
-                        <span className="text-xs font-black text-slate-900 mt-3 block">15.000 Kz<span className="text-[10px] font-normal text-slate-400">/mês</span></span>
+                        <span className="text-xs font-black text-slate-900 mt-3 block">
+                          {getPlanMonthlyPrice('Profissional').toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kz
+                          <span className="text-[10px] font-normal text-slate-400 font-sans">/mês</span>
+                        </span>
                       </div>
 
                       {/* Empresarial Card */}
@@ -2588,7 +2673,10 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                           </div>
                           <p className="text-[10px] text-slate-400 mt-0.5">Disposição avançada de cozinha, mesas & multi-armazém</p>
                         </div>
-                        <span className="text-xs font-black text-slate-900 mt-3 block">19.500 Kz<span className="text-[10px] font-normal text-slate-400">/mês</span></span>
+                        <span className="text-xs font-black text-slate-900 mt-3 block">
+                          {getPlanMonthlyPrice('Empresarial').toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kz
+                          <span className="text-[10px] font-normal text-slate-400 font-sans">/mês</span>
+                        </span>
                       </div>
                     </div>
 
