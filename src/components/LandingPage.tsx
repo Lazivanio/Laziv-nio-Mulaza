@@ -26,7 +26,8 @@ import {
   UserCheck, 
   BarChart3,
   Building2,
-  FileText
+  FileText,
+  Play
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User } from '../types';
@@ -66,10 +67,14 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [regLoading, setRegLoading] = useState(false);
 
   // Billing toggle state
-  const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'annually'>('annually');
+  const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'annually'>('monthly');
 
   // FAQ state
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
+
+  // Video feedback testimonial states
+  const [activeVideoUrl, setActiveVideoUrl] = useState<string | null>(null);
+  const [activeVideoTitle, setActiveVideoTitle] = useState<string>('');
 
   // POS simulation state
   const [simCart, setSimCart] = useState<{ cafe: number; agua: number; pastel: number }>({
@@ -91,6 +96,81 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   // Feature slider state
   const [featureSlideIndex, setFeatureSlideIndex] = useState(0);
   const [slideDirection, setSlideDirection] = useState<'left' | 'right'>('right');
+
+  // Dynamic Plans from Administrator Account
+  const [dbPlans, setDbPlans] = useState<any[]>([]);
+
+  React.useEffect(() => {
+    const fetchPlans = async () => {
+      try {
+        const res = await fetch(`/api/admin/plans?t=${Date.now()}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setDbPlans(data);
+          }
+        }
+      } catch (err) {
+        console.error('Erro ao buscar planos dinâmicos:', err);
+      }
+    };
+    fetchPlans();
+  }, []);
+
+  const displayPlans = dbPlans.length > 0 
+    ? dbPlans.map((plan, idx) => {
+        let parsedFeatures: any = {};
+        try {
+          parsedFeatures = typeof plan.features === 'string' 
+            ? JSON.parse(plan.features) 
+            : plan.features || {};
+        } catch (e) {
+          parsedFeatures = {};
+        }
+
+        const priceMonthlyStr = Number(plan.price).toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const priceAnnuallyNum = plan.price * 0.8;
+        const priceAnnuallyStr = priceAnnuallyNum.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const billedAnnuallyTotalStr = (priceAnnuallyNum * 12).toLocaleString('pt-AO', { maximumFractionDigits: 0 });
+
+        const featList: string[] = [
+          `Faturação Certificada AGT`,
+          `Documentos Ilimitados (FT, FR, Proforma)`,
+          `Até ${plan.max_establishments} ${plan.max_establishments === 1 ? 'estabelecimento' : 'estabelecimentos'} ativo(s)`,
+          `Até ${plan.max_products} produtos cadastrados`,
+          `Exportação de ficheiro SAF-T AO`
+        ];
+
+        if (parsedFeatures.reports) {
+          featList.push(`Relatórios financeiros & desempenho real`);
+        }
+        if (parsedFeatures.multi_establishment || plan.max_establishments > 1) {
+          featList.push(`Controle central de filiais integradas`);
+        }
+        if (parsedFeatures.api_access) {
+          featList.push(`Acesso completo à nossa API de vendas`);
+        }
+        if (plan.description) {
+          featList.push(`${plan.description}`);
+        }
+
+        let badge = "Plano Adicional";
+        if (idx === 0) badge = "Básico e Essencial";
+        else if (idx === 1) badge = "Recomendado para Retalho";
+        else if (idx === 2) badge = "Solução Completa";
+
+        return {
+          name: plan.name,
+          badge: badge,
+          priceAnnually: priceAnnuallyStr,
+          priceMonthly: priceMonthlyStr,
+          billedAnnuallyTotal: billedAnnuallyTotalStr,
+          features: featList,
+          popular: idx === 1 || plan.name?.toLowerCase().includes('profissional') || plan.name?.toLowerCase().includes('flex'),
+          buttonText: "Começar Agora"
+        };
+      })
+    : pricingPlans;
 
   const productMeta = {
     cafe: { name: 'Café de Angola (Ginga)', price: 1200 },
@@ -646,52 +726,98 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               >
                 {[
                   {
-                    icon: <Receipt size={26} />,
-                    bg: "bg-orange-100 text-orange-600",
+                    icon: <Receipt size={28} />,
+                    bg: "bg-orange-50 text-orange-600 group-hover:bg-orange-600 group-hover:text-white",
+                    borderColor: "hover:border-orange-500/40",
+                    shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(249,115,22,0.18)]",
+                    arrowColor: "group-hover:text-orange-600",
                     title: "Faturação Certificada AGT",
-                    desc: "Emissão veloz de Faturas (FT), Recibos (FR), Proformas e Notas de Crédito. Total conformidade legal garantida."
+                    desc: "Emissão veloz de Faturas (FT), Recibos (FR), Proformas e Notas de Crédito. Total conformidade legal garantida nos termos vigentes.",
+                    badge: "Nº 142/AGT",
+                    badgeBg: "bg-orange-50 text-orange-600 border-orange-100"
                   },
                   {
-                    icon: <BarChart3 size={26} />,
-                    bg: "bg-blue-100 text-blue-600",
+                    icon: <BarChart3 size={28} />,
+                    bg: "bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white",
+                    borderColor: "hover:border-blue-500/40",
+                    shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(59,130,246,0.18)]",
+                    arrowColor: "group-hover:text-blue-600",
                     title: "Ponto de Venda POS Rápido",
-                    desc: "Interface de vendedor otimizada para ecossistema web e mobile com controle cego de fecho de caixa."
+                    desc: "Interface de vendedor otimizada para ecossistema web e mobile com controle cego de fecho de caixa e atalhos rápidos.",
+                    badge: "Ecrã Rápido",
+                    badgeBg: "bg-blue-50 text-blue-600 border-blue-100"
                   },
                   {
-                    icon: <Building2 size={26} />,
-                    bg: "bg-emerald-100 text-emerald-600",
+                    icon: <Building2 size={28} />,
+                    bg: "bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white",
+                    borderColor: "hover:border-emerald-500/40",
+                    shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(16,185,129,0.18)]",
+                    arrowColor: "group-hover:text-emerald-600",
                     title: "Controle Múltiplo de Lojas",
-                    desc: "Gerencie múltiplos armazéns ou divisões do seu negócio com fluxo financeiro perfeitamente apartado."
+                    desc: "Gerencie múltiplos armazéns ou divisões do seu negócio com fluxo financeiro e stocks perfeitamente apartados.",
+                    badge: "Multiloja",
+                    badgeBg: "bg-emerald-50 text-emerald-600 border-emerald-100"
                   },
                   {
-                    icon: <UserCheck size={26} />,
-                    bg: "bg-purple-100 text-purple-600",
+                    icon: <UserCheck size={28} />,
+                    bg: "bg-purple-50 text-purple-600 group-hover:bg-purple-600 group-hover:text-white",
+                    borderColor: "hover:border-purple-500/40",
+                    shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(147,51,234,0.18)]",
+                    arrowColor: "group-hover:text-purple-600",
                     title: "Pessoal & Salários",
-                    desc: "Gestão integrada de recursos humanos, folha de ponto e pagamentos automatizados em segundos."
+                    desc: "Gestão integrada de recursos humanos, folha de ponto mensal e processamento de pagamentos automáticos em segundos.",
+                    badge: "RH Integrado",
+                    badgeBg: "bg-purple-50 text-purple-600 border-purple-100"
                   },
                   {
-                    icon: <ShieldCheck size={26} />,
-                    bg: "bg-cyan-100 text-cyan-600",
+                    icon: <ShieldCheck size={28} />,
+                    bg: "bg-cyan-50 text-cyan-600 group-hover:bg-cyan-600 group-hover:text-white",
+                    borderColor: "hover:border-cyan-500/40",
+                    shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(6,182,212,0.18)]",
+                    arrowColor: "group-hover:text-cyan-600",
                     title: "Exportações Seguras SAFT-A",
-                    desc: "Crie e transfira os ficheiros de auditoria SAFT-A das suas transações mensais de forma automatizada."
+                    desc: "Crie e transfira os ficheiros de auditoria SAFT-A das suas transações mensais de forma automatizada e sem erros fiscais.",
+                    badge: "Portal AGT",
+                    badgeBg: "bg-cyan-50 text-cyan-600 border-cyan-100"
                   },
                   {
-                    icon: <Sparkles size={26} />,
-                    bg: "bg-rose-100 text-rose-600",
+                    icon: <Sparkles size={28} />,
+                    bg: "bg-rose-50 text-rose-600 group-hover:bg-rose-600 group-hover:text-white",
+                    borderColor: "hover:border-rose-500/40",
+                    shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(244,63,94,0.18)]",
+                    arrowColor: "group-hover:text-rose-600",
                     title: "Controlo Total na Cloud",
-                    desc: "Aceda ao seu painel geral de onde estiver. Compatível com impressoras térmicas convencionais e standard."
+                    desc: "Aceda ao seu painel geral de onde estiver. Compatível com impressoras térmicas convencionais e impressoras standard A4.",
+                    badge: "100% Online",
+                    badgeBg: "bg-rose-50 text-rose-600 border-rose-100"
                   }
                 ].map((item, idx) => (
                   <div 
                     key={idx} 
-                    className="w-full shrink-0 bg-white p-8 rounded-2xl border border-slate-200 shadow-md min-h-[260px] flex flex-col justify-between"
+                    onClick={() => {
+                      setRegError('');
+                      setIsRegisterModalOpen(true);
+                    }}
+                    className={`w-full shrink-0 bg-white p-8 rounded-2xl border border-slate-200 shadow-md min-h-[340px] flex flex-col justify-between transition-all duration-300 relative overflow-hidden group cursor-pointer ${item.borderColor} ${item.shadowColor}`}
                   >
-                    <div>
-                      <div className={`w-14 h-14 rounded-xl ${item.bg} flex items-center justify-center mb-5 shadow-inner`}>
+                    {/* Subtle top-right badge */}
+                    <div className="absolute top-5 right-5">
+                      <span className={`text-[9px] font-black tracking-widest uppercase px-2.5 py-0.5 border rounded-full ${item.badgeBg}`}>
+                        {item.badge}
+                      </span>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className={`w-14 h-14 rounded-xl ${item.bg} flex items-center justify-center shadow-inner transition-all duration-300 group-hover:scale-110 group-hover:rotate-3`}>
                         {item.icon}
                       </div>
-                      <h3 className="text-lg sm:text-xl font-bold text-slate-900 mb-3">{item.title}</h3>
-                      <p className="text-sm text-slate-500 leading-relaxed font-normal">{item.desc}</p>
+                      <h3 className="text-xl font-bold text-slate-900 leading-snug">{item.title}</h3>
+                      <p className="text-xs text-slate-500 leading-relaxed font-normal">{item.desc}</p>
+                    </div>
+
+                    <div className={`flex items-center gap-1.5 text-xs font-bold text-slate-700 pt-5 border-t border-slate-100 transition-colors ${item.arrowColor}`}>
+                      <span>Testar Recurso agora</span>
+                      <ArrowRight size={14} className="group-hover:translate-x-1.5 transition-transform duration-200 text-orange-500" />
                     </div>
                   </div>
                 ))}
@@ -705,24 +831,31 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                     custom={slideDirection}
                     variants={{
                       enter: (direction: 'left' | 'right') => ({
-                        x: direction === 'right' ? 300 : -300,
-                        opacity: 0
+                        x: direction === 'right' ? 450 : -450,
+                        y: 0,
+                        opacity: 0,
+                        scale: 0.97
                       }),
                       center: {
                         x: 0,
-                        opacity: 1
+                        y: 0,
+                        opacity: 1,
+                        scale: 1
                       },
                       exit: (direction: 'left' | 'right') => ({
-                        x: direction === 'right' ? -300 : 300,
-                        opacity: 0
+                        x: direction === 'right' ? -450 : 450,
+                        y: 0,
+                        opacity: 0,
+                        scale: 0.97
                       })
                     }}
                     initial="enter"
                     animate="center"
                     exit="exit"
                     transition={{ 
-                      x: { type: "spring", stiffness: 220, damping: 26 },
-                      opacity: { duration: 0.2 }
+                      x: { type: "spring", stiffness: 240, damping: 28 },
+                      opacity: { duration: 0.18 },
+                      scale: { duration: 0.2 }
                     }}
                     className="grid grid-cols-3 gap-6"
                   >
@@ -730,54 +863,103 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                       const itemIdx = (featureSlideIndex + offset) % 6;
                       const featuresList = [
                         {
-                          icon: <Receipt size={26} />,
-                          bg: "bg-orange-100 text-orange-600",
+                          icon: <Receipt size={28} />,
+                          bg: "bg-orange-50 text-orange-600 group-hover:bg-orange-600 group-hover:text-white",
+                          borderColor: "hover:border-orange-500/40",
+                          shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(249,115,22,0.18)]",
+                          arrowColor: "group-hover:text-orange-600",
                           title: "Faturação Certificada AGT",
-                          desc: "Emissão veloz de Faturas (FT), Recibos (FR), Proformas e Notas de Crédito. Total conformidade legal garantida."
+                          desc: "Emissão veloz de Faturas (FT), Recibos (FR), Proformas e Notas de Crédito. Total conformidade legal garantida e validada pela AGT.",
+                          badge: "Nº 142/AGT",
+                          badgeBg: "bg-orange-50 text-orange-600 border-orange-100"
                         },
                         {
-                          icon: <BarChart3 size={26} />,
-                          bg: "bg-blue-100 text-blue-600",
+                          icon: <BarChart3 size={28} />,
+                          bg: "bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white",
+                          borderColor: "hover:border-blue-500/40",
+                          shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(59,130,246,0.18)]",
+                          arrowColor: "group-hover:text-blue-600",
                           title: "Ponto de Venda POS Rápido",
-                          desc: "Interface de vendedor otimizada para ecossistema web e mobile com controle cego de fecho de caixa."
+                          desc: "Interface de vendedor otimizada para ecossistema web e mobile com controle cego de fecho de caixa eletrónico e relatórios dinâmicos.",
+                          badge: "Ponto de Venda",
+                          badgeBg: "bg-blue-50 text-blue-600 border-blue-100"
                         },
                         {
-                          icon: <Building2 size={26} />,
-                          bg: "bg-emerald-100 text-emerald-600",
+                          icon: <Building2 size={28} />,
+                          bg: "bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white",
+                          borderColor: "hover:border-emerald-500/40",
+                          shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(16,185,129,0.18)]",
+                          arrowColor: "group-hover:text-emerald-600",
                           title: "Controle Múltiplo de Lojas",
-                          desc: "Gerencie múltiplos armazéns ou divisões do seu negócio com fluxo financeiro perfeitamente apartado."
+                          desc: "Gerencie múltiplos armazéns ou divisões do seu negócio com fluxo financeiro bem estruturado e faturas perfeitamente controladas.",
+                          badge: "Múltiplas Lojas",
+                          badgeBg: "bg-emerald-50 text-emerald-600 border-emerald-100"
                         },
                         {
-                          icon: <UserCheck size={26} />,
-                          bg: "bg-purple-100 text-purple-600",
+                          icon: <UserCheck size={28} />,
+                          bg: "bg-purple-50 text-purple-600 group-hover:bg-purple-600 group-hover:text-white",
+                          borderColor: "hover:border-purple-500/40",
+                          shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(147,51,234,0.18)]",
+                          arrowColor: "group-hover:text-purple-600",
                           title: "Pessoal & Salários",
-                          desc: "Gestão integrada de recursos humanos, folha de ponto e pagamentos automatizados em segundos."
+                          desc: "Gestão integrada de recursos humanos, folha de ponto, subsídios de alimentação e pagamentos automatizados de salários num só clique.",
+                          badge: "RH & Salários",
+                          badgeBg: "bg-purple-50 text-purple-600 border-purple-100"
                         },
                         {
-                          icon: <ShieldCheck size={26} />,
-                          bg: "bg-cyan-100 text-cyan-600",
+                          icon: <ShieldCheck size={28} />,
+                          bg: "bg-cyan-50 text-cyan-600 group-hover:bg-cyan-600 group-hover:text-white",
+                          borderColor: "hover:border-cyan-500/40",
+                          shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(6,182,212,0.18)]",
+                          arrowColor: "group-hover:text-cyan-600",
                           title: "Exportações Seguras SAFT-A",
-                          desc: "Crie e transfira os ficheiros de auditoria SAFT-A das suas transações mensais de forma automatizada e segura."
+                          desc: "Crie e descarregue os ficheiros de auditoria fiscal SAFT-A das suas transações de forma automatizada e em conformidade completa com o portal.",
+                          badge: "Obrigatório AGT",
+                          badgeBg: "bg-cyan-50 text-cyan-600 border-cyan-100"
                         },
                         {
-                          icon: <Sparkles size={26} />,
-                          bg: "bg-rose-100 text-rose-600",
+                          icon: <Sparkles size={28} />,
+                          bg: "bg-rose-50 text-rose-600 group-hover:bg-rose-600 group-hover:text-white",
+                          borderColor: "hover:border-rose-500/40",
+                          shadowColor: "hover:shadow-[0_20px_45px_-12px_rgba(244,63,94,0.18)]",
+                          arrowColor: "group-hover:text-rose-600",
                           title: "Controlo Total na Cloud",
-                          desc: "Aceda ao seu painel geral de onde estiver. Compatível com impressoras térmicas convencionais e impressoras standard A4."
+                          desc: "Aceda ao seu painel geral de onde estiver. Compatível com telemóvel, tablet e impressoras térmicas standard Bluetooth, Wi-Fi ou A4.",
+                          badge: "100% Sincronizado",
+                          badgeBg: "bg-rose-50 text-rose-600 border-rose-100"
                         }
                       ];
                       const item = featuresList[itemIdx];
                       return (
                         <div 
                           key={itemIdx}
-                          className="bg-white p-10 rounded-2xl border border-slate-200 shadow-md hover:shadow-lg transition-all flex flex-col justify-between min-h-[300px] hover:-translate-y-1 duration-300"
+                          onClick={() => {
+                            setRegError('');
+                            setIsRegisterModalOpen(true);
+                          }}
+                          className={`bg-white p-10 rounded-2xl border border-slate-200 shadow-md hover:-translate-y-2 group cursor-pointer duration-300 transition-all flex flex-col justify-between min-h-[350px] relative overflow-hidden ${item.borderColor} ${item.shadowColor}`}
                         >
-                          <div>
-                            <div className={`w-14 h-14 rounded-xl ${item.bg} flex items-center justify-center mb-6 shadow-inner`}>
+                          {/* Inner soft backdrop hover aura */}
+                          <div className="absolute inset-0 bg-gradient-to-br from-white to-slate-50/20 -z-10" />
+
+                          {/* Top-right decorative badge */}
+                          <div className="absolute top-6 right-6 z-10 transition-transform duration-300 group-hover:scale-105">
+                            <span className={`text-[9px] font-extrabold tracking-widest uppercase px-3 py-1 border rounded-full ${item.badgeBg} shadow-sm`}>
+                              {item.badge}
+                            </span>
+                          </div>
+
+                          <div className="space-y-5">
+                            <div className={`w-14 h-14 rounded-xl ${item.bg} flex items-center justify-center mb-6 shadow-inner transition-all duration-350 group-hover:scale-110 group-hover:rotate-3 group-hover:shadow-md`}>
                               {item.icon}
                             </div>
-                            <h3 className="text-lg font-extrabold text-slate-900 mb-3.5 leading-snug">{item.title}</h3>
+                            <h3 className="text-xl font-extrabold text-slate-900 leading-snug tracking-tight">{item.title}</h3>
                             <p className="text-sm text-slate-500 leading-relaxed font-normal">{item.desc}</p>
+                          </div>
+
+                          <div className={`flex items-center gap-2 text-xs font-bold text-slate-700 pt-5 border-t border-slate-100 transition-colors mt-auto ${item.arrowColor}`}>
+                            <span>Testar Recurso agora</span>
+                            <ArrowRight size={14} className="group-hover:translate-x-1.5 transition-transform duration-200 text-orange-500" />
                           </div>
                         </div>
                       );
@@ -900,7 +1082,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
 
           {/* Pricing Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {pricingPlans.map((plan, idx) => {
+            {displayPlans.map((plan, idx) => {
               const currentPrice = billingPeriod === 'annually' ? plan.priceAnnually : plan.priceMonthly;
               return (
                 <div 
@@ -963,6 +1145,133 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 </div>
               );
             })}
+          </div>
+
+        </div>
+      </section>
+
+      {/* NEW: O QUE DIZEM OS NOSSOS CLIENTES - TESTEMUNHOS EM VÍDEO */}
+      <section id="videos" className="py-24 bg-slate-50 border-t border-b border-slate-100 scroll-mt-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-16">
+          
+          <div className="text-center max-w-3xl mx-auto space-y-4">
+            <span className="text-[10px] font-black uppercase text-orange-600 tracking-widest bg-orange-50 px-3.5 py-1 rounded-full border border-orange-100">
+              Testemunhos Reais
+            </span>
+            <h2 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight leading-tight pt-2">
+              O Que Dizem os Nossos Clientes
+            </h2>
+            <p className="text-sm sm:text-base text-slate-500 font-normal leading-relaxed">
+              Assista aos testemunhos em vídeo de empreendedores e profissionais que impulsionaram as suas operações diárias e garantiram total conformidade com a AGT usando o Fatu-R.
+            </p>
+          </div>
+
+          {/* Grid of Video Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {[
+              {
+                author: "Ricardo Vallis",
+                business: "VALLISMUSIC", 
+                location: "Luanda",
+                tag: "Retalho & Instrumentos",
+                quote: "Mudámos todo o faturamento de retalho para o Fatu-R. A facilidade de conciliação de caixa e rapidez na emissão de faturas no ecrã de vendas poupou-nos incontáveis horas mensais.",
+                duration: "1:24",
+                videoUrl: "https://assets.mixkit.co/videos/preview/mixkit-cashier-scanning-items-at-a-supermarket-checkout-40018-large.mp4",
+                thumbnail: "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=600&q=80"
+              },
+              {
+                author: "Ana Luísa Fruly",
+                business: "FRULY",
+                location: "Benguela",
+                tag: "Restauração & Café",
+                quote: "O POS funciona num tablet com uma fluidez impressionante. Controlamos e criamos faturas em segundos, com facilidade suprema no checkout diário.",
+                duration: "2:05",
+                videoUrl: "https://assets.mixkit.co/videos/preview/mixkit-waiter-serving-coffee-to-a-customer-in-a-cafe-42171-large.mp4",
+                thumbnail: "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=600&q=80"
+              },
+              {
+                author: "Dr. Mateus Cruz",
+                business: "CNPP",
+                location: "Lubango",
+                tag: "Clínicas & Serviços",
+                quote: "Emitimos as nossas guias de transporte e geramos o SAFT-A com um simples clique. É fantástico ter essa segurança fiscal garantida pela AGT.",
+                duration: "1:48",
+                videoUrl: "https://assets.mixkit.co/videos/preview/mixkit-doctor-working-on-a-modern-computer-41584-large.mp4",
+                thumbnail: "https://images.unsplash.com/photo-1576091160550-2173dba999ef?auto=format&fit=crop&w=600&q=80"
+              }
+            ].map((feedback, idx) => (
+              <div 
+                key={idx}
+                className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-xl transition-all duration-350 flex flex-col group hover:-translate-y-1.5"
+              >
+                {/* Simulated video thumbnail */}
+                <div 
+                  className="relative h-56 bg-slate-905 overflow-hidden cursor-pointer"
+                  onClick={() => {
+                    setActiveVideoUrl(feedback.videoUrl);
+                    setActiveVideoTitle(`${feedback.author} - ${feedback.business}`);
+                  }}
+                >
+                  <img 
+                    src={feedback.thumbnail} 
+                    alt={feedback.business}
+                    className="w-full h-full object-cover opacity-80 group-hover:scale-105 transition-transform duration-500"
+                    referrerPolicy="no-referrer"
+                  />
+                  {/* Backdrop Gradient overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent" />
+
+                  {/* Play Button Overlay */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-14 h-14 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-lg group-hover:scale-110 group-hover:bg-orange-600 transition-all duration-300 relative z-20">
+                      <span className="absolute inset-0 rounded-full bg-orange-500/3 w-full h-full animate-ping group-hover:bg-orange-600/3" />
+                      <Play size={20} className="ml-1 text-white fill-current" />
+                    </div>
+                  </div>
+
+                  {/* Video length tag */}
+                  <span className="absolute bottom-4 right-4 bg-black/75 px-2 py-0.5 rounded text-[9px] font-black font-mono text-white tracking-widest uppercase z-10">
+                    {feedback.duration}
+                  </span>
+
+                  {/* Star Rating Overlay */}
+                  <div className="absolute bottom-4 left-4 flex gap-0.5 z-10">
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <Star key={s} size={12} className="text-amber-400 fill-amber-400" />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Sub contents */}
+                <div className="p-6 flex-1 flex flex-col justify-between space-y-4">
+                  <div className="space-y-3">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-orange-600 bg-orange-50 border border-orange-100 px-2 py-0.5 rounded-full w-fit block">
+                      {feedback.tag}
+                    </span>
+                    <p className="text-[12.5px] text-slate-500 italic leading-relaxed font-normal">
+                      "{feedback.quote}"
+                    </p>
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-105 flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-black text-slate-900">{feedback.author}</h4>
+                      <p className="text-[10px] text-slate-400 font-bold">{feedback.business} ({feedback.location})</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setActiveVideoUrl(feedback.videoUrl);
+                        setActiveVideoTitle(`${feedback.author} - ${feedback.business}`);
+                      }}
+                      className="text-[11px] font-bold text-orange-500 hover:text-orange-600 flex items-center gap-1 group-hover:underline"
+                    >
+                      Ver Vídeo
+                      <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
 
         </div>
@@ -1363,6 +1672,62 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               )}
             </motion.div>
           </div>
+        )}
+
+        {/* Dynamic Video Lightbox Modal */}
+        {activeVideoUrl && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-[100] flex items-center justify-center p-4 sm:p-6"
+            onClick={() => {
+              setActiveVideoUrl(null);
+              setActiveVideoTitle('');
+            }}
+          >
+            <motion.div 
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl max-w-4xl w-full overflow-hidden relative"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-4 sm:p-6 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
+                <div>
+                  <span className="text-[9px] font-black uppercase text-orange-500 tracking-widest">
+                    Testemunho de Cliente em Vídeo
+                  </span>
+                  <h3 className="text-base sm:text-lg font-black text-white leading-snug">
+                    {activeVideoTitle}
+                  </h3>
+                </div>
+                <button 
+                  onClick={() => {
+                    setActiveVideoUrl(null);
+                    setActiveVideoTitle('');
+                  }}
+                  className="w-10 h-10 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="aspect-video bg-black relative flex items-center justify-center">
+                <video 
+                  src={activeVideoUrl}
+                  controls
+                  autoPlay
+                  className="w-full h-full object-contain"
+                  playsInline
+                />
+              </div>
+
+              <div className="p-4 sm:p-6 bg-slate-950/40 text-[11px] text-slate-400 text-center font-medium">
+                Este é um testemunho real de sucesso relatando a experiência operacional de transição digital no Fatu-R.
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
 
