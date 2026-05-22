@@ -700,9 +700,12 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
         <div className="h-full flex flex-col p-4">
           <div className="flex items-center justify-between lg:justify-start gap-3 px-4 py-6 mb-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-black text-white rounded-xl flex items-center justify-center">
-                <Zap size={20} />
-              </div>
+              <img 
+                src="https://i.ibb.co/Q72rTwRL/ss.png" 
+                alt="Fatu-R Logo" 
+                className="w-20 h-20 object-contain" 
+                referrerPolicy="no-referrer"
+              />
               <span className="text-xl font-bold tracking-tight">Fatu-R</span>
             </div>
             <button onClick={closeSidebar} className="lg:hidden p-2 text-zinc-400 hover:bg-zinc-100 rounded-lg">
@@ -1544,9 +1547,12 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       )}>
         <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-black text-white rounded-xl flex items-center justify-center">
-              <ShieldCheck size={24} />
-            </div>
+            <img 
+              src="https://i.ibb.co/Q72rTwRL/ss.png" 
+              alt="Fatu-R Logo" 
+              className="w-14 h-14 object-contain" 
+              referrerPolicy="no-referrer"
+            />
             <div>
               <h1 className="font-black text-lg leading-none">ADMIN</h1>
               <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest mt-1">Platform Master</p>
@@ -12788,9 +12794,12 @@ const SellerSettings = ({ user, onUpdate, onLogout }: { user: User, onUpdate: (u
       <Modal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} title="Sobre o Fatu-R">
         <div className="space-y-6">
           <div className="flex flex-col items-center justify-center py-4">
-            <div className="w-20 h-20 bg-black text-orange-500 rounded-3xl flex items-center justify-center mb-4 shadow-xl shadow-orange-500/10 scale-110">
-              <Zap size={40} className="fill-orange-500" />
-            </div>
+            <img 
+              src="https://i.ibb.co/Q72rTwRL/ss.png" 
+              alt="Fatu-R Logo" 
+              className="w-44 h-44 mb-6 object-contain" 
+              referrerPolicy="no-referrer"
+            />
             <h3 className="text-3xl font-black text-zinc-900 tracking-tighter">Fatu-R</h3>
             <p className="text-sm font-bold text-orange-600 uppercase tracking-[0.2em] mt-1">Smart Billing System</p>
           </div>

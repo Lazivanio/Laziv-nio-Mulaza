@@ -3150,6 +3150,102 @@ async function startServer() {
     }
   });
 
+  app.post("/api/register-paid", (req, res) => {
+    const { name, companyName, email, password, phone, nif, address, planName, months, paymentMethod } = req.body;
+    
+    if (!name || !companyName || !email || !password || !planName || !months) {
+      return res.status(400).json({ error: "Nome, Empresa, Email, Palavra-passe, Plano e Período são obrigatórios." });
+    }
+
+    try {
+      const existing = db.prepare("SELECT id FROM users WHERE LOWER(email) = ?").get(email.toLowerCase());
+      if (existing) {
+        return res.status(400).json({ error: "Este endereço de email já está registado." });
+      }
+
+      // 1. Create the owner user
+      const userResult = db.prepare(`
+        INSERT INTO users (name, company_name, email, password, role, phone, nif, address, status, username)
+        VALUES (?, ?, ?, ?, 'owner', ?, ?, ?, 'active', ?)
+      `).run(name, companyName, email, password, phone, nif, address, email);
+      
+      const ownerId = userResult.lastInsertRowid as number;
+
+      // 2. Generate company digital signature keys
+      DigitalSignatureService.generateCompanyKeys(ownerId, ownerId);
+
+      // Create a paid period expiry based on chosen months
+      const numMonths = Number(months) || 3;
+      const expiryDate = new Date();
+      expiryDate.setMonth(expiryDate.getMonth() + numMonths);
+      const expiryDateStr = expiryDate.toISOString().split('T')[0];
+
+      // 3. Create the principal establishment
+      const establishmentResult = db.prepare(`
+        INSERT INTO establishments (owner_id, name, address, phone, email, nif, license_status, license_expiry, status, establishment_code)
+        VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 'active', ?)
+      `).run(ownerId, companyName + " - Principal", address, phone, email, nif, expiryDateStr, `EST-${ownerId}-01`);
+
+      const establishmentId = establishmentResult.lastInsertRowid as number;
+
+      // 4. Create an active license representing the paid period
+      const startDateStr = new Date().toISOString().split('T')[0];
+      
+      // Ensure the plan matches legal titles (Básico, Profissional, Empresarial)
+      let resolvedPlan = "Básico";
+      if (planName === "Flex" || planName === "Profissional") resolvedPlan = "Profissional";
+      if (planName === "Pro" || planName === "Empresarial") resolvedPlan = "Empresarial";
+
+      db.prepare(`
+        INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, features)
+        VALUES (?, ?, ?, ?, ?, 'active', ?)
+      `).run(
+        ownerId, 
+        establishmentId, 
+        resolvedPlan, 
+        startDateStr, 
+        expiryDateStr, 
+        '["all_features", "pos", "saft-a", "support", "reports"]'
+      );
+
+      // 5. Create a default cashier register (using ownerId to ensure uniqueness)
+      const regCode = `CX-${ownerId}-01`;
+      db.prepare(`
+        INSERT INTO cash_registers (establishment_id, name, code, default_initial_balance, max_limit)
+        VALUES (?, 'Caixa Principal', ?, 0, 150000)
+      `).run(establishmentId, regCode);
+
+      // 6. Record the transaction payment in cashier_sessions, or just log it
+      logAction({
+        userId: ownerId,
+        ownerId: ownerId,
+        establishmentId: establishmentId,
+        module: 'AUTH',
+        actionType: 'REGISTER_PAID_SUCCESS',
+        description: `Novo registo de empresa PAGO: ${companyName} com plano ${resolvedPlan} (${months} meses via ${paymentMethod})`,
+        req
+      });
+
+      res.status(201).json({
+        id: ownerId,
+        email: email,
+        username: email,
+        name: name,
+        role: 'owner',
+        establishment_id: establishmentId,
+        owner_id: ownerId,
+        status: 'active',
+        fiscal_regime: 'geral',
+        billing_mode: 'tradicional',
+        permissions: ["all_features", "pos", "saft-a"]
+      });
+
+    } catch (err: any) {
+      console.error("[RegisterPaid] Error during client paid registration:", err);
+      res.status(500).json({ error: "Erro ao concluir a sua subscrição paga no servidor: " + err.message });
+    }
+  });
+
   app.post("/api/attendance/logout", (req, res) => {
     const { userId } = req.body;
     if (!userId) return res.status(400).json({ error: "UserId is required" });

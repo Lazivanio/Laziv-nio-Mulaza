@@ -1,4 +1,4 @@
-import React, { useState, FormEvent } from 'react';
+import React, { useState, FormEvent, useRef } from 'react';
 import { 
   Zap, 
   CheckCircle2, 
@@ -27,7 +27,13 @@ import {
   BarChart3,
   Building2,
   FileText,
-  Play
+  Play,
+  Facebook,
+  Instagram,
+  Linkedin,
+  Youtube,
+  MessageSquare,
+  Send
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User } from '../types';
@@ -45,8 +51,105 @@ interface LandingPageProps {
 export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+  const [isPaidModalOpen, setIsPaidModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isHelpDropdownOpen, setIsHelpDropdownOpen] = useState(false);
+
+  const helpTimeoutRef = useRef<any>(null);
+
+  const handleHelpMouseEnter = () => {
+    if (helpTimeoutRef.current) clearTimeout(helpTimeoutRef.current);
+    setIsHelpDropdownOpen(true);
+  };
+
+  const handleHelpMouseLeave = () => {
+    helpTimeoutRef.current = setTimeout(() => {
+      setIsHelpDropdownOpen(false);
+    }, 180);
+  };
+
+  const [helpMessageModal, setHelpMessageModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    body: string;
+  }>({
+    isOpen: false,
+    title: '',
+    body: ''
+  });
+
+  // Support Floating Chat State & Handlers
+  const [isChatBoxOpen, setIsChatBoxOpen] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatMessages, setChatMessages] = useState<Array<{
+    id: number;
+    sender: 'system' | 'user';
+    text: string;
+    time: string;
+  }>>([
+    {
+      id: 1,
+      sender: 'system',
+      text: 'Olá! Necessita de algum esclarecimento sobre o Fatu-R? ',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }
+  ]);
+
+  const handleSendChatMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    const userMsg = {
+      id: Date.now(),
+      sender: 'user' as const,
+      text: chatInput,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setChatMessages(prev => [...prev, userMsg]);
+    const currentInput = chatInput.toLowerCase();
+    setChatInput('');
+
+    setTimeout(() => {
+      let replyText = "Agradecemos o seu contacto! Um dos nossos assistentes reais foi notificado e responderá aqui ou pelo e-mail do seu registo dentro de instantes.";
+      if (currentInput.includes('preço') || currentInput.includes('valor') || currentInput.includes('plano') || currentInput.includes('pagar') || currentInput.includes('cust')) {
+        replyText = "Temos 3 planos excelentes para o seu negócio: Básico (6.000 Kz/mês), Profissional (14.000 Kz/mês) e Empresarial (29.000 Kz/mês). Pode testar qualquer um inteiramente grátis por 14 dias!";
+      } else if (currentInput.includes('agt') || currentInput.includes('certificado') || currentInput.includes('lei') || currentInput.includes('legal') || currentInput.includes('registo')) {
+        replyText = "Sim, totalmente! O Fatu-R é um sistema de faturação eletrónica online certificado pela AGT sob a licença Nº 142/AGT. Garanta total conformidade fiscal nas suas vendas.";
+      } else if (currentInput.includes('teste') || currentInput.includes('testar') || currentInput.includes('gratis') || currentInput.includes('gratuito') || currentInput.includes('experimentar')) {
+        replyText = "Pode experimentar o Fatu-R gratuitamente por 14 dias sem compromissos! Basta selecionar 'Testar Grátis' em cima e preencher os dados de cadastro para começar imediatamente.";
+      } else if (currentInput.includes('ajuda') || currentInput.includes('suporte') || currentInput.includes('contacto') || currentInput.includes('telefone') || currentInput.includes('email')) {
+        replyText = "Dispomos de suporte premium! Contacte-nos pelo e-mail suporte@fatur.ao, telefone +244 923 000 000, ou diretamente na consola Fatu-R com um dos nossos consultores.";
+      }
+
+      setChatMessages(prev => [...prev, {
+        id: Date.now() + 1,
+        sender: 'system' as const,
+        text: replyText,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
+    }, 1100);
+  };
+
+  // Paid direct subscription state
+  const [paidPlan, setPaidPlan] = useState<'Básico' | 'Profissional' | 'Empresarial'>('Profissional');
+  const [paidPeriod, setPaidPeriod] = useState<'trimestral' | 'semestral' | 'anual'>('trimestral');
+  const [paidPaymentMethod, setPaidPaymentMethod] = useState<'multicaixa' | 'iban'>('multicaixa');
   
+  // Paid checkout user info states
+  const [paidName, setPaidName] = useState('');
+  const [paidCompanyName, setPaidCompanyName] = useState('');
+  const [paidEmail, setPaidEmail] = useState('');
+  const [paidPassword, setPaidPassword] = useState('');
+  const [paidPhone, setPaidPhone] = useState('');
+  const [paidNif, setPaidNif] = useState('');
+  const [paidAddress, setPaidAddress] = useState('');
+  const [paidError, setPaidError] = useState('');
+  const [paidLoading, setPaidLoading] = useState(false);
+  const [paidSuccess, setPaidSuccess] = useState(false);
+  const [hasPaidSimulated, setHasPaidSimulated] = useState(false);
+  const [ibanReceiptUploaded, setIbanReceiptUploaded] = useState<string | null>(null);
+
   // Login form states
   const [identifier, setIdentifier] = useState('owner@factu.com');
   const [password, setPassword] = useState('owner');
@@ -97,6 +200,34 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   // Feature slider state
   const [featureSlideIndex, setFeatureSlideIndex] = useState(0);
   const [slideDirection, setSlideDirection] = useState<'left' | 'right'>('right');
+
+  // Hero section slideshow state and interval
+  const heroSlides = [
+    {
+      url: "https://www.logicerp.com/blog/wp-content/uploads/2025/11/Blog-Banner-72.jpg",
+      title: "Gestão Integrada de Faturação",
+      desc: "Automação completa do seu fluxo de caixa e emissão simplificada"
+    },
+    {
+      url: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQYzh-XkIljrgDk-BEGoFOhWODhEGK-E0emtQ&s",
+      title: "Ponto de Venda Inteligente",
+      desc: "POS moderno que funciona no seu tablet ou telemóvel, online ou offline"
+    },
+    {
+      url: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRePRfmafydGzSTinVHKXvWUUWC4QvzPzPa6A&s",
+      title: "Análise em Tempo Real",
+      desc: "Acompanhe relatórios detalhados e controle estabelecimentos no mesmo lugar"
+    }
+  ];
+
+  const [heroSlideIndex, setHeroSlideIndex] = useState(0);
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      setHeroSlideIndex((prev) => (prev + 1) % heroSlides.length);
+    }, 4500);
+    return () => clearInterval(timer);
+  }, []);
 
   // Dynamic Plans from Administrator Account
   const [dbPlans, setDbPlans] = useState<any[]>([]);
@@ -185,6 +316,51 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
            (simCart.pastel * productMeta.pastel.price);
   };
 
+  const getPaidPrice = () => {
+    // Look up or default base monthly prices from Admin database
+    let basePrice = 7900;
+    let profPrice = 15000;
+    let empPrice = 19500;
+
+    if (dbPlans && dbPlans.length > 0) {
+      const basicPlan = dbPlans.find(p => p.name?.toLowerCase().includes('básico') || p.name?.toLowerCase() === 'base' || p.name?.toLowerCase() === 'básico');
+      const proPlan = dbPlans.find(p => p.name?.toLowerCase().includes('profissional') || p.name?.toLowerCase().includes('flex') || p.name?.toLowerCase().includes('profissional'));
+      const entPlan = dbPlans.find(p => p.name?.toLowerCase().includes('empresarial') || p.name?.toLowerCase().includes('pro'));
+
+      if (basicPlan) basePrice = Number(basicPlan.price);
+      if (proPlan) profPrice = Number(proPlan.price);
+      if (entPlan) empPrice = Number(entPlan.price);
+    }
+
+    let selectedMonthlyPrice = profPrice;
+    if (paidPlan === 'Básico') {
+      selectedMonthlyPrice = basePrice;
+    } else if (paidPlan === 'Empresarial') {
+      selectedMonthlyPrice = empPrice;
+    }
+
+    // Calculate total duration (3 months quarterly, 6 months semi-annually, 12 months annually)
+    let months = 3;
+    let discountPercent = 5; // 5% flat discount for quarterly
+    if (paidPeriod === 'semestral') {
+      months = 6;
+      discountPercent = 10; // 10% flat discount for semi-annually
+    } else if (paidPeriod === 'anual') {
+      months = 12;
+      discountPercent = 20; // 20% flat discount for annually
+    }
+
+    const originalTotal = selectedMonthlyPrice * months;
+    const discountedTotal = originalTotal * (1 - discountPercent / 100);
+
+    return {
+      price: discountedTotal,
+      label: discountedTotal.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' Kz',
+      original: originalTotal.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' Kz',
+      discount: `${discountPercent}%`
+    };
+  };
+
   const handleRegisterSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setRegError('');
@@ -219,6 +395,70 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
       setRegError('Erro ao estabelecer ligação com o servidor.');
     } finally {
       setRegLoading(false);
+    }
+  };
+
+  const handlePaidSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setPaidError('');
+    
+    // Validate required fields
+    if (!paidName || !paidCompanyName || !paidEmail || !paidPassword) {
+      setPaidError('Nome, Empresa, Email e Palavra-passe são obrigatórios.');
+      return;
+    }
+    
+    // Check if simulated payment was completed
+    if (paidPaymentMethod === 'multicaixa' && !hasPaidSimulated) {
+      setPaidError('Por favor, efetue a "Simulação de Pagamento" no formulário para validar a licença.');
+      return;
+    }
+
+    if (paidPaymentMethod === 'iban' && !ibanReceiptUploaded) {
+      setPaidError('Por favor, envie o comprovativo de transferência bancária fictício para aprovação.');
+      return;
+    }
+
+    setPaidLoading(true);
+
+    try {
+      let months = "3";
+      if (paidPeriod === "semestral") months = "6";
+      if (paidPeriod === "anual") months = "12";
+
+      const res = await fetch('/api/register-paid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: paidName,
+          companyName: paidCompanyName,
+          email: paidEmail,
+          password: paidPassword,
+          phone: paidPhone,
+          nif: paidNif,
+          address: paidAddress,
+          planName: paidPlan,
+          months: months,
+          paymentMethod: paidPaymentMethod === 'multicaixa' ? 'Reference Multicaixa' : 'Bank Transfer'
+        })
+      });
+
+      if (res.ok) {
+        const user = await res.json();
+        setPaidSuccess(true);
+        setTimeout(() => {
+          setIsPaidModalOpen(false);
+          setPaidSuccess(false);
+          onLogin(user);
+        }, 2200);
+      } else {
+        const data = await res.json();
+        setPaidError(data.error || 'Erro ao efetivar a subscrição da licença paga.');
+      }
+    } catch (err) {
+      setPaidError('Erro de ligação ao servidor do Fatu-R.');
+    } finally {
+      setPaidLoading(false);
     }
   };
 
@@ -336,11 +576,10 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               className="flex items-center gap-1 cursor-pointer select-none"
               onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
             >
-              <FileText className="text-blue-600 w-7 h-7" />
-              <span className="text-xl font-black tracking-tight text-slate-900">
+              <span className="text-3xl font-black tracking-tight text-slate-900">
                 fatu<span className="text-orange-500">.R</span>
               </span>
-              <span className="ml-2.5 px-2 py-0.5 bg-slate-100 text-slate-500 text-[9px] font-black tracking-widest rounded-md uppercase border border-slate-200">
+              <span className="ml-1 px-2 py-0.5 bg-slate-100 text-slate-500 text-[9px] font-black tracking-widest rounded-md uppercase border border-slate-200">
                 AO
               </span>
             </div>
@@ -363,12 +602,29 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
           </div>
 
           <div className="hidden lg:flex items-center gap-4">
+            {/* Ajuda Dropdown Trigger com Hover */}
+            <div 
+              className="relative"
+              onMouseEnter={handleHelpMouseEnter}
+              onMouseLeave={handleHelpMouseLeave}
+            >
+              <button 
+                className="flex items-center gap-1.5 text-[13px] font-bold text-slate-700 hover:text-slate-900 px-4 py-2 transition-colors focus:outline-none select-none cursor-pointer"
+              >
+                Ajuda
+                <ChevronDown 
+                  size={15} 
+                  className={`text-slate-500 transition-transform duration-300 ${isHelpDropdownOpen ? 'rotate-180 text-orange-500' : 'rotate-0'}`} 
+                />
+              </button>
+            </div>
+
             <button 
               onClick={() => {
                 setError('');
                 setIsLoginModalOpen(true);
               }}
-              className="text-[13px] font-bold text-slate-700 hover:text-slate-900 px-4 py-2 transition-colors"
+              className="text-[13px] font-bold text-slate-700 hover:text-slate-900 px-4 py-2 transition-colors cursor-pointer"
             >
               Iniciar Sessão
             </button>
@@ -377,7 +633,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 setRegError('');
                 setIsRegisterModalOpen(true);
               }}
-              className="bg-orange-500 hover:bg-orange-600 text-white font-bold text-[13px] px-5 py-2.5 rounded-full transition-all shadow-md shadow-orange-500/10"
+              className="bg-orange-500 hover:bg-orange-600 text-white font-bold text-[13px] px-5 py-2.5 rounded-full transition-all shadow-md shadow-orange-500/10 cursor-pointer"
             >
               Testar Grátis
             </button>
@@ -391,6 +647,181 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             {isMobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
           </button>
         </div>
+
+        {/* Mega Menu de Ajuda em Desktop (Largura total com animação de descida) */}
+        <AnimatePresence>
+          {isHelpDropdownOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0, y: -20 }}
+              animate={{ height: "auto", opacity: 1, y: 0 }}
+              exit={{ height: 0, opacity: 0, y: -20 }}
+              transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+              className="hidden lg:block absolute left-0 right-0 top-full bg-white border-b border-slate-200/90 shadow-2xl overflow-hidden z-50 text-slate-700 select-none pb-10 pt-8"
+              onMouseEnter={handleHelpMouseEnter}
+              onMouseLeave={handleHelpMouseLeave}
+            >
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-12 gap-10">
+                {/* Coluna 1: Suporte e Sucesso */}
+                <div className="md:col-span-4 space-y-5">
+                  <h5 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Suporte & Sucesso</h5>
+                  <div className="space-y-4">
+                    {/* Centro de Ajuda */}
+                    <button 
+                      onClick={() => {
+                        setIsHelpDropdownOpen(false);
+                        triggerScroll('faq');
+                      }}
+                      className="w-full text-left group block focus:outline-none cursor-pointer"
+                    >
+                      <h4 className="font-bold text-slate-900 group-hover:text-orange-500 text-sm transition-colors flex items-center gap-1.5">
+                        Centro de Ajuda
+                      </h4>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-normal">
+                        Dicas, tutoriais e vídeos sobre a utilização do Fatu-R e obrigações fiscais.
+                      </p>
+                    </button>
+
+                    {/* Contactos */}
+                    <button 
+                      onClick={() => {
+                        setIsHelpDropdownOpen(false);
+                        setHelpMessageModal({
+                          isOpen: true,
+                          title: "Contactos de Suporte",
+                          body: "Estamos sempre disponíveis para ajudar o seu negócio a crescer!\n\nEmail: suporte@fatur.ao\nTelefone: +244 923 000 000 (Segunda a Sexta, das 8h às 17h)\nChat Oficial: Disponível diretamente na sua consola de administração Fatu-R."
+                        });
+                      }}
+                      className="w-full text-left group block focus:outline-none cursor-pointer"
+                    >
+                      <h4 className="font-bold text-slate-900 group-hover:text-orange-500 text-sm transition-colors">
+                        Contactos
+                      </h4>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-normal">
+                        Disponíveis através de chat, e-mail e telefone.
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Coluna 2: Conectividade e API */}
+                <div className="md:col-span-4 space-y-5">
+                  <h5 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Conectividade & API</h5>
+                  <div className="space-y-4">
+                    {/* Integrações */}
+                    <button 
+                      onClick={() => {
+                        setIsHelpDropdownOpen(false);
+                        triggerScroll('funcionalidades');
+                      }}
+                      className="w-full text-left group block focus:outline-none cursor-pointer"
+                    >
+                      <h4 className="font-bold text-slate-900 group-hover:text-orange-500 text-sm transition-colors">
+                        Integrações
+                      </h4>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-normal">
+                        Ligação com outras plataformas, tais como lojas online e entidades de pagamento.
+                      </p>
+                    </button>
+
+                    {/* API */}
+                    <button 
+                      onClick={() => {
+                        setIsHelpDropdownOpen(false);
+                        setHelpMessageModal({
+                          isOpen: true,
+                          title: "Portal do Programador - Fatu-R API",
+                          body: "A API do Fatu-R está disponível para todos os clientes com o plano Profissional ou superior. Permite integrar com lojas online (WooCommerce, Shopify), CRMs e ERPs do seu negócio.\n\nDocumentação técnica completa e sandboxes estão disponíveis em api.fatur.ao. Contacte developers@fatur.ao para solicitar a ativação das credenciais de produção."
+                        });
+                      }}
+                      className="w-full text-left group block focus:outline-none cursor-pointer"
+                    >
+                      <h4 className="font-bold text-slate-900 group-hover:text-orange-500 text-sm transition-colors">
+                        API
+                      </h4>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-normal">
+                        Integre hoje mesmo a sua aplicação com o Fatu-R. Documentação técnica disponível.
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Coluna 3: Links Úteis */}
+                <div className="md:col-span-2 space-y-4">
+                  <h5 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Links Úteis</h5>
+                  <div className="flex flex-col gap-3 text-[11px]">
+                    <button 
+                      onClick={() => {
+                        setIsHelpDropdownOpen(false);
+                        setHelpMessageModal({
+                          isOpen: true,
+                          title: "Fatu-R Blog & Recursos",
+                          body: "Visite o nosso canal de publicações em blog.fatur.ao para ler artigos sobre:\n\n1. Gestão financeira aplicada para PMEs em Angola.\n2. Como cumprir os regulamentos fiscais da AGT sem complicações.\n3. Estratégias de vendas de sucesso para o retalho e restauração.\n4. Novidades e atualizações sobre faturamento e software POS."
+                        });
+                      }}
+                      className="text-left text-slate-500 hover:text-orange-500 font-bold transition-colors cursor-pointer"
+                    >
+                      • Blog
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setIsHelpDropdownOpen(false);
+                        setHelpMessageModal({
+                          isOpen: true,
+                          title: "Sobre Nós",
+                          body: "Fatu-R é uma plataforma líder de faturação eletrónica online certificada em Angola sob o registo Nº 142/AGT. Desenvolvido para simplificar a gestão empresarial moderna com ferramentas poderosas de POS, inventário e fluxos de faturamento em conformidade legal."
+                        });
+                      }}
+                      className="text-left text-slate-500 hover:text-orange-500 font-bold transition-colors cursor-pointer"
+                    >
+                      • Sobre Nós
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setIsHelpDropdownOpen(false);
+                        triggerScroll('testemunhos');
+                      }}
+                      className="text-left text-slate-500 hover:text-orange-500 font-bold transition-colors cursor-pointer"
+                    >
+                      • Testemunhos
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setIsHelpDropdownOpen(false);
+                        setHelpMessageModal({
+                          isOpen: true,
+                          title: "Recuperar Palavra-passe",
+                          body: "Para recuperar a sua palavra-passe de acesso ao Fatu-R, contacte o nosso suporte técnico oficial enviando um e-mail para suporte@fatur.ao com o seu endereço de registo, ou ligue direto para a nossa linha de atendimento +244 923 000 000."
+                        });
+                      }}
+                      className="text-left text-slate-500 hover:text-orange-500 font-bold transition-colors cursor-pointer"
+                    >
+                      • Recuperar Password
+                    </button>
+                  </div>
+                </div>
+
+                {/* Coluna 4: Aplicações Móveis */}
+                <div className="md:col-span-2 space-y-4">
+                  <h5 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Aplicações Móveis</h5>
+                  <div className="flex flex-col gap-2.5">
+                    <a href="#playstore" className="flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 rounded-xl transition-all justify-center">
+                      <svg className="w-3.5 h-3.5 fill-current text-white" viewBox="0 0 24 24">
+                        <path d="M5,3H19A2,2 0 0,1 21,5V19A2,2 0 0,1 19,21H5A2,2 0 0,1 3,19V5A2,2 0 0,1 5,3M17.5,12L8,6.5V17.5L17.5,12Z" />
+                      </svg>
+                      <span className="text-[10px] font-bold text-white whitespace-nowrap">Google Play</span>
+                    </a>
+                    <a href="#appstore" className="flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 rounded-xl transition-all justify-center">
+                      <svg className="w-3.5 h-3.5 fill-current text-white" viewBox="0 0 24 24">
+                        <path d="M18.71,19.5C17.88,20.74 17,21.95 15.66,21.97C14.32,22 13.89,21.18 12.37,21.18C10.84,21.18 10.37,21.95 9.1,22C7.79,22.05 6.8,20.68 5.96,19.47C4.25,17 2.94,12.45 4.7,9.39C5.57,7.87 7.13,6.91 8.82,6.88C10.1,6.86 11.32,7.75 12.11,7.75C12.89,7.75 14.37,6.68 15.92,6.84C16.57,6.87 18.39,7.1 19.56,8.82C19.47,8.88 17.39,10.1 17.41,12.63C17.44,15.65 20.06,16.66 20.1,16.67C20.08,16.74 19.67,18.11 18.71,19.5M15.97,4.17C16.63,3.37 17.07,2.28 16.95,1C16,1.04 14.9,1.6 14.24,2.38C13.68,3.04 13.19,4.14 13.34,5.39C14.39,5.47 15.4,4.88 15.97,4.17Z" />
+                      </svg>
+                      <span className="text-[10px] font-bold text-white whitespace-nowrap">Apple Store</span>
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Mobile menu dropdown */}
         <AnimatePresence>
@@ -414,6 +845,152 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 <button onClick={() => triggerScroll('faq')} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 rounded-lg hover:bg-slate-50">
                   Perguntas Frequentes
                 </button>
+                
+                {/* Mobile Ajuda item and panel */}
+                <div className="border-t border-slate-100 pt-1.5 mt-0.5">
+                  <button 
+                    onClick={() => setIsHelpDropdownOpen(!isHelpDropdownOpen)}
+                    className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold text-slate-800 rounded-lg hover:bg-slate-50 select-none cursor-pointer"
+                  >
+                    <span>Ajuda</span>
+                    <ChevronDown 
+                      size={14} 
+                      className={`text-slate-500 transition-transform duration-300 ${!isHelpDropdownOpen ? 'rotate-180 text-orange-500' : 'rotate-0'}`} 
+                    />
+                  </button>
+                  <AnimatePresence>
+                    {isHelpDropdownOpen && (
+                      <motion.div 
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="pl-3 pr-2 py-2 mt-1 bg-slate-50 rounded-xl border border-slate-100/50 space-y-4 text-left overflow-hidden"
+                      >
+                        {/* Help content links */}
+                        <button 
+                          onClick={() => {
+                            setIsMobileMenuOpen(false);
+                            setIsHelpDropdownOpen(false);
+                            triggerScroll('faq');
+                          }}
+                          className="w-full text-left block cursor-pointer"
+                        >
+                          <h4 className="font-bold text-slate-900 text-[12px]">Centro de Ajuda</h4>
+                          <p className="text-[10px] text-slate-500 mt-0.5">Dicas, tutoriais e vídeos sobre a utilização do Fatu-R e obrigações fiscais.</p>
+                        </button>
+
+                        <button 
+                          onClick={() => {
+                            setIsMobileMenuOpen(false);
+                            setIsHelpDropdownOpen(false);
+                            setHelpMessageModal({
+                              isOpen: true,
+                              title: "Contactos de Suporte",
+                              body: "Estamos sempre disponíveis para ajudar o seu negócio a crescer!\n\nEmail: suporte@fatur.ao\nTelefone: +244 923 000 000 (Segunda a Sexta, das 8h às 17h)\nChat Oficial: Disponível diretamente na sua consola de administração Fatu-R."
+                            });
+                          }}
+                          className="w-full text-left block cursor-pointer"
+                        >
+                          <h4 className="font-bold text-slate-900 text-[12px]">Contactos</h4>
+                          <p className="text-[10px] text-slate-500 mt-0.5">Disponíveis através de chat, e-mail e telefone.</p>
+                        </button>
+
+                        <button 
+                          onClick={() => {
+                            setIsMobileMenuOpen(false);
+                            setIsHelpDropdownOpen(false);
+                            triggerScroll('funcionalidades');
+                          }}
+                          className="w-full text-left block cursor-pointer"
+                        >
+                          <h4 className="font-bold text-slate-900 text-[12px]">Integrações</h4>
+                          <p className="text-[10px] text-slate-500 mt-0.5 font-sans">Ligação com outras plataformas, tais como lojas online e entidades de pagamento.</p>
+                        </button>
+
+                        <button 
+                          onClick={() => {
+                            setIsMobileMenuOpen(false);
+                            setIsHelpDropdownOpen(false);
+                            setHelpMessageModal({
+                              isOpen: true,
+                              title: "Portal do Programador - Fatu-R API",
+                              body: "A API do Fatu-R está disponível para todos os clientes com o plano Profissional ou superior. Permite integrar com lojas online (WooCommerce, Shopify), CRMs e ERPs do seu negócio.\n\nDocumentação técnica completa e sandboxes estão disponíveis em api.fatur.ao. Contacte developers@fatur.ao para solicitar a ativação das credenciais de produção."
+                            });
+                          }}
+                          className="w-full text-left block cursor-pointer"
+                        >
+                          <h4 className="font-bold text-slate-900 text-[12px]">API</h4>
+                          <p className="text-[10px] text-slate-500 mt-0.5">Integre hoje mesmo a sua aplicação com o Fatu-R. Documentação técnica disponível.</p>
+                        </button>
+
+                        {/* Useful Links on Mobile */}
+                        <div className="border-t border-slate-200/60 pt-2">
+                          <h5 className="text-[9px] uppercase font-bold text-slate-400 mb-1.5">Links Úteis</h5>
+                          <div className="grid grid-cols-2 gap-2 text-[10px] font-bold text-slate-600">
+                            <button 
+                              onClick={() => {
+                                setIsMobileMenuOpen(false);
+                                setIsHelpDropdownOpen(false);
+                                setHelpMessageModal({
+                                  isOpen: true,
+                                  title: "Fatu-R Blog & Recursos",
+                                  body: "Visite o nosso canal de publicações em blog.fatur.ao para ler artigos sobre faturamentos, impostos AGT e negócios."
+                                });
+                              }}
+                              className="text-left py-0.5 hover:text-orange-500 cursor-pointer"
+                            >
+                              Blog
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setIsMobileMenuOpen(false);
+                                setIsHelpDropdownOpen(false);
+                                setHelpMessageModal({
+                                  isOpen: true,
+                                  title: "Sobre Nós",
+                                  body: "Fatu-R é uma plataforma de faturação eletrónica online certificada sob o registo Nº 142/AGT, criada para revolucionar a simplificação operacional angolana."
+                                });
+                              }}
+                              className="text-left py-0.5 hover:text-orange-500 cursor-pointer"
+                            >
+                              Sobre Nós
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setIsMobileMenuOpen(false);
+                                setIsHelpDropdownOpen(false);
+                                triggerScroll('testemunhos');
+                              }}
+                              className="text-left py-0.5 hover:text-orange-500 cursor-pointer"
+                            >
+                              Testemunhos
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setIsMobileMenuOpen(false);
+                                setIsHelpDropdownOpen(false);
+                                setHelpMessageModal({
+                                  isOpen: true,
+                                  title: "Recuperar Palavra-passe",
+                                  body: "Fale com o suporte técnico no suporte@fatur.ao ou ligue +244 923 000 000 para receber suporte de reset."
+                                });
+                              }}
+                              className="text-left py-0.5 hover:text-orange-500 cursor-pointer"
+                            >
+                              Recuperar Password
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Badges on mobile */}
+                        <div className="flex gap-2 pt-2 border-t border-slate-200/60">
+                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">Google Play</span>
+                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">Apple Store</span>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               </nav>
               <div className="pt-4 border-t border-slate-200 flex flex-col gap-2">
                 <button 
@@ -443,205 +1020,161 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
       </nav>
 
       {/* 3. HERO & DEMO SECTION */}
-      <section className="bg-gradient-to-b from-blue-705 from-blue-900 to-indigo-950 text-white py-14 md:py-20 overflow-hidden relative">
+      <section className="bg-gradient-to-b from-blue-900 to-indigo-950 text-white py-14 md:py-24 overflow-hidden relative">
         <div className="absolute inset-0 bg-grid-white/[0.02] pointer-events-none" />
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center relative z-10">
-          
-          <div className="lg:col-span-6 space-y-6 text-center lg:text-left">
-            <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 backdrop-blur-md rounded-full text-[11px] font-semibold tracking-wider text-orange-400 border border-white/20">
-              <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse" />
-              <span>Simples, Intuitivo e 100% Online</span>
-            </div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
             
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-tight">
-              A Faturação do Seu Negócio, <br />
-              <span className="text-orange-400">Descomplicada Ao Máximo.</span>
-            </h1>
+            {/* Left Content */}
+            <div className="lg:col-span-7 space-y-8 text-left">
+              <div className="space-y-6">
+                
+                <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-tight">
+                  A Faturação do Seu Negócio, <br />
+                  <span className="text-orange-400">Descomplicada Ao Máximo.</span>
+                </h1>
 
-            <p className="text-slate-200 text-sm sm:text-base max-w-xl mx-auto lg:mx-0 leading-relaxed font-normal">
-              Fature em segundos e controle o seu ponto de venda (POS), armazéns, salários e finanças sem confusões. Tudo sincronizado em tempo real no computador, tablet ou telemóvel.
-            </p>
-
-            <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3.5 pt-2">
-              <button 
-                onClick={() => {
-                  setRegError('');
-                  setIsRegisterModalOpen(true);
-                }}
-                className="w-full sm:w-auto bg-orange-500 hover:bg-orange-600 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-orange-500/10"
-              >
-                Criar Conta Grátis
-              </button>
-              <button 
-                onClick={() => triggerScroll('precos')}
-                className="w-full sm:w-auto bg-white/10 hover:bg-white/15 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all border border-white/10"
-              >
-                Ver Planos
-              </button>
-            </div>
-
-            <div className="pt-2 flex flex-wrap items-center justify-center lg:justify-start gap-4 text-slate-300 text-[11px] font-bold">
-              <div className="flex items-center gap-1.5">
-                <Check size={14} className="text-orange-400" /> Sem Cartão de Crédito
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Check size={14} className="text-orange-400" /> SAFT-A Angola 1-Clique
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Check size={14} className="text-orange-400" /> Suporte Permanente
-              </div>
-            </div>
-          </div>
-
-          {/* INTERACTIVE DEMO AND CHANNELS (Clean, Intuitiva e sem bagunça) */}
-          <div className="lg:col-span-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden text-slate-100">
-              
-              {/* Header */}
-              <div className="flex border-b border-slate-800 text-xs font-bold bg-slate-950/50 py-4 px-5 items-center gap-2">
-                <Receipt className="text-orange-500 w-4 h-4" />
-                <span className="text-white">Simular Emissão de Fatura POS</span>
-              </div>
-
-              <div className="p-5 space-y-4 text-left">
-                <p className="text-xs text-slate-400 font-semibold leading-relaxed">
-                  Experimente a nossa facilidade de emissão de faturas. Escolha os produtos abaixo e veja a fatura gerar-se instantaneamente!
+                <p className="text-slate-200 text-sm sm:text-lg leading-relaxed font-normal max-w-xl">
+                  Fature em segundos e controle o seu ponto de venda (POS), armazéns, salários e finanças sem confusões. Tudo sincronizado em tempo real no computador, tablet ou telemóvel.
                 </p>
 
-                {/* Quantity selector items */}
-                <div className="space-y-2.5">
-                  {(['cafe', 'agua', 'pastel'] as const).map(k => {
-                    const meta = productMeta[k];
-                    return (
-                      <div key={k} className="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                        <div>
-                          <p className="text-xs font-bold text-white">{meta.name}</p>
-                          <p className="text-[10px] text-slate-400 font-mono">{meta.price.toLocaleString('pt-AO')} Kz</p>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <button 
-                            onClick={() => setSimCart(v => ({ ...v, [k]: Math.max(0, v[k] - 1) }))}
-                            className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors"
-                          >
-                            <Minus size={12} />
-                          </button>
-                          <span className="text-xs font-mono font-bold w-4 text-center">{simCart[k]}</span>
-                          <button 
-                            onClick={() => setSimCart(v => ({ ...v, [k]: v[k] + 1 }))}
-                            className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors"
-                          >
-                            <Plus size={12} />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Pricing Calculation footer */}
-                <div className="pt-3 border-t border-slate-800/80 space-y-1.5 text-xs text-slate-400 font-mono">
-                  <div className="flex justify-between">
-                    <span>Total Sem IVA:</span>
-                    <span>{(getSimTotal() * 0.86).toFixed(2)} Kz</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>IVA (14% Incluído):</span>
-                    <span>{(getSimTotal() * 0.14).toFixed(2)} Kz</span>
-                  </div>
-                  <div className="flex justify-between text-sm font-bold text-white pt-1">
-                    <span>Total a Faturar:</span>
-                    <span className="text-orange-400">{getSimTotal().toLocaleString('pt-AO')} Kz</span>
-                  </div>
-                </div>
-
-                <div className="pt-1.5">
+                <div className="flex flex-wrap items-center gap-3.5 pt-4">
                   <button 
-                    onClick={runFaturacaoSimulation}
-                    disabled={getSimTotal() === 0 || simulating}
-                    className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-slate-800 disabled:opacity-40 disabled:hover:bg-slate-800 py-2.5 text-xs text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2"
+                    onClick={() => {
+                      setRegError('');
+                      setIsRegisterModalOpen(true);
+                    }}
+                    className="w-full sm:w-auto bg-orange-500 hover:bg-orange-600 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-orange-500/10"
                   >
-                    {simulating ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        <span>A processar em AGT...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Zap size={14} /> Emitir Fatura Online de Teste
-                      </>
-                    )}
+                    Criar Conta Grátis
+                  </button>
+                  <button 
+                    onClick={() => triggerScroll('precos')}
+                    className="w-full sm:w-auto bg-white/10 hover:bg-white/15 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all border border-white/10"
+                  >
+                    Ver Planos
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setPaidError('');
+                      setPaidSuccess(false);
+                      setHasPaidSimulated(false);
+                      setIsPaidModalOpen(true);
+                    }}
+                    className="w-full sm:w-auto bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-amber-500/15 border border-amber-400/20"
+                  >
+                    Pagar Agora
                   </button>
                 </div>
 
-                {/* Simulating final receipt modal inside the card */}
-                <AnimatePresence>
-                  {simulatedReceipt && (
-                    <motion.div 
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="bg-white text-slate-900 rounded-xl p-4 border border-emerald-500 mt-2 space-y-3 shadow-md"
-                    >
-                      <div className="flex items-center gap-2 text-emerald-600 font-bold text-xs">
-                        <ShieldCheck size={16} />
-                        <span>Fatura Emitida de Acordo com as Regras AGT</span>
-                      </div>
-                      
-                      <div className="bg-slate-50 border border-slate-200 rounded p-3 font-mono text-[10px] space-y-2 text-slate-700">
-                        <div className="text-center font-bold border-b border-dashed border-slate-300 pb-2">
-                          <p className="text-xs uppercase font-extrabold">Fatu-R POS de Demonstração</p>
-                          <p>NIF: 5000284918 • Luanda, Angola</p>
-                          <p>Fatura Simplificada FS SM/02931</p>
-                        </div>
-                        <div className="space-y-1 py-1.5 border-b border-dashed border-slate-300">
-                          {(['cafe', 'agua', 'pastel'] as const).filter(k => simCart[k] > 0).map(k => {
-                            const q = simCart[k];
-                            const item = productMeta[k];
-                            return (
-                              <div key={k} className="flex justify-between font-mono">
-                                <span>{q}x {item.name}</span>
-                                <span className="font-bold">{(q * item.price).toLocaleString()} Kz</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <div className="flex justify-between font-bold text-slate-900 pt-1 text-xs">
-                          <span>TOTAL PAGO:</span>
-                          <span>{getSimTotal().toLocaleString()} Kz</span>
-                        </div>
-                        <p className="text-[8px] text-zinc-400 text-center pt-2">Processado por Software de Faturação Fatu-R Validado • ID 142/AGT</p>
-                      </div>
-                      
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={() => setSimulatedReceipt(false)}
-                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] py-1.5 px-3 rounded-lg transition-all"
-                        >
-                          Fechar Recibo
-                        </button>
-                        <button 
-                          onClick={() => {
-                            setSimulatedReceipt(false);
-                            setRegError('');
-                            setIsRegisterModalOpen(true);
-                          }}
-                          className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold text-[11px] py-1.5 px-3 rounded-lg transition-all text-center"
-                        >
-                          Testar com Meus Dados
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                <div className="pt-4 flex flex-wrap items-center gap-5 text-slate-300 text-[11px] font-bold">
+                  <div className="flex items-center gap-1.5">
+                    <Check size={14} className="text-orange-400" /> Sem Cartão de Crédito
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Check size={14} className="text-orange-400" /> SAFT-A Angola 1-Clique
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Check size={14} className="text-orange-400" /> Suporte Permanente
+                  </div>
+                </div>
               </div>
-
-              <div className="bg-slate-950 p-3.5 text-center text-[10px] text-slate-500 border-t border-slate-800/80 font-bold">
-                ✓ Teste de emissão online interativo. Para iniciar sessão com contas demo rápidas, clique em &quot;Iniciar Sessão&quot; no topo.
-              </div>
-
             </div>
-          </div>
 
+            {/* Right Content */}
+            <div className="lg:col-span-5 flex justify-center lg:justify-end">
+              <div className="relative w-full max-w-lg">
+                {/* Glowing decorative ambient blob */}
+                <div className="absolute -inset-2 bg-gradient-to-r from-orange-500 to-indigo-500 rounded-3xl blur-2xl opacity-20 animate-pulse" style={{ animationDuration: '4s' }} />
+                
+                <div className="relative rounded-2xl overflow-hidden shadow-2xl shadow-black/50 border border-white/10 aspect-video md:aspect-[4/3] w-full bg-slate-950 flex flex-col group">
+                  <div className="relative flex-1 overflow-hidden">
+                    <AnimatePresence mode="wait">
+                      <motion.div
+                        key={heroSlideIndex}
+                        initial={{ opacity: 0, scale: 1.05 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        transition={{ duration: 0.7, ease: "easeInOut" }}
+                        className="absolute inset-0 w-full h-full"
+                      >
+                        <img 
+                          src={heroSlides[heroSlideIndex].url} 
+                          alt={heroSlides[heroSlideIndex].title} 
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                        {/* Overlay gradient for reading text and elegance */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/95 via-slate-950/40 to-transparent pointer-events-none" />
+                        
+                        {/* Artistic overlay text badge / text */}
+                        <div className="absolute bottom-4 left-4 right-4 text-left space-y-1 z-10">
+                          <motion.span 
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.2 }}
+                            className="inline-block px-2.5 py-0.5 bg-orange-500/90 text-[8px] sm:text-[10px] uppercase tracking-widest font-extrabold rounded-md text-white mb-1 shadow"
+                          >
+                            Destaque Do Sistema
+                          </motion.span>
+                          <motion.h4 
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.3 }}
+                            className="text-base sm:text-lg font-bold text-white tracking-tight leading-none"
+                          >
+                            {heroSlides[heroSlideIndex].title}
+                          </motion.h4>
+                          <motion.p 
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.4 }}
+                            className="text-slate-300 text-xs font-medium"
+                          >
+                            {heroSlides[heroSlideIndex].desc}
+                          </motion.p>
+                        </div>
+                      </motion.div>
+                    </AnimatePresence>
+
+                    {/* Manual Navigation Controls (appear on hover) */}
+                    <button
+                      onClick={() => setHeroSlideIndex((prev) => (prev - 1 + heroSlides.length) % heroSlides.length)}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-slate-900/60 backdrop-blur-sm border border-white/10 flex items-center justify-center text-white hover:bg-orange-500 hover:border-orange-500 transition-all opacity-0 group-hover:opacity-100 z-20 cursor-pointer"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <button
+                      onClick={() => setHeroSlideIndex((prev) => (prev + 1) % heroSlides.length)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-slate-900/60 backdrop-blur-sm border border-white/10 flex items-center justify-center text-white hover:bg-orange-500 hover:border-orange-500 transition-all opacity-0 group-hover:opacity-100 z-20 cursor-pointer"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+
+                  {/* Indicator Dots at the bottom border */}
+                  <div className="py-3 px-4 bg-slate-900/90 border-t border-white/5 flex items-center justify-between z-10 shrink-0">
+                    <div className="flex gap-1.5">
+                      {heroSlides.map((_, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => setHeroSlideIndex(idx)}
+                          className={`h-2 rounded-full transition-all duration-300 cursor-pointer ${
+                            idx === heroSlideIndex ? "bg-orange-500 w-6" : "bg-white/20 w-2 hover:bg-white/40"
+                          }`}
+                          aria-label={`Ir para slide ${idx + 1}`}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-400 tracking-wider">
+                      {String(heroSlideIndex + 1).padStart(2, '0')} / {String(heroSlides.length).padStart(2, '0')}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
         </div>
       </section>
 
@@ -1520,20 +2053,173 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
       </section>
 
       {/* 10. FOOTER */}
-      <footer className="bg-slate-950 text-slate-500 py-10 border-t border-slate-900 px-4 text-center text-xs">
-        <div className="max-w-7xl mx-auto space-y-4">
-          <p className="font-semibold text-slate-400">
-            fatu<span className="text-orange-500">.R</span> © {new Date().getFullYear()} • Sistema de Faturação Eletrônica Online Certificado AGT
-          </p>
-          <p className="text-[10px] text-slate-600 max-w-xl mx-auto">
-            Certificado sob o registro Nº 142/AGT. De acordo com as leis fiscais em vigor na República de Angola. Desenvolvido sob rigorosos critérios de segurança, desempenho e estabilidade operacional.
-          </p>
+      <footer className="bg-slate-950 text-slate-400 pt-16 pb-12 border-t border-slate-900 px-4 sm:px-6 lg:px-8 text-xs">
+        <div className="max-w-7xl mx-auto space-y-12">
+          
+          {/* Main Footer Columns Grid */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-8 text-left">
+            
+            {/* Column 1: Porquê o Fatu-R */}
+            <div className="space-y-4">
+              <h4 className="text-white font-black text-xs uppercase tracking-wider">Porquê o Fatu-R?</h4>
+              <ul className="space-y-2 text-slate-400 text-[11px]">
+                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Loja Online Grátis - Fatu-R Go</a></li>
+                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Equipamentos & Hardware</a></li>
+                <li><a href="#testemunhos" className="hover:text-orange-500 transition-colors">Testemunhos de Sucesso</a></li>
+                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Integrações de API</a></li>
+                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Fatu-R Desktop Offline</a></li>
+              </ul>
+            </div>
+
+            {/* Column 2: Negócios & Setores */}
+            <div className="space-y-4">
+              <h4 className="text-white font-black text-xs uppercase tracking-wider">Negócios</h4>
+              <ul className="space-y-2 text-slate-400 text-[11px]">
+                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software de Facturação</a></li>
+                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software POS Comercial</a></li>
+                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software POS Restauração</a></li>
+                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software Loja de Roupa</a></li>
+                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software Café e Gestão</a></li>
+                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software Construção Civil</a></li>
+              </ul>
+            </div>
+
+            {/* Column 3: Suporte & Recursos */}
+            <div className="space-y-4">
+              <h4 className="text-white font-black text-xs uppercase tracking-wider">Suporte</h4>
+              <ul className="space-y-2 text-slate-400 text-[11px]">
+                <li><a href="#blog" className="hover:text-orange-500 transition-colors">Blog & Finanças</a></li>
+                <li><a href="#faq" className="hover:text-orange-500 transition-colors">Centro de Ajuda</a></li>
+                <li><a href="#sobre" className="hover:text-orange-500 transition-colors">Sobre Nós</a></li>
+                <li><a href="#api" className="hover:text-orange-500 transition-colors">API para Programadores</a></li>
+                <li><a href="#contacto" className="hover:text-orange-500 transition-colors">Contactos e Apoio</a></li>
+              </ul>
+            </div>
+
+            {/* Column 4: Conta & Legal */}
+            <div className="space-y-4">
+              <h4 className="text-white font-black text-xs uppercase tracking-wider">Conta</h4>
+              <ul className="space-y-2 text-slate-400 text-[11px]">
+                <li><button onClick={() => setIsLoginModalOpen(true)} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Login / Entrar</button></li>
+                <li><button onClick={() => { setRegError(''); setIsRegisterModalOpen(true); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Criar Conta Grátis</button></li>
+                <li><a href="#termos" className="hover:text-orange-500 transition-colors">Termos e Condições</a></li>
+                <li><a href="#privacidade" className="hover:text-orange-500 transition-colors">Política de Privacidade</a></li>
+                <li><a href="#dados" className="hover:text-orange-500 transition-colors">Proteção de Dados</a></li>
+              </ul>
+            </div>
+
+          </div>
+
+          <div className="border-t border-slate-900 pt-8 flex flex-col md:flex-row items-center justify-between gap-6">
+            {/* Left: Brand Name only */}
+            <div className="flex items-center gap-1">
+              <span className="text-xl font-black tracking-tight text-white">
+                fatu<span className="text-orange-500">.R</span>
+              </span>
+            </div>
+
+            {/* Center: Social Networks */}
+            <div className="flex gap-5 items-center">
+              <a href="#facebook" className="text-slate-500 hover:text-white transition-colors" aria-label="Facebook">
+                <Facebook size={24} />
+              </a>
+              <a href="#google" className="text-slate-500 hover:text-white transition-colors flex items-center justify-center font-black text-lg tracking-tighter w-6 h-6 leading-none" aria-label="Google">
+                G
+              </a>
+              <a href="#youtube" className="text-slate-500 hover:text-white transition-colors" aria-label="YouTube">
+                <Youtube size={24} />
+              </a>
+              <a href="#linkedin" className="text-slate-500 hover:text-white transition-colors" aria-label="Linkedin">
+                <Linkedin size={24} />
+              </a>
+              <a href="#instagram" className="text-slate-500 hover:text-white transition-colors" aria-label="Instagram">
+                <Instagram size={24} />
+              </a>
+            </div>
+
+            {/* Right: Store Badges (cleaner, no extra description texts) */}
+            <div className="flex flex-col sm:flex-row gap-3">
+              {/* Play Store */}
+              <a 
+                href="#playstore" 
+                className="flex items-center gap-2.5 px-3.5 py-1.5 bg-black border border-slate-800 hover:border-orange-500 hover:bg-slate-900 rounded-xl transition-all"
+              >
+                <div className="text-slate-400 hover:text-white">
+                  <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                    <path d="M5,3H19A2,2 0 0,1 21,5V19A2,2 0 0,1 19,21H5A2,2 0 0,1 3,19V5A2,2 0 0,1 5,3M17.5,12L8,6.5V17.5L17.5,12Z" />
+                  </svg>
+                </div>
+                <div className="text-left font-sans">
+                  <div className="text-xs font-black text-white leading-tight">Google Play</div>
+                </div>
+              </a>
+              {/* App Store */}
+              <a 
+                href="#appstore" 
+                className="flex items-center gap-2.5 px-3.5 py-1.5 bg-black border border-slate-800 hover:border-orange-500 hover:bg-slate-900 rounded-xl transition-all"
+              >
+                <div className="text-slate-400 hover:text-white">
+                  <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                    <path d="M18.71,19.5C17.88,20.74 17,21.95 15.66,21.97C14.32,22 13.89,21.18 12.37,21.18C10.84,21.18 10.37,21.95 9.1,22C7.79,22.05 6.8,20.68 5.96,19.47C4.25,17 2.94,12.45 4.7,9.39C5.57,7.87 7.13,6.91 8.82,6.88C10.1,6.86 11.32,7.75 12.11,7.75C12.89,7.75 14.37,6.68 15.92,6.84C16.57,6.87 18.39,7.1 19.56,8.82C19.47,8.88 17.39,10.1 17.41,12.63C17.44,15.65 20.06,16.66 20.1,16.67C20.08,16.74 19.67,18.11 18.71,19.5M15.97,4.17C16.63,3.37 17.07,2.28 16.95,1C16,1.04 14.9,1.6 14.24,2.38C13.68,3.04 13.19,4.14 13.34,5.39C14.39,5.47 15.4,4.88 15.97,4.17Z" />
+                  </svg>
+                </div>
+                <div className="text-left font-sans">
+                  <div className="text-xs font-black text-white leading-tight">Apple Store</div>
+                </div>
+              </a>
+            </div>
+          </div>
+
+          {/* Bottom Copyright and Legal Notice */}
+          <div className="border-t border-slate-900 pt-8 text-center space-y-3">
+            <p className="text-slate-500 text-[11px] leading-relaxed">
+              © Copyright 2015 - 2026 <span className="font-bold text-slate-400">Fatu-R</span> • Todos os direitos reservados.
+            </p>
+            <p className="text-[10px] text-slate-600 max-w-3xl mx-auto leading-relaxed">
+              Informação ao Consumidor - Tribunais Arbitrais • Certificado sob o registro Nº 142/AGT. De acordo com as leis fiscais em vigor na República de Angola. Desenvolvido sob rigorosos critérios de segurança, desempenho e estabilidade operacional.
+            </p>
+          </div>
+
         </div>
       </footer>
 
 
       {/* --- LOGIN MODAL (Pristine, Clean, and Easy to Use) --- */}
       <AnimatePresence>
+        {helpMessageModal.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl border border-slate-200/95 shadow-2xl max-w-md w-full overflow-hidden text-left"
+            >
+              <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-bold text-slate-900 text-sm">
+                  <span>{helpMessageModal.title}</span>
+                </div>
+                <button 
+                  onClick={() => setHelpMessageModal({ ...helpMessageModal, isOpen: false })}
+                  className="p-1 px-2.5 rounded bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors text-xs font-bold cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="p-6 text-slate-600 text-[13px] leading-relaxed whitespace-pre-wrap font-sans">
+                {helpMessageModal.body}
+              </div>
+              <div className="p-4 border-t border-slate-50 bg-slate-50/50 flex justify-end">
+                <button 
+                  onClick={() => setHelpMessageModal({ ...helpMessageModal, isOpen: false })}
+                  className="px-4 py-2 bg-orange-500 hover:bg-orange-600 font-bold text-white rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {isLoginModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm">
             <motion.div 
@@ -1791,6 +2477,434 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
           </div>
         )}
 
+        {/* --- BUSINESS DIRECT PAID CHECKOUT MODAL (Pagar Agora) --- */}
+        {isPaidModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm overflow-y-auto">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full overflow-hidden text-left my-8"
+            >
+              {/* Header */}
+              <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white">
+                <div className="flex items-center gap-2">
+                  <div className="bg-orange-500/20 p-1.5 rounded-lg text-orange-400">
+                    <Zap className="w-5 h-5 fill-current" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black tracking-tight">Comprar Licença do Fatu-R</h3>
+                    <p className="text-[10px] text-slate-300 font-medium">Bypass de teste grátis — Ativação de licença comercial direta</p>
+                  </div>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setIsPaidModalOpen(false)}
+                  className="p-1 px-2.5 rounded bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition-colors text-xs font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {paidSuccess ? (
+                <div className="p-12 text-center space-y-5">
+                  <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center mx-auto animate-bounce border border-emerald-200">
+                    <CheckCircle2 size={36} className="fill-current text-white bg-emerald-500 rounded-full" />
+                  </div>
+                  <h4 className="text-lg font-black text-slate-900">Subscrição Ativada com Sucesso!</h4>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                    Registámos a sua empresa com a licença 100% ativa de forma comercial. O servidor concluiu as configurações básicas de segurança e séries certificadas da AGT.<br />
+                    <span className="font-bold text-orange-500 mt-2 block">A iniciar sessão automática...</span>
+                  </p>
+                </div>
+              ) : (
+                <form onSubmit={handlePaidSubmit} className="p-6 space-y-6 overflow-y-auto max-h-[85vh]">
+                  
+                  {paidError && (
+                    <div className="bg-rose-50 border border-rose-200 text-rose-600 p-3.5 rounded-xl text-xs font-bold">
+                       {paidError}
+                    </div>
+                  )}
+
+                  {/* STEP 1: PLAN & DURATION */}
+                  <div className="space-y-3.5">
+                    <span className="text-[10px] uppercase tracking-wider font-extrabold text-orange-600 block">1. Defina a Sua Licença</span>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {/* Básico Card */}
+                      <div 
+                        onClick={() => setPaidPlan('Básico')}
+                        className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                          paidPlan === 'Básico' 
+                            ? 'border-orange-500 bg-orange-50/25 shadow-sm ring-1 ring-orange-500/20' 
+                            : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-xs font-black text-slate-800">Base / Básico</span>
+                            {paidPlan === 'Básico' && <div className="w-2.5 h-2.5 rounded-full bg-orange-500" />}
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Gestão de Serviços & Facturas em A4</p>
+                        </div>
+                        <span className="text-xs font-black text-slate-900 mt-3 block">7.900 Kz<span className="text-[10px] font-normal text-slate-400">/mês</span></span>
+                      </div>
+
+                      {/* Profissional Card */}
+                      <div 
+                        onClick={() => setPaidPlan('Profissional')}
+                        className={`p-3.5 rounded-xl border cursor-pointer relative overflow-hidden transition-all flex flex-col justify-between ${
+                          paidPlan === 'Profissional' 
+                            ? 'border-orange-500 bg-orange-50/25 shadow-sm ring-1 ring-orange-500/20' 
+                            : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'
+                        }`}
+                      >
+                        <div className="absolute top-0 right-0 bg-orange-500 text-white text-[8px] font-black px-2 py-0.5 rounded-bl">
+                          POPULAR
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-xs font-black text-slate-800">Flex / Profissional</span>
+                            {paidPlan === 'Profissional' && <div className="w-2.5 h-2.5 rounded-full bg-orange-500" />}
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Ideal para POS Retalho, Stock e Caixa Duplo</p>
+                        </div>
+                        <span className="text-xs font-black text-slate-900 mt-3 block">15.000 Kz<span className="text-[10px] font-normal text-slate-400">/mês</span></span>
+                      </div>
+
+                      {/* Empresarial Card */}
+                      <div 
+                        onClick={() => setPaidPlan('Empresarial')}
+                        className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                          paidPlan === 'Empresarial' 
+                            ? 'border-orange-500 bg-orange-50/25 shadow-sm ring-1 ring-orange-500/20' 
+                            : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-xs font-black text-slate-800">Pro / Empresarial</span>
+                            {paidPlan === 'Empresarial' && <div className="w-2.5 h-2.5 rounded-full bg-orange-500" />}
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Disposição avançada de cozinha, mesas & multi-armazém</p>
+                        </div>
+                        <span className="text-xs font-black text-slate-900 mt-3 block">19.500 Kz<span className="text-[10px] font-normal text-slate-400">/mês</span></span>
+                      </div>
+                    </div>
+
+                    {/* Period selection */}
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+                      <span className="text-xs font-bold text-slate-600">Período de Facturação:</span>
+                      <div className="flex bg-white border border-slate-200 p-1 rounded-lg w-full sm:w-auto">
+                        <button
+                          type="button"
+                          onClick={() => setPaidPeriod('trimestral')}
+                          className={`flex-1 sm:flex-none px-4 py-1.5 rounded-md text-[11px] font-black tracking-wide uppercase transition-all ${
+                            paidPeriod === 'trimestral' 
+                              ? 'bg-orange-500 text-white shadow-sm' 
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          Trimestral (3m)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaidPeriod('semestral')}
+                          className={`flex-1 sm:flex-none px-4 py-1.5 rounded-md text-[11px] font-black tracking-wide uppercase transition-all flex items-center gap-1 ${
+                            paidPeriod === 'semestral' 
+                              ? 'bg-orange-500 text-white shadow-sm' 
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          Semestral (6m)
+                          <span className="bg-orange-100 text-orange-600 text-[8px] font-black px-1 rounded-sm">-10%</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaidPeriod('anual')}
+                          className={`flex-1 sm:flex-none px-4 py-1.5 rounded-md text-[11px] font-black tracking-wide uppercase transition-all flex items-center gap-1 ${
+                            paidPeriod === 'anual' 
+                              ? 'bg-orange-500 text-white shadow-sm' 
+                              : 'text-slate-505 hover:text-slate-800'
+                          }`}
+                        >
+                          Anual (12m)
+                          <span className="bg-emerald-100 text-emerald-600 text-[8px] font-black px-1 rounded-sm">-20%</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* STEP 2: CREDENTIALS & ORGANIZATION */}
+                  <div className="space-y-3.5">
+                    <span className="text-[10px] uppercase tracking-wider font-extrabold text-orange-600 block">2. Dados de Acesso e da Empresa</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-extrabold uppercase text-slate-500">Nome do Administrador *</label>
+                        <input 
+                          type="text"
+                          required
+                          value={paidName}
+                          onChange={e => setPaidName(e.target.value)}
+                          placeholder="Responsável pela Licença"
+                          className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs outline-none focus:border-orange-500 font-semibold"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-extrabold uppercase text-slate-500">Nome Oficial da Empresa *</label>
+                        <input 
+                          type="text"
+                          required
+                          value={paidCompanyName}
+                          onChange={e => setPaidCompanyName(e.target.value)}
+                          placeholder="Nome Comercial ou NIF social"
+                          className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs outline-none focus:border-orange-500 font-semibold"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-extrabold uppercase text-slate-500">Email de Acesso *</label>
+                        <input 
+                          type="email"
+                          required
+                          value={paidEmail}
+                          onChange={e => setPaidEmail(e.target.value)}
+                          placeholder="email@empresa.com"
+                          className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs outline-none focus:border-orange-500 font-semibold"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-extrabold uppercase text-slate-500">Defina Uma Palavra-Passe *</label>
+                        <input 
+                          type="password"
+                          required
+                          value={paidPassword}
+                          onChange={e => setPaidPassword(e.target.value)}
+                          placeholder="Mínimo de 6 algarismos"
+                          className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs outline-none focus:border-orange-500 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-extrabold uppercase text-slate-500">NIF de Angola</label>
+                        <input 
+                          type="text"
+                          value={paidNif}
+                          onChange={e => setPaidNif(e.target.value)}
+                          placeholder="Ex: 541094852"
+                          className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs outline-none focus:border-orange-500 font-mono"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-extrabold uppercase text-slate-500">Contacto Telefónico</label>
+                        <input 
+                          type="text"
+                          value={paidPhone}
+                          onChange={e => setPaidPhone(e.target.value)}
+                          placeholder="Ex: 923 000 000"
+                          className="w-full bg-slate-50 border border-slate-205 p-2 rounded-lg text-xs outline-none focus:border-orange-500 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-extrabold uppercase text-slate-500">Endereço Sede</label>
+                      <input 
+                        type="text"
+                        value={paidAddress}
+                        onChange={e => setPaidAddress(e.target.value)}
+                        placeholder="Ex: Luanda, Talatona, via AL-14"
+                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs outline-none focus:border-orange-500 font-semibold"
+                      />
+                    </div>
+                  </div>
+
+                  {/* STEP 3: BILLING DETAILS & INTERACTIVE SIMULATOR */}
+                  <div className="p-4 bg-orange-50/20 border border-orange-100 rounded-2xl space-y-4">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-orange-100/50 pb-3 gap-2">
+                      <div>
+                        <span className="text-[9px] uppercase tracking-wider font-extrabold text-orange-600 block">3. Detalhes de Pagamento do Fatu-R</span>
+                        <h4 className="text-xs font-black text-slate-800 font-sans">
+                          Total a pagar para o período {paidPeriod}:
+                        </h4>
+                      </div>
+                      <div className="text-right">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-slate-400 line-through text-[10px] font-semibold">{getPaidPrice().original}</span>
+                          <span className="text-[9px] font-black text-emerald-650 text-emerald-600 bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded">Desconto {getPaidPrice().discount}</span>
+                        </div>
+                        <p className="text-sm font-black text-orange-600 leading-tight mt-0.5">{getPaidPrice().label}</p>
+                      </div>
+                    </div>
+
+                    {/* Selector of payment methods */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaidPaymentMethod('multicaixa');
+                          setPaidError('');
+                        }}
+                        className={`py-2 px-3 border rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all ${
+                          paidPaymentMethod === 'multicaixa' 
+                            ? 'border-orange-500 bg-orange-500/10 text-orange-600 ring-2 ring-orange-100/10' 
+                            : 'border-slate-200 bg-white text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <div className="w-4 h-4 rounded-full bg-slate-100 border border-slate-400 flex items-center justify-center shrink-0">
+                          {paidPaymentMethod === 'multicaixa' && <div className="w-2 h-2 rounded-full bg-orange-500" />}
+                        </div>
+                        Referência Multicaixa
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaidPaymentMethod('iban');
+                          setPaidError('');
+                        }}
+                        className={`py-2 px-3 border rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all ${
+                          paidPaymentMethod === 'iban' 
+                            ? 'border-orange-500 bg-orange-500/10 text-orange-600 ring-2 ring-orange-100/10' 
+                            : 'border-slate-200 bg-white text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <div className="w-4 h-4 rounded-full bg-slate-100 border border-slate-400 flex items-center justify-center shrink-0">
+                          {paidPaymentMethod === 'iban' && <div className="w-2 h-2 rounded-full bg-orange-500" />}
+                        </div>
+                        Transferência / IBAN
+                      </button>
+                    </div>
+
+                    {/* Dynamic payment info box with simulator */}
+                    {paidPaymentMethod === 'multicaixa' ? (
+                      <div className="bg-white border text-xs border-slate-200 rounded-xl p-3.5 space-y-3">
+                        <div className="flex border-b border-dashed pb-2 items-center justify-between">
+                          <span className="font-extrabold text-[10px] text-slate-400 uppercase">Referência de Pagamento Multicaixa</span>
+                          <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded uppercase">Entidade Registada</span>
+                        </div>
+                        <div className="space-y-1.5 font-mono">
+                          <div className="flex justify-between items-center bg-slate-50 p-1.5 rounded border border-slate-100">
+                            <span className="text-slate-400 font-bold text-[10px]">Entidade:</span>
+                            <span className="font-black text-slate-900 tracking-wider">21021</span>
+                          </div>
+                          <div className="flex justify-between items-center bg-slate-50 p-1.5 rounded border border-slate-100">
+                            <span className="text-slate-400 font-bold text-[10px]">Referência:</span>
+                            <span className="font-black text-slate-900 tracking-widest text-xs">981 741 028</span>
+                          </div>
+                          <div className="flex justify-between items-center bg-slate-50 p-1.5 rounded border border-slate-100">
+                            <span className="text-slate-400 font-bold text-[10px]">Valor Total:</span>
+                            <span className="font-black text-orange-600">{getPaidPrice().label}</span>
+                          </div>
+                        </div>
+
+                        {/* Interactive Multicaixa simulator */}
+                        <div className="pt-2 bg-gradient-to-r from-slate-50 to-orange-50/50 p-3 rounded-lg border border-orange-100/70 text-center">
+                          {hasPaidSimulated ? (
+                            <div className="flex items-center justify-center gap-1.5 text-emerald-600 font-black text-xs">
+                              <Check size={16} className="bg-emerald-500 text-white rounded-full p-0.5" />
+                              PAGAMENTO SIMULADO E APROVADO!
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <p className="text-[10px] text-slate-400 font-semibold leading-relaxed font-sans">
+                                Clique abaixo para simular que pagou esta licença no banco ou caixa automático multicaixa.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setHasPaidSimulated(true);
+                                  setPaidError('');
+                                }}
+                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] px-3 py-2 rounded-lg transition-all shadow-sm"
+                              >
+                                💳 Simular Pagamento Multicaixa
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white border text-xs border-slate-200 rounded-xl p-3.5 space-y-3">
+                        <div className="flex border-b border-dashed pb-2 items-center justify-between">
+                          <span className="font-extrabold text-[10px] text-slate-400 uppercase">Transferência Bancária Directa</span>
+                          <span className="text-[10px] bg-sky-50 text-sky-600 font-bold px-2 py-0.5 rounded border border-sky-100 uppercase">BAI / BFA</span>
+                        </div>
+                        <p className="text-[10px] text-slate-550 text-slate-500 font-normal leading-relaxed font-sans">
+                          Efetue a transferência para o seguinte IBAN oficial do Fatu-R e insira o comprovativo fictício abaixo para confirmar a ativação imediata.
+                        </p>
+                        <div className="space-y-1.5 font-mono text-[10.5px]">
+                          <div className="flex justify-between items-center bg-slate-50 p-1.5 rounded border border-slate-100">
+                            <span className="text-slate-400 font-bold text-[10px]">Banco:</span>
+                            <span className="font-black text-slate-900">Banco BAI</span>
+                          </div>
+                          <div className="flex justify-between items-center bg-slate-50 p-1.5 rounded border border-slate-100">
+                            <span className="text-slate-400 font-bold text-[10px]">IBAN BAI Angola:</span>
+                            <span className="font-bold text-slate-900 tracking-tight">AO06 0040 0000 9876 5432 1018 9</span>
+                          </div>
+                          <div className="flex justify-between items-center bg-slate-50 p-1.5 rounded border border-slate-100">
+                            <span className="text-slate-400 font-bold text-[10px]">Titular:</span>
+                            <span className="font-bold text-slate-900">Fatu-R Faturação Lda</span>
+                          </div>
+                        </div>
+
+                        {/* Interactive receipt uploader */}
+                        <div 
+                          onClick={() => {
+                            setIbanReceiptUploaded("comprovativo_transferencia_aula_paid.png");
+                            setPaidError('');
+                          }}
+                          className={`mt-2 border-2 border-dashed ${
+                            ibanReceiptUploaded ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'
+                          } p-3 rounded-lg text-center cursor-pointer transition-all`}
+                        >
+                          {ibanReceiptUploaded ? (
+                            <div className="flex flex-col items-center gap-1">
+                              <CheckCircle2 size={20} className="text-emerald-500 fill-current text-white bg-emerald-500 rounded-full" />
+                              <span className="text-[10px] font-black text-emerald-700 font-sans">Comprovativo Simulado Carregado!</span>
+                              <span className="text-[8px] text-slate-450 font-mono">comprovativo_fatur_v1.pdf (342KB)</span>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center gap-1 text-slate-505">
+                              <FileText size={20} className="text-slate-400" />
+                              <span className="text-[10px] font-extrabold uppercase font-sans text-slate-700">Anexar Comprovativo Simulado</span>
+                              <span className="text-[8.5px] text-slate-400 font-normal font-sans">Arraste ou clique para carregar o recibo simulado</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Submission and licensing buttons */}
+                  <div className="pt-2">
+                    <button 
+                      type="submit"
+                      disabled={paidLoading}
+                      className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-black text-xs py-3 rounded-xl transition-all shadow-md shadow-orange-500/10 flex items-center justify-center gap-2"
+                    >
+                      {paidLoading ? (
+                        <>
+                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          A processar subscrição comercial...
+                        </>
+                      ) : (
+                        `Activar Plano ${paidPlan} - Adquirir Licença`
+                      )}
+                    </button>
+                    <p className="text-center text-[9px] text-slate-400 font-bold mt-2.5 font-sans">
+                      🔒 Transações simuladas com faturamento certificado AGT ao abrigo da lei do sistema de Luanda, Angola.
+                    </p>
+                  </div>
+                </form>
+              )}
+            </motion.div>
+          </div>
+        )}
+
         {/* Dynamic Video Lightbox Modal */}
         {activeVideoUrl && (
           <motion.div 
@@ -1847,6 +2961,105 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Suporte Chat Flutuante Estático */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
+        <AnimatePresence>
+          {isChatBoxOpen && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              className="w-[335px] sm:w-[370px] h-[450px] bg-white border border-slate-100 shadow-2xl rounded-2xl flex flex-col overflow-hidden mb-4 mr-1 text-slate-700"
+            >
+              {/* Cabeçalho do Chat */}
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-950 p-4 flex items-center justify-between text-white border-b border-white/5">
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center text-xs font-black text-white shadow-md border border-white/20">
+                      FR
+                    </div>
+                    <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-slate-900 rounded-full animate-pulse" />
+                  </div>
+                  <div className="text-left">
+                    <h4 className="text-xs font-black tracking-tight leading-none text-white">Suporte Fatu-R</h4>
+                    <span className="text-[10px] text-slate-400 font-medium">Online • Respostas rápidas</span>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsChatBoxOpen(false)}
+                  className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Área de Mensagens */}
+              <div className="flex-1 p-4 overflow-y-auto bg-slate-50/50 space-y-4 text-left">
+                {chatMessages.map((msg) => (
+                  <div 
+                    key={msg.id} 
+                    className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
+                  >
+                    <div className={`p-3 text-[12px] leading-relaxed max-w-[85%] shadow-sm ${
+                      msg.sender === 'user' 
+                        ? 'bg-orange-500 text-white rounded-2xl rounded-tr-none' 
+                        : 'bg-white border border-slate-100 text-slate-700 rounded-2xl rounded-tl-none'
+                    }`}>
+                      {msg.text}
+                    </div>
+                    <span className="text-[9px] text-slate-400 font-mono mt-1 px-1">
+                      {msg.time}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Input de Envio */}
+              <form onSubmit={handleSendChatMessage} className="p-3 border-t border-slate-100 bg-white flex items-center gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  placeholder="Escreva a sua mensagem..."
+                  className="flex-1 text-[12px] border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-orange-500 text-slate-700 bg-slate-50/30 focus:bg-white transition-all font-sans"
+                />
+                <button
+                  type="submit"
+                  disabled={!chatInput.trim()}
+                  className="p-2.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-40 disabled:hover:bg-orange-500 text-white rounded-xl transition-all flex items-center justify-center cursor-pointer shadow-md shadow-orange-500/10"
+                >
+                  <Send size={14} />
+                </button>
+              </form>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Botão Flutuante */}
+        <button
+          onClick={() => setIsChatBoxOpen(!isChatBoxOpen)}
+          className={`relative p-4 rounded-full text-white shadow-2xl hover:scale-105 active:scale-95 transition-all duration-300 cursor-pointer focus:outline-none flex items-center justify-center ${
+            isChatBoxOpen 
+              ? 'bg-slate-900 rotate-90 border border-slate-800' 
+              : 'bg-gradient-to-tr from-orange-500 via-orange-600 to-amber-500 shadow-orange-500/20'
+          }`}
+          title="Fale Connosco"
+        >
+          {isChatBoxOpen ? (
+            <X size={22} className="text-white" />
+          ) : (
+            <>
+              <MessageSquare size={22} className="text-white" />
+              <span className="absolute -top-1 -right-1 flex h-4 w-4">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-4 w-4 bg-orange-500 border border-white flex items-center justify-center text-[8px] font-black text-white">1</span>
+              </span>
+            </>
+          )}
+        </button>
+      </div>
 
     </div>
   );

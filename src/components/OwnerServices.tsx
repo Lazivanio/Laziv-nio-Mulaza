@@ -998,7 +998,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
         onClose={() => setIsModalOpen(false)} 
         title={editingService ? "Editar Serviço" : "Novo Serviço"}
       >
-        <form onSubmit={handleSubmit} className="space-y-4 max-h-[75vh] overflow-y-auto px-1">
+        <form onSubmit={handleSubmit} className="space-y-4 px-1">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Estabelecimento</label>
@@ -1158,7 +1158,7 @@ export const OwnerServices = ({ user }: { user: User }) => {
         onClose={() => setIsSheetModalOpen(false)}
         title="Nova Folha de Serviço"
       >
-        <form onSubmit={handleCreateSheet} className="space-y-3 max-h-[75vh] overflow-y-auto px-1">
+        <form onSubmit={handleCreateSheet} className="space-y-3 px-1">
            <div>
               <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1">Serviço a Prestar</label>
               <select 
