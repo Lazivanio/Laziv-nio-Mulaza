@@ -75,6 +75,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   // Video feedback testimonial states
   const [activeVideoUrl, setActiveVideoUrl] = useState<string | null>(null);
   const [activeVideoTitle, setActiveVideoTitle] = useState<string>('');
+  const [videoSlideIndex, setVideoSlideIndex] = useState(0);
 
   // POS simulation state
   const [simCart, setSimCart] = useState<{ cafe: number; agua: number; pastel: number }>({
@@ -1150,25 +1151,49 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
         </div>
       </section>
 
-      {/* NEW: O QUE DIZEM OS NOSSOS CLIENTES - TESTEMUNHOS EM VÍDEO */}
-      <section id="videos" className="py-24 bg-slate-50 border-t border-b border-slate-100 scroll-mt-20">
+      {/* NEW: O QUE DIZEM OS NOSSOS CLIENTES - TESTEMUNHOS EM VÍDEO CONVERSÃO SLIDER */}
+      <section id="videos" className="py-24 bg-slate-50 border-t border-b border-slate-100 scroll-mt-20 overflow-hidden">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-16">
           
-          <div className="text-center max-w-3xl mx-auto space-y-4">
-            <span className="text-[10px] font-black uppercase text-orange-600 tracking-widest bg-orange-50 px-3.5 py-1 rounded-full border border-orange-100">
-              Testemunhos Reais
-            </span>
-            <h2 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight leading-tight pt-2">
-              O Que Dizem os Nossos Clientes
-            </h2>
-            <p className="text-sm sm:text-base text-slate-500 font-normal leading-relaxed">
-              Assista aos testemunhos em vídeo de empreendedores e profissionais que impulsionaram as suas operações diárias e garantiram total conformidade com a AGT usando o Fatu-R.
-            </p>
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div className="space-y-4 max-w-2xl">
+              <span className="text-[10px] font-black uppercase text-orange-600 tracking-widest bg-orange-50 px-3.5 py-1 rounded-full border border-orange-100">
+                Testemunhos Reais
+              </span>
+              <h2 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight leading-tight">
+                O Que Dizem os Nossos Clientes
+              </h2>
+              <p className="text-sm sm:text-base text-slate-500 font-normal leading-relaxed">
+                Assista aos testemunhos em vídeo de empreendedores e profissionais que impulsionaram as suas operações diárias e garantiram total conformidade com a AGT usando o Fatu-R.
+              </p>
+            </div>
+
+            {/* Carousel Navigation Buttons */}
+            <div className="flex items-center gap-3 shrink-0">
+              <button 
+                onClick={() => {
+                  setVideoSlideIndex(prev => (prev === 0 ? 5 : prev - 1));
+                }}
+                className="w-11 h-11 rounded-full bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 flex items-center justify-center border border-slate-200 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-orange-500/30"
+                aria-label="Anterior"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <button 
+                onClick={() => {
+                  setVideoSlideIndex(prev => (prev === 5 ? 0 : prev + 1));
+                }}
+                className="w-11 h-11 rounded-full bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 flex items-center justify-center border border-slate-200 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-orange-500/30"
+                aria-label="Seguinte"
+              >
+                <ChevronRight size={20} />
+              </button>
+            </div>
           </div>
 
-          {/* Grid of Video Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {[
+          {/* Testimonial slider views */}
+          {(() => {
+            const testimonialVideos = [
               {
                 author: "Ricardo Vallis",
                 business: "VALLISMUSIC", 
@@ -1198,15 +1223,47 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 duration: "1:48",
                 videoUrl: "https://assets.mixkit.co/videos/preview/mixkit-doctor-working-on-a-modern-computer-41584-large.mp4",
                 thumbnail: "https://images.unsplash.com/photo-1576091160550-2173dba999ef?auto=format&fit=crop&w=600&q=80"
+              },
+              {
+                author: "Cláudio Neto",
+                business: "Minipreço Express",
+                location: "Soyo",
+                tag: "Supermercado & Retalho",
+                quote: "O controle de caixas duplo e a facilidade de faturar mesmo quando a internet em Luanda ou Soyo oscila é um salva-vidas operacional constante.",
+                duration: "1:35",
+                videoUrl: "https://assets.mixkit.co/videos/preview/mixkit-hand-holding-smartphone-with-a-loading-screen-41618-large.mp4",
+                thumbnail: "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80"
+              },
+              {
+                author: "Elsa Patrício",
+                business: "Elsa Boutique",
+                location: "Cabinda",
+                tag: "Vestuário & E-commerce",
+                quote: "Vender roupas online e emitir faturas certificadas pelo WhatsApp nunca foi tão simples. O Fatu-R é extremamente rápido e intuitivo ao extremo.",
+                duration: "1:12",
+                videoUrl: "https://assets.mixkit.co/videos/preview/mixkit-excited-girl-unpacking-delivery-parcel-at-home-42289-large.mp4",
+                thumbnail: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=600&q=80"
+              },
+              {
+                author: "Eng. Pedro Kiluange",
+                business: "Kiluange S.A.",
+                location: "Huambo",
+                tag: "Construção & Obras",
+                quote: "Para as faturas de grandes obras e autos de medição, o sistema de Proformas do Fatu-R é completo, profissional e 100% certificado por lei.",
+                duration: "2:40",
+                videoUrl: "https://assets.mixkit.co/videos/preview/mixkit-mechanic-works-at-a-car-service-station-40019-large.mp4",
+                thumbnail: "https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=600&q=80"
               }
-            ].map((feedback, idx) => (
+            ];
+
+            const renderCard = (feedback: typeof testimonialVideos[0], index: number, styleClass: string) => (
               <div 
-                key={idx}
-                className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-xl transition-all duration-350 flex flex-col group hover:-translate-y-1.5"
+                key={index}
+                className={`${styleClass} bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-xl transition-all duration-350 flex flex-col group hover:-translate-y-1.5 shrink-0`}
               >
                 {/* Simulated video thumbnail */}
                 <div 
-                  className="relative h-56 bg-slate-905 overflow-hidden cursor-pointer"
+                  className="relative h-48 sm:h-52 md:h-56 bg-slate-900 overflow-hidden cursor-pointer"
                   onClick={() => {
                     setActiveVideoUrl(feedback.videoUrl);
                     setActiveVideoTitle(`${feedback.author} - ${feedback.business}`);
@@ -1222,10 +1279,10 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent" />
 
                   {/* Play Button Overlay */}
-                  <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="absolute inset-0 flex items-center justify-center bg-slate-950/10 hover:bg-slate-950/20 transition-colors">
                     <div className="w-14 h-14 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-lg group-hover:scale-110 group-hover:bg-orange-600 transition-all duration-300 relative z-20">
-                      <span className="absolute inset-0 rounded-full bg-orange-500/3 w-full h-full animate-ping group-hover:bg-orange-600/3" />
-                      <Play size={20} className="ml-1 text-white fill-current" />
+                      <span className="absolute inset-0 rounded-full bg-orange-500/20 w-full h-full animate-ping group-hover:bg-orange-600/20" />
+                      <Play size={20} className="ml-1 text-white fill-current animate-pulse" />
                     </div>
                   </div>
 
@@ -1248,12 +1305,12 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                     <span className="text-[9px] font-black uppercase tracking-widest text-orange-600 bg-orange-50 border border-orange-100 px-2 py-0.5 rounded-full w-fit block">
                       {feedback.tag}
                     </span>
-                    <p className="text-[12.5px] text-slate-500 italic leading-relaxed font-normal">
+                    <p className="text-[12.5px] text-slate-500 italic leading-relaxed font-normal min-h-[56px] line-clamp-3">
                       "{feedback.quote}"
                     </p>
                   </div>
 
-                  <div className="pt-4 border-t border-slate-105 flex items-center justify-between">
+                  <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
                     <div>
                       <h4 className="text-xs font-black text-slate-900">{feedback.author}</h4>
                       <p className="text-[10px] text-slate-400 font-bold">{feedback.business} ({feedback.location})</p>
@@ -1271,8 +1328,68 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
+            );
+
+            return (
+              <div className="space-y-8">
+                {/* 1. Mobile Carousel Panel (1 visible) */}
+                <div className="block md:hidden overflow-hidden -mx-4 px-4 py-2">
+                  <motion.div 
+                    className="flex gap-6"
+                    animate={{ x: `calc(-${videoSlideIndex} * 100% - ${videoSlideIndex * 24}px)` }}
+                    transition={{ type: "spring", stiffness: 220, damping: 28 }}
+                  >
+                    {testimonialVideos.map((item, idx) => renderCard(item, idx, "w-full"))}
+                  </motion.div>
+                </div>
+
+                {/* 2. Tablet Carousel Panel (2 visible) */}
+                <div className="hidden md:block lg:hidden overflow-hidden -mx-4 px-4 py-2">
+                  <motion.div 
+                    className="flex gap-6"
+                    animate={{ 
+                      x: `calc(-${Math.min(videoSlideIndex, testimonialVideos.length - 2)} * (50% - 12px) - ${Math.min(videoSlideIndex, testimonialVideos.length - 2) * 24}px)` 
+                    }}
+                    transition={{ type: "spring", stiffness: 220, damping: 28 }}
+                  >
+                    {testimonialVideos.map((item, idx) => renderCard(item, idx, "w-[calc(50%-12px)]"))}
+                  </motion.div>
+                </div>
+
+                {/* 3. Desktop Carousel Panel (3 visible) */}
+                <div className="hidden lg:block overflow-hidden -mx-4 px-4 py-2">
+                  <motion.div 
+                    className="flex gap-6"
+                    animate={{ 
+                      x: `calc(-${Math.min(videoSlideIndex, testimonialVideos.length - 3)} * (33.333% - 16px) - ${Math.min(videoSlideIndex, testimonialVideos.length - 3) * 24}px)` 
+                    }}
+                    transition={{ type: "spring", stiffness: 220, damping: 28 }}
+                  >
+                    {testimonialVideos.map((item, idx) => renderCard(item, idx, "w-[calc(33.333%-16px)]"))}
+                  </motion.div>
+                </div>
+
+                {/* Dots Navigation Control */}
+                <div className="flex items-center justify-center gap-2 pt-4">
+                  {testimonialVideos.map((_, idx) => {
+                    const isActive = videoSlideIndex === idx;
+                    return (
+                      <button 
+                        key={idx}
+                        onClick={() => setVideoSlideIndex(idx)}
+                        className={`h-2.5 rounded-full transition-all duration-300 ${
+                          isActive 
+                            ? 'w-8 bg-orange-500' 
+                            : 'w-2.5 bg-slate-300 hover:bg-slate-400'
+                        }`}
+                        aria-label={`Ir para slide ${idx + 1}`}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
         </div>
       </section>
