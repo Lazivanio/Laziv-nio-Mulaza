@@ -1117,6 +1117,19 @@ function initializeDatabase() {
       console.error("[DB] Error migrating owner_settings:", e);
     }
 
+    // Users trial_unlocked column migration
+    try {
+      const usersCols = db.prepare("PRAGMA table_info(users)").all() as any[];
+      if (usersCols.length > 0) {
+        if (!usersCols.some((c: any) => c.name === 'trial_unlocked')) {
+          db.exec("ALTER TABLE users ADD COLUMN trial_unlocked INTEGER DEFAULT 0;");
+          console.log("[DB] Added trial_unlocked column to users table");
+        }
+      }
+    } catch (e) {
+      console.error("[DB] Error migrating users trial_unlocked:", e);
+    }
+
     // Cash Registers Migration
     try {
       const cashRegistersCols = db.prepare("PRAGMA table_info(cash_registers)").all() as any[];
@@ -3056,6 +3069,87 @@ async function startServer() {
     }
   });
 
+  app.post("/api/register", (req, res) => {
+    const { name, companyName, email, password, phone, nif, address } = req.body;
+    
+    if (!name || !companyName || !email || !password) {
+      return res.status(400).json({ error: "Nome, Empresa, Email e Palavra-passe são obrigatórios." });
+    }
+
+    try {
+      const existing = db.prepare("SELECT id FROM users WHERE LOWER(email) = ?").get(email.toLowerCase());
+      if (existing) {
+        return res.status(400).json({ error: "Este endereço de email já está registado." });
+      }
+
+      // 1. Create the owner user
+      const userResult = db.prepare(`
+        INSERT INTO users (name, company_name, email, password, role, phone, nif, address, status, username)
+        VALUES (?, ?, ?, ?, 'owner', ?, ?, ?, 'active', ?)
+      `).run(name, companyName, email, password, phone, nif, address, email);
+      
+      const ownerId = userResult.lastInsertRowid as number;
+
+      // 2. Generate company digital signature keys
+      DigitalSignatureService.generateCompanyKeys(ownerId, ownerId);
+
+      // Create a trial period expiry (30 days from now)
+      const expiryDate = new Date();
+      expiryDate.setDate(expiryDate.getDate() + 30);
+      const expiryDateStr = expiryDate.toISOString().split('T')[0];
+
+      // 3. Create the principal establishment
+      const establishmentResult = db.prepare(`
+        INSERT INTO establishments (owner_id, name, address, phone, email, nif, license_status, license_expiry, status, establishment_code)
+        VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 'active', ?)
+      `).run(ownerId, companyName + " - Principal", address, phone, email, nif, expiryDateStr, `EST-${ownerId}-01`);
+
+      const establishmentId = establishmentResult.lastInsertRowid as number;
+
+      // 4. Create an active license representing the 30-day Free Trial
+      const startDateStr = new Date().toISOString().split('T')[0];
+      db.prepare(`
+        INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, features)
+        VALUES (?, ?, 'Premium', ?, ?, 'active', ?)
+      `).run(ownerId, establishmentId, startDateStr, expiryDateStr, '["all_features", "pos", "saft-a", "support"]');
+
+      // 5. Create a default cashier register (using ownerId to ensure uniqueness)
+      const regCode = `CX-${ownerId}-01`;
+      db.prepare(`
+        INSERT INTO cash_registers (establishment_id, name, code, default_initial_balance, max_limit)
+        VALUES (?, 'Caixa Principal', ?, 0, 150000)
+      `).run(establishmentId, regCode);
+
+      logAction({
+        userId: ownerId,
+        ownerId: ownerId,
+        establishmentId: establishmentId,
+        module: 'AUTH',
+        actionType: 'REGISTER_SUCCESS',
+        description: `Novo registo de empresa: ${companyName} (${name}) com Trial de 30 dias`,
+        req
+      });
+
+      res.status(201).json({
+        id: ownerId,
+        email: email,
+        username: email,
+        name: name,
+        role: 'owner',
+        establishment_id: establishmentId,
+        owner_id: ownerId,
+        status: 'active',
+        fiscal_regime: 'geral',
+        billing_mode: 'tradicional',
+        permissions: ["all_features", "pos", "saft-a"]
+      });
+
+    } catch (err: any) {
+      console.error("[Register] Error during client self-signup:", err);
+      res.status(500).json({ error: "Erro ao registar a sua empresa no servidor: " + err.message });
+    }
+  });
+
   app.post("/api/attendance/logout", (req, res) => {
     const { userId } = req.body;
     if (!userId) return res.status(400).json({ error: "UserId is required" });
@@ -3135,15 +3229,30 @@ async function startServer() {
     }
 
     if (ownerId) {
-      const owner = db.prepare("SELECT status, billing_mode FROM users WHERE id = ?").get(ownerId) as any;
+      const owner = db.prepare("SELECT status, billing_mode, created_at, trial_unlocked FROM users WHERE id = ?").get(ownerId) as any;
       
+      // Auto-suspend trial users after 15 days
+      if (owner && owner.status === 'active' && !owner.trial_unlocked) {
+        const createdAtTime = new Date(owner.created_at + (owner.created_at.includes('Z') || owner.created_at.includes('UTC') ? '' : ' UTC')).getTime();
+        const diffMs = Date.now() - createdAtTime;
+        const fifteenDaysMs = 15 * 24 * 60 * 60 * 1000;
+        
+        if (diffMs > fifteenDaysMs) {
+          db.prepare("UPDATE users SET status = 'suspended' WHERE id = ?").run(ownerId);
+          owner.status = 'suspended';
+        }
+      }
+
       // If it's the checkout route and billing mode is electronic, we bypass the suspension/license check (simulation mode)
       if (req.path.includes('p-venda') && owner?.billing_mode === 'eletronica') {
         return next();
       }
 
       if (owner && owner.status === 'suspended') {
-        return res.status(403).json({ error: "Acesso suspenso. Contacte o administrador." });
+        if (owner.trial_unlocked === 0) {
+          return res.status(403).json({ error: "O seu período de experiência gratuita de 15 dias expirou. A sua conta foi bloqueada e só o Administrador tem a capacidade de a desbloquear." });
+        }
+        return res.status(403).json({ error: "Acesso suspenso. Contacte o administrador para desbloquear." });
       }
 
       // Check if owner has ANY active license to allow dashboard access
@@ -3329,7 +3438,12 @@ async function startServer() {
 
   app.put("/api/admin/clients/:id", (req, res) => {
     const { name, company_name, email, phone, nif, address, status } = req.body;
-    db.prepare("UPDATE users SET name = ?, company_name = ?, email = ?, phone = ?, nif = ?, address = ?, status = ? WHERE id = ?").run(name, company_name, email, phone, nif, address, status, req.params.id);
+    db.prepare(`
+      UPDATE users 
+      SET name = ?, company_name = ?, email = ?, phone = ?, nif = ?, address = ?, status = ?,
+          trial_unlocked = CASE WHEN ? = 'active' THEN 1 ELSE trial_unlocked END
+      WHERE id = ?
+    `).run(name, company_name, email, phone, nif, address, status, status, req.params.id);
     res.json({ success: true });
   });
 

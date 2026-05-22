@@ -111,6 +111,7 @@ import { OwnerCurrencies } from './components/OwnerCurrencies';
 import { OwnerWarehouses } from './components/OwnerWarehouses';
 import { OwnerFinance } from './components/OwnerFinance';
 import AdminAuditLogs from './components/AdminAuditLogs';
+import { LandingPage } from './components/LandingPage';
 
 // --- Utilities ---
 function cn(...inputs: ClassValue[]) {
@@ -5329,20 +5330,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                   >
                     <Tag size={16} /> Criar Promoção
                   </button>
-                  <button 
-                    onClick={() => {
-                      setCreditInvoiceForm({
-                        ...creditInvoiceForm,
-                        doc_type: 'PP',
-                        invoice_date: new Date().toISOString().split('T')[0],
-                        due_date: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-                      });
-                      setIsCreditInvoiceModalOpen(true);
-                    }}
-                    className="flex-1 lg:flex-none bg-blue-100 text-blue-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-blue-200 transition-colors"
-                  >
-                    <FileText size={16} /> Fatura Proforma
-                  </button>
+
                   <button 
                     onClick={() => setIsProductModalOpen(true)}
                     className="flex-1 lg:flex-none bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
@@ -13260,7 +13248,7 @@ export default function App() {
   }, [user?.id]); // Only re-run if the user ID changes (login/logout)
 
   if (!user) {
-    return <Login onLogin={handleLogin} />;
+    return <LandingPage onLogin={handleLogin} />;
   }
 
   return (

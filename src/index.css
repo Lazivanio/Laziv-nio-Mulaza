@@ -112,7 +112,7 @@
 
 @layer base {
   html, body, #root {
-    @apply h-full overflow-hidden;
+    @apply min-h-screen;
   }
   body {
     @apply font-sans text-zinc-900 antialiased;
