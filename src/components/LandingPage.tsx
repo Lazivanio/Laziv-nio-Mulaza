@@ -230,6 +230,45 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
     return () => clearInterval(timer);
   }, []);
 
+  // Automatic Promo Slides for Fatu-R POS
+  const [promoSlideIndex, setPromoSlideIndex] = useState(0);
+  const [promoSlideDirection, setPromoSlideDirection] = useState<'left' | 'right'>('right');
+
+  const promoSlides = [
+    {
+      subtitle: "Porquê escolher o Fatu-R POS?",
+      title: "É simples, prático e intuitivo.",
+      desc: "Estes são os principais adjetivos usados pelos nossos clientes para descrever o Fatu-R e não poderíamos ficar mais contentes. Se gosta de soluções descomplicadas, nós somos a solução ideal para si.",
+      imgUrl: "https://i.ibb.co/fKWSVyC/IMG1.png",
+      linkUrl: "https://ibb.co/S1gxDMK",
+      fallbackImg: "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=800&q=80"
+    },
+    {
+      subtitle: "Porquê escolher o Fatu-R POS?",
+      title: "Migração Gratuita",
+      desc: "Quer migrar para o Fatu-R? A migração do seu software de faturação atual é tão simples que pode ser feita por si. Se surgirem dúvidas, a nossa equipa de suporte está pronta para ajudar.",
+      imgUrl: "https://i.ibb.co/v6b46c53/IMG2.png",
+      linkUrl: "https://ibb.co/FL94Lhv5",
+      fallbackImg: "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=800&q=80"
+    },
+    {
+      subtitle: "Porquê escolher o Fatu-R POS?",
+      title: "Melhor Suporte ao Cliente",
+      desc: "Sabia que no Fatu-R temos uma equipa de suporte dedicada, que permite responder quase de imediato às solicitações dos nossos clientes? E sim! O suporte é Ilimitado e Gratuito.",
+      imgUrl: "https://i.ibb.co/YTbHmkXC/IMG3.png",
+      linkUrl: "https://ibb.co/HpX56zCS",
+      fallbackImg: "https://images.unsplash.com/photo-1534536281715-e28d76689b4d?auto=format&fit=crop&w=800&q=80"
+    }
+  ];
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      setPromoSlideDirection('right');
+      setPromoSlideIndex((prev) => (prev + 1) % promoSlides.length);
+    }, 6000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Dynamic Plans from Administrator Account
   const [dbPlans, setDbPlans] = useState<any[]>([]);
 
@@ -1477,6 +1516,115 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                   <p className="text-3xl md:text-4xl font-black text-blue-600">0%</p>
                   <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Paragens ou Lentidão</p>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Promotion Slider Block */}
+      <section className="py-16 bg-white border-y border-slate-100/80 overflow-hidden relative">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="relative bg-slate-50 rounded-[2.5rem] p-6 sm:p-10 md:p-14 border border-slate-100/80 overflow-hidden shadow-sm">
+            {/* Background design elements */}
+            <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-orange-500/5 to-amber-500/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
+            <div className="absolute bottom-0 left-0 w-96 h-96 bg-gradient-to-tr from-blue-500/5 to-emerald-500/5 rounded-full blur-3xl -ml-20 -mb-20 pointer-events-none" />
+
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={promoSlideIndex}
+                initial={{ opacity: 0, x: promoSlideDirection === 'right' ? 80 : -80 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: promoSlideDirection === 'right' ? -80 : 80 }}
+                transition={{ duration: 0.45, ease: "easeInOut" }}
+                className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center relative z-10"
+              >
+                {/* Text Block */}
+                <div className="lg:col-span-5 space-y-6 text-left animate-fade-in">
+                  <div className="space-y-3">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-orange-600 bg-orange-50 px-3 py-1.5 rounded-full border border-orange-100 inline-block">
+                      {promoSlides[promoSlideIndex].subtitle}
+                    </span>
+                    <h3 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight leading-snug">
+                      {promoSlides[promoSlideIndex].title}
+                    </h3>
+                  </div>
+                  <p className="text-xs sm:text-sm text-slate-600 font-normal leading-relaxed">
+                    {promoSlides[promoSlideIndex].desc}
+                  </p>
+                  <div className="pt-2 flex flex-wrap items-center gap-4">
+                    <button
+                      onClick={() => {
+                        setRegError('');
+                        setIsRegisterModalOpen(true);
+                      }}
+                      className="bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs px-6 py-3.5 rounded-full transition-all shadow-md shadow-orange-500/10 active:scale-95 group flex items-center gap-1.5 cursor-pointer"
+                    >
+                      Experimente Grátis
+                      <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Image Layout */}
+                <div className="lg:col-span-7 flex justify-center items-center">
+                  <div className="w-full max-w-2xl aspect-[16/10] overflow-hidden relative flex items-center justify-center rounded-2xl">
+                    <img
+                      src={promoSlides[promoSlideIndex].imgUrl}
+                      alt={promoSlides[promoSlideIndex].title}
+                      className="w-full h-full object-contain rounded-2xl transition-transform duration-700 hover:scale-[1.01]"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = promoSlides[promoSlideIndex].fallbackImg;
+                      }}
+                    />
+                  </div>
+                </div>
+              </motion.div>
+            </AnimatePresence>
+
+            {/* Carousel Navigation Bottom bar */}
+            <div className="mt-8 pt-6 border-t border-slate-100/70 flex flex-col sm:flex-row items-center justify-between gap-4 relative z-10">
+              <div className="flex items-center gap-2">
+                {promoSlides.map((_, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setPromoSlideDirection(idx > promoSlideIndex ? 'right' : 'left');
+                      setPromoSlideIndex(idx);
+                    }}
+                    className={`h-2 transition-all duration-300 rounded-full ${
+                      idx === promoSlideIndex ? 'w-8 bg-orange-500' : 'w-2 bg-slate-200 hover:bg-slate-300'
+                    }`}
+                    aria-label={`Ir para slide ${idx + 1}`}
+                  />
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPromoSlideDirection('left');
+                    setPromoSlideIndex((prev) => (prev - 1 + promoSlides.length) % promoSlides.length);
+                  }}
+                  className="p-2 sm:p-2.5 rounded-full bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 hover:text-slate-800 transition-all active:scale-95 shadow-sm inline-flex items-center justify-center cursor-pointer"
+                  aria-label="Slide anterior"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPromoSlideDirection('right');
+                    setPromoSlideIndex((prev) => (prev + 1) % promoSlides.length);
+                  }}
+                  className="p-2 sm:p-2.5 rounded-full bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 hover:text-slate-800 transition-all active:scale-95 shadow-sm inline-flex items-center justify-center cursor-pointer"
+                  aria-label="Próximo slide"
+                >
+                  <ChevronRight size={16} />
+                </button>
               </div>
             </div>
           </div>
