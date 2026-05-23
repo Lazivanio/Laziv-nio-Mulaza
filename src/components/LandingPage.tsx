@@ -51,6 +51,9 @@ interface LandingPageProps {
 export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+  const [isTermsModalOpen, setIsTermsModalOpen] = useState(false);
+  const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
+  const [isDataProtectionModalOpen, setIsDataProtectionModalOpen] = useState(false);
   const [isPaidModalOpen, setIsPaidModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isHelpDropdownOpen, setIsHelpDropdownOpen] = useState(false);
@@ -1966,7 +1969,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               Diferenciais de Sucesso
             </span>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-              A Solução Perfeita para Escritórios, Retalho ou Restauração
+              A Solução Perfeita para Escritórios, Retalho, lojas ou supermercados
             </h2>
             <p className="text-sm text-slate-500 font-normal leading-relaxed">
               O que nos torna preferência nacional em faturamento eletrónico é o nosso compromisso inegociável com a simplicidade.
@@ -2566,10 +2569,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               <ul className="space-y-2 text-slate-400 text-[11px]">
                 <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software de Facturação</a></li>
                 <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software POS Comercial</a></li>
-                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software POS Restauração</a></li>
                 <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software Loja de Roupa</a></li>
-                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software Café e Gestão</a></li>
-                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software Construção Civil</a></li>
               </ul>
             </div>
 
@@ -2591,9 +2591,9 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               <ul className="space-y-2 text-slate-400 text-[11px]">
                 <li><button onClick={() => setIsLoginModalOpen(true)} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Login / Entrar</button></li>
                 <li><button onClick={() => { setRegError(''); setIsRegisterModalOpen(true); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Criar Conta Grátis</button></li>
-                <li><a href="#termos" className="hover:text-orange-500 transition-colors">Termos e Condições</a></li>
-                <li><a href="#privacidade" className="hover:text-orange-500 transition-colors">Política de Privacidade</a></li>
-                <li><a href="#dados" className="hover:text-orange-500 transition-colors">Proteção de Dados</a></li>
+                <li><button onClick={() => setIsTermsModalOpen(true)} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Termos e Condições</button></li>
+                <li><button onClick={() => setIsPrivacyModalOpen(true)} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Política de Privacidade</button></li>
+                <li><button onClick={() => setIsDataProtectionModalOpen(true)} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Proteção de Dados</button></li>
               </ul>
             </div>
 
@@ -2778,36 +2778,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                   {isLoading ? 'A conectar...' : 'Aceder à Minha Conta'}
                 </button>
 
-                {/* Demonstration Help Block inside the form */}
-                <div className="pt-4 border-t border-slate-100 space-y-2">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase text-center block">Sessão Rápida com Contas de Teste:</p>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <button 
-                      type="button"
-                      onClick={() => triggerPresetLogin('owner')}
-                      disabled={isLoading}
-                      className="py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold text-[10px] rounded-lg transition-all"
-                    >
-                      Dono POS
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => triggerPresetLogin('seller')}
-                      disabled={isLoading}
-                      className="py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold text-[10px] rounded-lg transition-all"
-                    >
-                      Caixa POS
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => triggerPresetLogin('admin')}
-                      disabled={isLoading}
-                      className="py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold text-[10px] rounded-lg transition-all"
-                    >
-                      Auditor AGT
-                    </button>
-                  </div>
-                </div>
+
 
               </form>
             </motion.div>
@@ -3404,6 +3375,629 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                   </div>
                 </form>
               )}
+            </motion.div>
+          </div>
+        )}
+
+        {/* --- TERMS AND CONDITIONS MODAL --- */}
+        {isTermsModalOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl border border-slate-200/90 shadow-2xl max-w-2xl w-full overflow-hidden text-left flex flex-col max-h-[85vh]"
+            >
+              <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <FileText className="text-orange-500 w-4 h-4" />
+                  <span className="text-sm font-bold text-slate-900">Termos e Condições de Uso</span>
+                </div>
+                <button 
+                  onClick={() => setIsTermsModalOpen(false)}
+                  className="p-1 px-2.5 rounded bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors text-xs font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto text-xs text-slate-600 leading-relaxed space-y-4 font-sans">
+                <h1 className="text-base font-black text-slate-900 mb-2 font-display">TERMOS E CONDIÇÕES DE USO</h1>
+                <p className="font-bold">Última atualização: 23 de Maio de 2026</p>
+                <p>
+                  Bem-vindo ao <strong>Fatu-R</strong>. Ao utilizar os nossos serviços, o utilizador concorda com os presentes Termos e Condições. Caso não concorde com qualquer disposição, não deverá utilizar a plataforma.
+                </p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">1. Definições</h2>
+                <p>Para efeitos deste documento:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li><strong>Plataforma/Sistema</strong>: refere-se ao software de faturação e gestão disponibilizado.</li>
+                  <li><strong>Utilizador/Cliente</strong>: pessoa singular ou coletiva que cria uma conta e utiliza os serviços.</li>
+                  <li><strong>Empresa</strong>: entidade responsável pela gestão e disponibilização do sistema.</li>
+                  <li><strong>Serviços</strong>: funcionalidades disponibilizadas através da plataforma.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">2. Aceitação dos Termos</h2>
+                <p>
+                  Ao criar uma conta, subscrever um plano ou utilizar o sistema, o utilizador declara que leu, compreendeu e aceitou integralmente os presentes Termos e Condições.
+                </p>
+                <p>
+                  A Empresa reserva-se ao direito de alterar estes termos a qualquer momento, notificando os utilizadores através da plataforma ou correio eletrónico.
+                </p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">3. Criação de Conta</h2>
+                <p>Para utilizar determinadas funcionalidades, o utilizador deverá criar uma conta.</p>
+                <p>O utilizador compromete-se a:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Fornecer informações verdadeiras e atualizadas;</li>
+                  <li>Manter a confidencialidade dos dados de acesso;</li>
+                  <li>Não partilhar credenciais com terceiros não autorizados;</li>
+                  <li>Assumir responsabilidade por todas as atividades realizadas na sua conta.</li>
+                </ul>
+                <p>
+                  A Empresa não será responsável por perdas resultantes do uso indevido das credenciais do utilizador.
+                </p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">4. Teste Gratuito</h2>
+                <p>A plataforma poderá disponibilizar um período de teste gratuito por tempo limitado.</p>
+                <p>Durante este período:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Algumas funcionalidades poderão estar limitadas;</li>
+                  <li>O acesso poderá ser encerrado automaticamente após o prazo definido;</li>
+                  <li>A Empresa poderá cancelar o teste gratuito em casos de uso abusivo.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">5. Planos e Pagamentos</h2>
+                <p>O acesso a determinadas funcionalidades poderá depender da subscrição de um plano pago.</p>
+                <p>O utilizador concorda que:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Os pagamentos devem ser efetuados nos prazos definidos;</li>
+                  <li>A falta de pagamento poderá resultar na suspensão temporária do serviço;</li>
+                  <li>Os preços poderão ser alterados mediante aviso prévio.</li>
+                </ul>
+                <p>
+                  A Empresa reserva-se ao direito de suspender ou limitar serviços em caso de incumprimento financeiro.
+                </p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">6. Utilização Permitida</h2>
+                <p>O utilizador concorda em utilizar a plataforma apenas para fins legais.</p>
+                <p>É proibido:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Utilizar o sistema para fraude, atividades ilegais ou evasão fiscal;</li>
+                  <li>Inserir informações falsas ou fraudulentas;</li>
+                  <li>Tentar comprometer a segurança da plataforma;</li>
+                  <li>Copiar, revender ou reproduzir o sistema sem autorização.</li>
+                </ul>
+                <p>Qualquer violação poderá resultar em suspensão ou encerramento da conta.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">7. Responsabilidade Fiscal</h2>
+                <p>
+                  O utilizador reconhece que é exclusivamente responsável pelas informações fiscais, financeiras e comerciais inseridas no sistema.
+                </p>
+                <p>
+                  A Empresa disponibiliza apenas uma ferramenta tecnológica de gestão e faturação, não assumindo responsabilidade por:
+                </p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Erros fiscais cometidos pelo utilizador;</li>
+                  <li>Dados incorretos inseridos na plataforma;</li>
+                  <li>Penalizações aplicadas por entidades fiscais;</li>
+                  <li>Obrigações legais e tributárias do cliente.</li>
+                </ul>
+                <p>O utilizador compromete-se a cumprir a legislação fiscal aplicável ao seu país.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">8. Disponibilidade do Sistema</h2>
+                <p>
+                  A Empresa compromete-se a manter a plataforma operacional, mas não garante disponibilidade contínua e ininterrupta.
+                </p>
+                <p>Poderão ocorrer interrupções temporárias devido a:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Atualizações do sistema;</li>
+                  <li>Falhas técnicas;</li>
+                  <li>Problemas de infraestrutura;</li>
+                  <li>Casos de força maior.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">9. Segurança e Proteção de Dados</h2>
+                <p>A Empresa adotará medidas razoáveis para proteger os dados dos utilizadores.</p>
+                <p>Contudo, nenhum sistema é totalmente imune a falhas de segurança.</p>
+                <p>O utilizador reconhece que:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Deve manter palavras-passe seguras;</li>
+                  <li>É responsável pela segurança da sua conta;</li>
+                  <li>Deve comunicar imediatamente qualquer acesso não autorizado.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">10. Privacidade</h2>
+                <p>
+                  Os dados recolhidos serão utilizados exclusivamente para operação, melhoria e suporte do sistema.
+                </p>
+                <p>
+                  A Empresa compromete-se a não vender dados pessoais a terceiros sem autorização legal ou consentimento do utilizador.
+                </p>
+                <p>Uma Política de Privacidade separada poderá complementar estes Termos.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">11. Propriedade Intelectual</h2>
+                <p>
+                  Todos os direitos relacionados ao sistema, incluindo código, design, funcionalidades, logótipos, marcas e conteúdos pertencem à Empresa.
+                </p>
+                <p>É proibido:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Copiar o sistema;</li>
+                  <li>Fazer engenharia reversa;</li>
+                  <li>Distribuir partes da plataforma sem autorização.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">12. Suspensão ou Encerramento de Conta</h2>
+                <p>A Empresa poderá suspender ou encerrar contas nos seguintes casos:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Violação destes Termos;</li>
+                  <li>Uso fraudulento;</li>
+                  <li>Falta de pagamento;</li>
+                  <li>Atividades que prejudiquem outros utilizadores ou o sistema.</li>
+                </ul>
+                <p>O utilizador também poderá solicitar o encerramento da conta a qualquer momento.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">13. Limitação de Responsabilidade</h2>
+                <p>Na máxima extensão permitida pela lei, a Empresa não será responsável por:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Perda de lucros;</li>
+                  <li>Perda de dados;</li>
+                  <li>Danos indiretos;</li>
+                  <li>Interrupções temporárias do sistema;</li>
+                  <li>Decisões empresariais tomadas com base nos dados da plataforma.</li>
+                </ul>
+                <p>O uso do sistema é realizado por conta e risco do utilizador.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">14. Política de Reembolso</h2>
+                <p>Os pedidos de reembolso deverão ser realizados dentro do prazo definido pela Empresa.</p>
+                <p>A Empresa poderá analisar os pedidos individualmente, considerando:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Tempo de utilização;</li>
+                  <li>Tipo de subscrição;</li>
+                  <li>Motivo apresentado;</li>
+                  <li>Existência de abuso ou violação dos termos.</li>
+                </ul>
+                <p>Não serão efetuados reembolsos em casos de:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Violação dos Termos;</li>
+                  <li>Cancelamento após utilização substancial do serviço;</li>
+                  <li>Serviços promocionais não reembolsáveis.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">15. Modificações do Serviço</h2>
+                <p>
+                  A Empresa poderá atualizar, modificar, adicionar ou remover funcionalidades da plataforma sem aviso prévio, visando melhorias técnicas, segurança e conformidade legal.
+                </p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">16. Suporte Técnico</h2>
+                <p>O suporte será prestado através dos canais oficiais disponibilizados pela Empresa.</p>
+                <p>Os tempos de resposta poderão variar conforme o plano contratado.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">17. Lei Aplicável</h2>
+                <p>Os presentes Termos serão geridos pelas leis aplicáveis no país de operação da Empresa.</p>
+                <p>Qualquer litígio será resolvido pelos tribunais competentes da jurisdição aplicável.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">18. Contactos</h2>
+                <p>Em caso de dúvidas sobre estes Termos e Condições, contacte:</p>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 font-sans space-y-1">
+                  <p><strong>Empresa:</strong> Fatu-R Gestão e Tecnologias S.A.</p>
+                  <p><strong>Email:</strong> suporte@fatu-r.co.ao</p>
+                  <p><strong>Telefone:</strong> +244 923 000 000</p>
+                  <p><strong>Morada:</strong> Via Principal Talatona, Luanda, Angola</p>
+                </div>
+
+                <div className="pt-4 border-t border-slate-100 text-center font-bold text-slate-800">
+                  Ao utilizar a plataforma, o utilizador confirma que leu, compreendeu e concorda com estes Termos e Condições.
+                </div>
+              </div>
+
+              <div className="p-4 border-t border-slate-50 bg-slate-50 flex justify-end">
+                <button 
+                  onClick={() => setIsTermsModalOpen(false)}
+                  className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 font-bold text-white rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Li e Compreendi
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* --- PRIVACY POLICY MODAL --- */}
+        {isPrivacyModalOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl border border-slate-200/90 shadow-2xl max-w-2xl w-full overflow-hidden text-left flex flex-col max-h-[85vh]"
+            >
+              <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <FileText className="text-orange-500 w-4 h-4" />
+                  <span className="text-sm font-bold text-slate-900">Política de Privacidade</span>
+                </div>
+                <button 
+                  onClick={() => setIsPrivacyModalOpen(false)}
+                  className="p-1 px-2.5 rounded bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors text-xs font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto text-xs text-slate-600 leading-relaxed space-y-4 font-sans">
+                <h1 className="text-base font-black text-slate-900 mb-2 font-display">POLÍTICA DE PRIVACIDADE</h1>
+                <p className="font-bold">Última atualização: 23 de Maio de 2026</p>
+                <p>
+                  No <strong>Fatu-R</strong>, levamos a privacidade e proteção dos dados dos nossos utilizadores com total seriedade. Esta Política de Privacidade descreve como recolhemos, utilizamos, armazenamos, protegemos e tratamos os dados pessoais dos utilizadores da nossa plataforma.
+                </p>
+                <p>
+                  Ao utilizar o sistema Fatu-R, o utilizador concorda com os termos desta Política de Privacidade.
+                </p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">1. Responsável pelo Tratamento dos Dados</h2>
+                <p>O responsável pelo tratamento dos dados pessoais é:</p>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-1 font-sans">
+                  <p><strong>Empresa:</strong> Fatu-R Gestão e Tecnologias S.A.</p>
+                  <p><strong>NIF/NIPC:</strong> 5000493821</p>
+                  <p><strong>Endereço:</strong> Via Principal Talatona, Luanda, Angola</p>
+                  <p><strong>Email de suporte:</strong> suporte@fatu-r.co.ao</p>
+                  <p><strong>Telefone:</strong> +244 923 000 000</p>
+                </div>
+                <p>
+                  Caso tenha dúvidas sobre esta Política de Privacidade ou sobre o tratamento dos seus dados, poderá contactar-nos através dos canais acima.
+                </p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">2. Dados Pessoais Recolhidos</h2>
+                <p>O Fatu-R poderá recolher os seguintes dados pessoais, dependendo da utilização da plataforma:</p>
+                
+                <h3 className="font-bold text-slate-700 mt-1">Dados de identificação</h3>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Nome completo;</li>
+                  <li>Nome da empresa;</li>
+                  <li>Número de identificação fiscal (NIF);</li>
+                  <li>Endereço;</li>
+                  <li>Correio eletrónico (email);</li>
+                  <li>Número de telefone.</li>
+                </ul>
+
+                <h3 className="font-bold text-slate-700 mt-1">Dados da conta</h3>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Nome de utilizador;</li>
+                  <li>Palavra-passe encriptada;</li>
+                  <li>Histórico de acessos;</li>
+                  <li>Endereço IP;</li>
+                  <li>Registos de atividade no sistema.</li>
+                </ul>
+
+                <h3 className="font-bold text-slate-700 mt-1">Dados comerciais e fiscais</h3>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Informações de faturação;</li>
+                  <li>Dados de clientes e fornecedores inseridos pelo utilizador;</li>
+                  <li>Produtos, serviços e movimentos financeiros;</li>
+                  <li>Dados contabilísticos necessários para emissão documental.</li>
+                </ul>
+
+                <h3 className="font-bold text-slate-700 mt-1">Dados técnicos</h3>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Tipo de navegador;</li>
+                  <li>Sistema operativo;</li>
+                  <li>Informações do dispositivo;</li>
+                  <li>Cookies e dados de sessão.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">3. Finalidades do Tratamento dos Dados</h2>
+                <p>Os dados pessoais recolhidos poderão ser utilizados para:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Criar e gerir contas de utilizador;</li>
+                  <li>Processar faturação e documentos fiscais;</li>
+                  <li>Garantir funcionamento correto da plataforma;</li>
+                  <li>Melhorar segurança e prevenir fraudes;</li>
+                  <li>Cumprir obrigações legais e fiscais;</li>
+                  <li>Fornecer suporte técnico;</li>
+                  <li>Enviar notificações importantes relacionadas ao serviço;</li>
+                  <li>Melhorar funcionalidades do sistema;</li>
+                  <li>Enviar comunicações informativas e promocionais, quando autorizado pelo utilizador.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">4. Base Legal do Tratamento</h2>
+                <p>O tratamento dos dados pessoais poderá ocorrer com base em:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Execução de contrato;</li>
+                  <li>Cumprimento de obrigação legal;</li>
+                  <li>Consentimento do utilizador;</li>
+                  <li>Interesse legítimo da empresa, desde que não prejudique os direitos fundamentais do titular dos dados.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">5. Partilha de Dados</h2>
+                <p>O Fatu-R não vende dados pessoais dos seus utilizadores.</p>
+                <p>Os dados poderão ser partilhados apenas quando necessário com:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Prestadores de serviços tecnológicos e alojamento;</li>
+                  <li>Plataformas de pagamento;</li>
+                  <li>Autoridades fiscais ou governamentais quando exigido por lei;</li>
+                  <li>Parceiros técnicos envolvidos na operação da plataforma.</li>
+                </ul>
+                <p>Toda partilha será realizada com níveis adequados de proteção e confidencialidade.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">6. Conservação dos Dados</h2>
+                <p>Os dados pessoais serão conservados apenas durante o período necessário para:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Prestação dos serviços;</li>
+                  <li>Cumprimento de obrigações legais e fiscais;</li>
+                  <li>Resolução de litígios;</li>
+                  <li>Proteção de direitos legais da empresa.</li>
+                </ul>
+                <p>Após o término do período necessário, os dados poderão ser eliminados, anonimizados ou arquivados conforme exigido por lei.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">7. Segurança dos Dados</h2>
+                <p>O Fatu-R implementa medidas técnicas e organizacionais para proteger os dados pessoais dos utilizadores.</p>
+                <p>Entre as medidas aplicadas podem incluir-se:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Encriptação de palavras-passe;</li>
+                  <li>Controlo de acessos;</li>
+                  <li>Monitorização de atividades suspeitas;</li>
+                  <li>Backups regulares;</li>
+                  <li>Proteção contra acessos não autorizados;</li>
+                  <li>Ambientes de servidores protegidos.</li>
+                </ul>
+                <p>Embora adotemos medidas rigorosas de segurança, nenhum sistema é totalmente imune a falhas técnicas ou ataques informáticos.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">8. Responsabilidade do Utilizador</h2>
+                <p>O utilizador também possui responsabilidades na proteção dos seus dados.</p>
+                <p>O utilizador compromete-se a:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Manter credenciais seguras;</li>
+                  <li>Não partilhar palavras-passe;</li>
+                  <li>Utilizar dispositivos protegidos;</li>
+                  <li>Comunicar imediatamente qualquer acesso suspeito à conta.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">9. Direitos do Titular dos Dados</h2>
+                <p>O utilizador poderá exercer os seguintes direitos, conforme legislação aplicável:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Direito de acesso aos dados;</li>
+                  <li>Direito de retificação;</li>
+                  <li>Direito de eliminação;</li>
+                  <li>Direito de limitação do tratamento;</li>
+                  <li>Direito de oposição;</li>
+                  <li>Direito de portabilidade dos dados;</li>
+                  <li>Direito de retirar consentimento.</li>
+                </ul>
+                <p>Para exercer estes direitos, o utilizador poderá contactar:</p>
+                <p><strong>Email:</strong> suporte@fatu-r.co.ao</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">10. Cookies e Tecnologias Semelhantes</h2>
+                <p>O Fatu-R poderá utilizar cookies para:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Melhorar experiência do utilizador;</li>
+                  <li>Manter sessões autenticadas;</li>
+                  <li>Guardar preferências;</li>
+                  <li>Melhorar desempenho e segurança.</li>
+                </ul>
+                <p>O utilizador poderá gerir cookies através das definições do navegador.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">11. Transferência Internacional de Dados</h2>
+                <p>Dependendo da infraestrutura tecnológica utilizada, os dados poderão ser armazenados em servidores localizados fora do país do utilizador.</p>
+                <p>Nestes casos, serão adotadas medidas razoáveis de proteção e conformidade legal.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">12. Atualizações desta Política</h2>
+                <p>O Fatu-R poderá atualizar esta Política de Privacidade periodicamente.</p>
+                <p>Sempre que ocorrerem alterações relevantes, os utilizadores poderão ser notificados através do sistema, email ou website oficial.</p>
+                <p>A utilização contínua do sistema após alterações constitui aceitação da versão atualizada.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">13. Contactos</h2>
+                <p>Se tiver dúvidas sobre esta Política de Privacidade ou sobre os seus dados pessoais, contacte:</p>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 font-sans space-y-1">
+                  <p><strong>Sistema:</strong> Fatu-R</p>
+                  <p><strong>Empresa:</strong> Fatu-R Gestão e Tecnologias S.A.</p>
+                  <p><strong>Email:</strong> suporte@fatu-r.co.ao</p>
+                  <p><strong>Telefone:</strong> +244 923 000 000</p>
+                  <p><strong>Morada:</strong> Via Principal Talatona, Luanda, Angola</p>
+                </div>
+
+                <div className="pt-4 border-t border-slate-100 text-center font-bold text-slate-800">
+                  Ao utilizar o Fatu-R, o utilizador confirma que leu, compreendeu e concorda com esta Política de Privacidade.
+                </div>
+              </div>
+
+              <div className="p-4 border-t border-slate-50 bg-slate-50 flex justify-end">
+                <button 
+                  onClick={() => setIsPrivacyModalOpen(false)}
+                  className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 font-bold text-white rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Aceitar e Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* --- DATA PROTECTION (RGPD) MODAL --- */}
+        {isDataProtectionModalOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl border border-slate-200/90 shadow-2xl max-w-2xl w-full overflow-hidden text-left flex flex-col max-h-[85vh]"
+            >
+              <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <FileText className="text-orange-500 w-4 h-4" />
+                  <span className="text-sm font-bold text-slate-900">Proteção de Dados e Privacidade (RGPD)</span>
+                </div>
+                <button 
+                  onClick={() => setIsDataProtectionModalOpen(false)}
+                  className="p-1 px-2.5 rounded bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors text-xs font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto text-xs text-slate-600 leading-relaxed space-y-4 font-sans">
+                <h1 className="text-base font-black text-slate-900 mb-2 font-display">PROTEÇÃO DE DADOS E PRIVACIDADE (RGPD)</h1>
+                <p className="font-bold">Última atualização: 23 de Maio de 2026</p>
+                <p>
+                  No <strong>Fatu-R</strong>, valorizamos a privacidade, segurança e proteção dos dados pessoais dos nossos utilizadores, clientes e parceiros.
+                </p>
+                <p>
+                  Esta página explica o nosso compromisso relativamente ao tratamento de dados pessoais, privacidade, transparência e segurança da informação no âmbito da utilização do sistema Fatu-r.
+                </p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">O Nosso Compromisso com a Proteção de Dados</h2>
+                <p>
+                  O Fatu-r compromete-se a proteger os dados pessoais dos seus utilizadores e dos clientes registados no sistema.
+                </p>
+                <p>
+                  Enquanto fornecedor de um software de faturação e gestão empresarial, adotamos práticas técnicas e organizacionais adequadas para garantir:
+                </p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Confidencialidade dos dados;</li>
+                  <li>Segurança da informação;</li>
+                  <li>Integridade dos registos;</li>
+                  <li>Transparência no tratamento dos dados;</li>
+                  <li>Controlo do utilizador sobre os seus próprios dados.</li>
+                </ul>
+
+                <p>Apenas recolhemos os dados estritamente necessários para:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Prestação do serviço;</li>
+                  <li>Emissão de documentos fiscais;</li>
+                  <li>Gestão comercial e financeira;</li>
+                  <li>Suporte técnico;</li>
+                  <li>Cumprimento de obrigações legais.</li>
+                </ul>
+
+                <p>O Fatu-r compromete-se ainda a:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Não vender dados pessoais a terceiros;</li>
+                  <li>Não utilizar dados para fins não autorizados;</li>
+                  <li>Informar utilizadores em caso de incidentes de segurança relevantes;</li>
+                  <li>Aplicar medidas razoáveis de segurança para prevenção de acessos indevidos.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">O Seu Compromisso Enquanto Utilizador</h2>
+                <p>
+                  Ao utilizar o Fatu-r, o utilizador reconhece que também possui responsabilidades no tratamento dos dados pessoais inseridos no sistema.
+                </p>
+                <p>
+                  O utilizador é responsável pelos dados dos seus clientes, colaboradores, fornecedores e parceiros comerciais registados na plataforma.
+                </p>
+                <p>
+                  O utilizador compromete-se a:
+                </p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Recolher dados pessoais de forma legal;</li>
+                  <li>Utilizar os dados apenas para finalidades legítimas;</li>
+                  <li>Garantir que possui autorização legal para processar os dados dos seus clientes;</li>
+                  <li>Cumprir a legislação de proteção de dados aplicável no seu país;</li>
+                  <li>Proteger credenciais de acesso ao sistema.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">Consentimento e Comunicações</h2>
+                <p>O Fatu-r poderá comunicar com os utilizadores através de:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Correio eletrónico (email);</li>
+                  <li>Notificações do sistema;</li>
+                  <li>SMS (quando aplicável);</li>
+                  <li>Contacto telefónico.</li>
+                </ul>
+                <p>Estas comunicações poderão incluir:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Informações essenciais do serviço;</li>
+                  <li>Alertas de segurança;</li>
+                  <li>Atualizações do sistema;</li>
+                  <li>Informações sobre faturação ou subscrição;</li>
+                  <li>Novas funcionalidades e melhorias.</li>
+                </ul>
+                <p>
+                  As comunicações promocionais apenas serão enviadas quando existir consentimento do utilizador. O utilizador poderá alterar as suas preferências de comunicação a qualquer momento.
+                </p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">Transparência</h2>
+                <p>No Fatu-r acreditamos na transparência. Comprometemo-nos a comunicar de forma clara relativamente a:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Serviços disponíveis;</li>
+                  <li>Preços e subscrições;</li>
+                  <li>Atualizações do sistema;</li>
+                  <li>Alterações legais;</li>
+                  <li>Processamento dos dados pessoais.</li>
+                </ul>
+                <p>
+                  Sempre que existirem alterações relevantes às políticas ou aos serviços, os utilizadores poderão ser notificados.
+                </p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">Portabilidade dos Dados</h2>
+                <p>
+                  O utilizador poderá solicitar os seus dados pessoais ou empresariais armazenados no sistema. Quando tecnicamente possível e legalmente permitido, os dados poderão ser disponibilizados:
+                </p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Em formato estruturado;</li>
+                  <li>De leitura automática;</li>
+                  <li>Preparados para migração para outro serviço.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">Direito ao Apagamento (Direito ao Esquecimento)</h2>
+                <p>
+                  O utilizador poderá solicitar a eliminação da sua conta e dos respetivos dados pessoais. Contudo, determinados dados poderão ser mantidos durante o período legalmente exigido para:
+                </p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Cumprimento de obrigações fiscais;</li>
+                  <li>Auditorias;</li>
+                  <li>Obrigações contabilísticas;</li>
+                  <li>Defesa de direitos legais.</li>
+                </ul>
+                <p>Após os períodos legalmente exigidos, os dados poderão ser eliminados permanentemente.</p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">Segurança dos Dados</h2>
+                <p>A segurança da informação é uma prioridade do Fatu-r. Para proteção dos dados, poderão ser utilizadas medidas como:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Encriptação de palavras-passe;</li>
+                  <li>Controlo de acessos;</li>
+                  <li>Sessões autenticadas;</li>
+                  <li>Monitorização de acessos suspeitos;</li>
+                  <li>Backups regulares;</li>
+                  <li>Proteção da infraestrutura;</li>
+                  <li>Registos de atividade do sistema.</li>
+                </ul>
+                <p>
+                  Apesar dos esforços de segurança, nenhum sistema é totalmente imune a falhas técnicas, ataques cibernéticos ou eventos de força maior. Por isso, recomendamos que os utilizadores mantenham seus dispositivos protegidos, antivírus atualizado, palavras-passe seguras e acesso restrito às contas.
+                </p>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">Conservação de Dados</h2>
+                <p>Os dados serão conservados apenas durante o tempo necessário para:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Prestação dos serviços;</li>
+                  <li>Cumprimento legal;</li>
+                  <li>Obrigações fiscais;</li>
+                  <li>Consistência operacional;</li>
+                  <li>Resolução de litígios.</li>
+                </ul>
+
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">Contactos Relacionados com Privacidade</h2>
+                <p>Caso tenha dúvidas sobre proteção de dados ou privacidade, poderá contactar:</p>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 font-sans space-y-1">
+                  <p><strong>Sistema:</strong> Fatu-r</p>
+                  <p><strong>Empresa:</strong> Fatu-R Gestão e Tecnologias S.A.</p>
+                  <p><strong>Email:</strong> suporte@fatu-r.co.ao</p>
+                  <p><strong>Telefone:</strong> +244 923 000 000</p>
+                  <p><strong>Morada:</strong> Via Principal Talatona, Luanda, Angola</p>
+                </div>
+
+                <div className="pt-4 border-t border-slate-100 text-center font-bold text-slate-800">
+                  Ao utilizar o Fatu-r, o utilizador reconhece que leu e compreendeu os compromissos de proteção de dados aqui descritos.
+                </div>
+              </div>
+
+              <div className="p-4 border-t border-slate-50 bg-slate-50 flex justify-end">
+                <button 
+                  onClick={() => setIsDataProtectionModalOpen(false)}
+                  className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 font-bold text-white rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Aceitar e Fechar
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
