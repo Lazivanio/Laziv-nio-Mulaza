@@ -93,6 +93,7 @@ import {
   Loader2,
   RefreshCcw,
   Coins,
+  Hand,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
@@ -9568,6 +9569,122 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   // UI State
   const [showCartMobile, setShowCartMobile] = useState(false);
 
+  // States for Held Carts/Clientes em Espera
+  const [heldCarts, setHeldCarts] = useState<{ id: string; name: string; cart: any[]; client: any; discount: number; createdAt: string }[]>(() => {
+    try {
+      const saved = localStorage.getItem('held_carts');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('held_carts', JSON.stringify(heldCarts));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [heldCarts]);
+
+  const [isHoldingMode, setIsHoldingMode] = useState(false);
+  const [isListHeldCartsOpen, setIsListHeldCartsOpen] = useState(false);
+  const [customCartName, setCustomCartName] = useState('');
+  
+  const [resumeConflict, setResumeConflict] = useState<{ isOpen: boolean; pendingResumeHC: any }>({
+    isOpen: false,
+    pendingResumeHC: null
+  });
+
+  const handleHoldCurrentCart = () => {
+    if (cart.length === 0) return;
+    const timeStr = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+    const clientSuffix = client.name !== 'Consumidor Final' ? ` - ${client.name}` : '';
+    setCustomCartName(`Cliente #${heldCarts.length + 1}${clientSuffix} (${timeStr})`);
+    setIsHoldingMode(true);
+  };
+
+  const confirmHoldCart = () => {
+    if (cart.length === 0) return;
+    const nameToUse = customCartName.trim() || `Clt #${heldCarts.length + 1}`;
+    
+    const newHeld = {
+      id: crypto.randomUUID(),
+      name: nameToUse,
+      cart: [...cart],
+      client: { ...client },
+      discount: discount,
+      createdAt: new Date().toISOString()
+    };
+    
+    setHeldCarts(prev => [newHeld, ...prev]);
+    setIsHoldingMode(false);
+    setCustomCartName('');
+    
+    // Reset active cart
+    setCart([]);
+    setDiscount(0);
+    setClient({ name: 'Consumidor Final', nif: '999999999' });
+  };
+
+  const handleResumeCart = (hc: any) => {
+    if (cart.length > 0) {
+      setResumeConflict({
+        isOpen: true,
+        pendingResumeHC: hc
+      });
+    } else {
+      executeResume(hc);
+    }
+  };
+
+  const executeResume = (hc: any) => {
+    setCart(hc.cart);
+    setClient(hc.client);
+    setDiscount(hc.discount);
+    setHeldCarts(prev => prev.filter(item => item.id !== hc.id));
+    setResumeConflict({ isOpen: false, pendingResumeHC: null });
+  };
+
+  const conflictAutoHoldAndResume = () => {
+    if (!resumeConflict.pendingResumeHC) return;
+    // Auto hold current cart first before resuming
+    const timeStr = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+    const clientSuffix = client.name !== 'Consumidor Final' ? ` - ${client.name}` : '';
+    const nameToUse = `Clt Auto-espera${clientSuffix} (${timeStr})`;
+    
+    const currentHeld = {
+      id: crypto.randomUUID(),
+      name: nameToUse,
+      cart: [...cart],
+      client: { ...client },
+      discount: discount,
+      createdAt: new Date().toISOString()
+    };
+    
+    const targetHc = resumeConflict.pendingResumeHC;
+    
+    setHeldCarts(prev => [currentHeld, ...prev.filter(item => item.id !== targetHc.id)]);
+    setCart(targetHc.cart);
+    setClient(targetHc.client);
+    setDiscount(targetHc.discount);
+    setResumeConflict({ isOpen: false, pendingResumeHC: null });
+  };
+
+  const conflictReplaceAndResume = () => {
+    if (!resumeConflict.pendingResumeHC) return;
+    const targetHc = resumeConflict.pendingResumeHC;
+    setCart(targetHc.cart);
+    setClient(targetHc.client);
+    setDiscount(targetHc.discount);
+    setHeldCarts(prev => prev.filter(item => item.id !== targetHc.id));
+    setResumeConflict({ isOpen: false, pendingResumeHC: null });
+  };
+
+  const handleDeleteHeldCart = (id: string) => {
+    setHeldCarts(prev => prev.filter(item => item.id !== id));
+  };
+
   const checkActiveSession = async () => {
     if (!user.cash_register_id) {
       setHasActiveSession(false);
@@ -10649,6 +10766,49 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             <h3 className="font-bold text-lg flex items-center gap-2">
               <ShoppingCart size={20} className="text-orange-500" /> Carrinho
             </h3>
+
+            {/* Hand icon (pedir para esperar) between Carrinho and ITENS */}
+            <div className="flex items-center justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  if (cart.length > 0) {
+                    handleHoldCurrentCart();
+                  } else if (heldCarts.length > 0) {
+                    setIsListHeldCartsOpen(true);
+                  }
+                }}
+                disabled={cart.length === 0 && heldCarts.length === 0}
+                className={cn(
+                  "relative p-2 rounded-full transition-all flex items-center justify-center border",
+                  cart.length > 0
+                    ? "bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200 cursor-pointer active:scale-95"
+                    : heldCarts.length > 0
+                      ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-600 cursor-pointer active:scale-95 animate-pulse"
+                      : "bg-zinc-50 text-zinc-300 border-zinc-100 cursor-not-allowed"
+                )}
+                title={
+                  cart.length > 0
+                    ? "Pedir para Esperar (Colocar em espera)"
+                    : heldCarts.length > 0
+                      ? `Ver ${heldCarts.length} Clientes em Espera`
+                      : "Adicione produtos para colocar em espera"
+                }
+              >
+                <Hand size={18} className="rotate-0 scale-x-[-1]" />
+                {heldCarts.length > 0 && (
+                  <span className={cn(
+                    "absolute -top-1 -right-1 font-extrabold text-[9px] w-4.5 h-4.5 rounded-full flex items-center justify-center shadow-sm",
+                    cart.length > 0
+                      ? "bg-rose-600 text-white"
+                      : "bg-white text-amber-800 border border-amber-500"
+                  )}>
+                    {heldCarts.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
             <div className="flex items-center gap-3">
               <span className="bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full text-[10px] font-black">
                 {cart.reduce((acc, item) => acc + item.quantity, 0)} ITENS
@@ -10838,6 +10998,195 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           </div>
         </Card>
       </div>
+
+      {/* Colocar Carrinho em Espera Modal */}
+      <Modal
+        isOpen={isHoldingMode}
+        onClose={() => {
+          setIsHoldingMode(false);
+          setCustomCartName('');
+        }}
+        title="Colocar Carrinho em Espera"
+      >
+        <div className="space-y-4 p-2 text-zinc-850">
+          <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center">
+            <Hand size={24} className="scale-x-[-1]" />
+          </div>
+          <div>
+            <h4 className="font-extrabold text-zinc-900 text-sm uppercase tracking-tight">Pedir para esperar</h4>
+            <p className="text-zinc-500 text-xs mt-1">
+              Insira um identificador para este carrinho (Ex: Mesa 5, Nome do cliente, Número do pedido) para poder recuperá-lo facilmente mais tarde.
+            </p>
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Identificador / Nome</label>
+            <input
+              type="text"
+              placeholder="Ex: Sr. António, Mesa 3, etc."
+              value={customCartName}
+              onChange={(e) => setCustomCartName(e.target.value)}
+              className="w-full px-3 py-3 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-amber-550 outline-none text-zinc-805"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  confirmHoldCart();
+                }
+              }}
+            />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsHoldingMode(false);
+                setCustomCartName('');
+              }}
+              className="flex-1 py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded-xl text-[10px] font-black uppercase tracking-wider transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={confirmHoldCart}
+              className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-colors"
+            >
+              Confirmar Espera
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Listar Carrinhos em Espera Modal */}
+      <Modal
+        isOpen={isListHeldCartsOpen}
+        onClose={() => setIsListHeldCartsOpen(false)}
+        title="Clientes / Carrinhos em Espera"
+      >
+        <div className="space-y-4 p-2 text-zinc-850">
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center">
+              <Clock size={20} className="text-amber-600 animate-pulse" />
+            </div>
+            <div>
+              <p className="text-xs font-black text-zinc-800 uppercase tracking-tight">Atendimentos Suspensos</p>
+              <p className="text-[10px] text-zinc-400 font-semibold">{heldCarts.length} {heldCarts.length === 1 ? 'cliente aguardando' : 'clientes aguardando'}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2 max-h-[22rem] overflow-y-auto pr-1">
+            {heldCarts.length === 0 ? (
+              <div className="py-8 text-center text-zinc-400 font-semibold text-xs">
+                Nenhum cliente em espera neste momento.
+              </div>
+            ) : (
+              heldCarts.map((hc) => (
+                <div key={hc.id} className="bg-zinc-50 hover:bg-zinc-100/70 p-3 border border-zinc-200/60 shadow-sm rounded-2xl flex items-center justify-between gap-3 transition-colors animate-fade-in">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-black text-amber-950 truncate uppercase tracking-tight">{hc.name}</p>
+                    <p className="text-[10px] font-bold text-zinc-500 mt-1">
+                      {hc.cart.reduce((acc: number, i: any) => acc + i.quantity, 0)} itens • Kz {hc.cart.reduce((sub: number, item: any) => {
+                        let pr = item.type === 'product' ? ((item.item as any).discount_percent ? item.item.price * (1 - (item.item as any).discount_percent! / 100) : item.item.price) : item.item.price;
+                        if (item.selectedFees && item.selectedFees.length > 0) {
+                          pr += item.selectedFees.reduce((sum: number, f: any) => sum + f.amount, 0);
+                        }
+                        return sub + (pr * item.quantity);
+                      }, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </p>
+                    <p className="text-[8px] text-zinc-400 mt-0.5 font-semibold">
+                      Criado às {new Date(hc.createdAt).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => {
+                        handleResumeCart(hc);
+                        setIsListHeldCartsOpen(false);
+                      }}
+                      className="bg-amber-500 hover:bg-amber-600 text-[10px] text-white font-black uppercase px-3 py-1.5 rounded-xl transition-all shadow-sm active:scale-95"
+                      title="Retomar atendimento deste cliente"
+                    >
+                      Atender
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleDeleteHeldCart(hc.id);
+                        if (heldCarts.length <= 1) {
+                          setIsListHeldCartsOpen(false);
+                        }
+                      }}
+                      className="text-zinc-400 hover:text-rose-600 p-2 rounded-xl border border-transparent hover:border-rose-100 hover:bg-rose-50 transition-all active:scale-95 text-xs font-extrabold"
+                      title="Eliminar carrinho em espera"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="pt-2 border-t border-zinc-100 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setIsListHeldCartsOpen(false)}
+              className="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-650 rounded-xl text-[10px] font-black uppercase tracking-wider transition-colors"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Conflict Resolution Modal for resuming a held cart while current active cart has items */}
+      <Modal 
+        isOpen={resumeConflict.isOpen} 
+        onClose={() => setResumeConflict({ isOpen: false, pendingResumeHC: null })} 
+        title="Carrinho Ativo com Produtos"
+      >
+        <div className="space-y-4 p-2 text-center sm:text-left">
+          <div className="w-12 h-12 bg-amber-100 text-amber-605 rounded-full flex items-center justify-center mx-auto sm:mx-0">
+            <Clock size={24} />
+          </div>
+          <div>
+            <h4 className="font-extrabold text-zinc-900 text-base">O carrinho atual contém itens</h4>
+            <p className="text-zinc-550 text-xs mt-1">
+              Deseja colocar o carrinho/cliente atual em espera antes de recuperar o carrinho selecionado, ou deseja substituir os produtos atuais?
+            </p>
+          </div>
+          <div className="bg-zinc-50 p-3 rounded-xl border border-zinc-100 text-left">
+            <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Carrinho do Cliente em Espera:</p>
+            <p className="text-xs font-black text-zinc-800 mt-1 uppercase">
+              {resumeConflict.pendingResumeHC?.name}
+            </p>
+            <p className="text-[10px] text-zinc-500 mt-0.5 font-semibold">
+              ({resumeConflict.pendingResumeHC?.cart?.reduce((acc: any, i: any) => acc + i.quantity, 0)} itens)
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 pt-2">
+            <button
+              type="button"
+              onClick={conflictAutoHoldAndResume}
+              className="w-full bg-amber-500 hover:bg-amber-600 text-white font-black py-3 px-4 rounded-xl text-[10px] uppercase tracking-wider transition-colors"
+            >
+              Colocar atual em espera e recuperar selecionado
+            </button>
+            <button
+              type="button"
+              onClick={conflictReplaceAndResume}
+              className="w-full bg-rose-50 hover:bg-rose-100 text-rose-700 font-black py-3 px-4 rounded-xl text-[10px] uppercase tracking-wider transition-colors"
+            >
+              Substituir carrinho atual (Apagar itens existentes)
+            </button>
+            <button
+              type="button"
+              onClick={() => setResumeConflict({ isOpen: false, pendingResumeHC: null })}
+              className="w-full bg-zinc-100 text-zinc-650 font-black py-3 px-4 rounded-xl text-[10px] uppercase tracking-wider hover:bg-zinc-200 transition-colors"
+            >
+              Cancelar e continuar no carrinho atual
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Proforma Modal */}
       <Modal isOpen={isProformaModalOpen} onClose={() => setIsProformaModalOpen(false)} title="Gerar Fatura Proforma">

@@ -1125,9 +1125,13 @@ function initializeDatabase() {
           db.exec("ALTER TABLE users ADD COLUMN trial_unlocked INTEGER DEFAULT 0;");
           console.log("[DB] Added trial_unlocked column to users table");
         }
+        if (!usersCols.some((c: any) => c.name === 'is_test_account')) {
+          db.exec("ALTER TABLE users ADD COLUMN is_test_account INTEGER DEFAULT 1;");
+          console.log("[DB] Added is_test_account column to users table");
+        }
       }
     } catch (e) {
-      console.error("[DB] Error migrating users trial_unlocked:", e);
+      console.error("[DB] Error migrating users columns:", e);
     }
 
     // Cash Registers Migration
@@ -3084,8 +3088,8 @@ async function startServer() {
 
       // 1. Create the owner user
       const userResult = db.prepare(`
-        INSERT INTO users (name, company_name, email, password, role, phone, nif, address, status, username)
-        VALUES (?, ?, ?, ?, 'owner', ?, ?, ?, 'active', ?)
+        INSERT INTO users (name, company_name, email, password, role, phone, nif, address, status, username, is_test_account)
+        VALUES (?, ?, ?, ?, 'owner', ?, ?, ?, 'active', ?, 1)
       `).run(name, companyName, email, password, phone, nif, address, email);
       
       const ownerId = userResult.lastInsertRowid as number;
@@ -3165,8 +3169,8 @@ async function startServer() {
 
       // 1. Create the owner user
       const userResult = db.prepare(`
-        INSERT INTO users (name, company_name, email, password, role, phone, nif, address, status, username)
-        VALUES (?, ?, ?, ?, 'owner', ?, ?, ?, 'active', ?)
+        INSERT INTO users (name, company_name, email, password, role, phone, nif, address, status, username, is_test_account)
+        VALUES (?, ?, ?, ?, 'owner', ?, ?, ?, 'active', ?, 0)
       `).run(name, companyName, email, password, phone, nif, address, email);
       
       const ownerId = userResult.lastInsertRowid as number;
@@ -3317,68 +3321,46 @@ async function startServer() {
       if (establishment) ownerId = establishment.owner_id;
     }
 
-    if (userId) {
-      const user = db.prepare("SELECT role FROM users WHERE id = ?").get(userId) as any;
-      if (user?.role === 'admin') {
-        return next();
-      }
-    }
-
     if (ownerId) {
-      const owner = db.prepare("SELECT status, billing_mode, created_at, trial_unlocked FROM users WHERE id = ?").get(ownerId) as any;
+      const owner = db.prepare("SELECT status, billing_mode, created_at, trial_unlocked, is_test_account FROM users WHERE id = ?").get(ownerId) as any;
       
-      // Auto-suspend trial users after 15 days
-      if (owner && owner.status === 'active' && !owner.trial_unlocked) {
-        const createdAtTime = new Date(owner.created_at + (owner.created_at.includes('Z') || owner.created_at.includes('UTC') ? '' : ' UTC')).getTime();
-        const diffMs = Date.now() - createdAtTime;
-        const fifteenDaysMs = 15 * 24 * 60 * 60 * 1000;
-        
-        if (diffMs > fifteenDaysMs) {
-          db.prepare("UPDATE users SET status = 'suspended' WHERE id = ?").run(ownerId);
-          owner.status = 'suspended';
-        }
-      }
-
       // If it's the checkout route and billing mode is electronic, we bypass the suspension/license check (simulation mode)
       if (req.path.includes('p-venda') && owner?.billing_mode === 'eletronica') {
         return next();
       }
 
       if (owner && owner.status === 'suspended') {
-        if (owner.trial_unlocked === 0) {
-          return res.status(403).json({ error: "O seu período de experiência gratuita de 15 dias expirou. A sua conta foi bloqueada e só o Administrador tem a capacidade de a desbloquear." });
-        }
         return res.status(403).json({ error: "Acesso suspenso. Contacte o administrador para desbloquear." });
       }
 
-      // Check if owner has ANY active license to allow dashboard access
-      // But if they are accessing a specific establishment, check that establishment's license
-      if (currentEstablishmentId) {
-        const establishment = db.prepare("SELECT license_status, license_expiry FROM establishments WHERE id = ?").get(currentEstablishmentId) as any;
-        if (establishment && establishment.license_status === 'expired') {
-          return res.status(403).json({ error: "Licença expirada para este estabelecimento. Por favor, renove a sua subscrição." });
-        }
-        if (establishment && establishment.license_expiry && new Date(establishment.license_expiry) < new Date()) {
-           // Allow a small grace period or just be more descriptive
-           return res.status(403).json({ error: "A licença deste estabelecimento expirou em " + new Date(establishment.license_expiry).toLocaleDateString() });
-        }
+      // Check licenses if it's an effective (non-test/paid) account
+      if (owner && owner.is_test_account === 1) {
+        // Test accounts last 30 days and then fallback to Básico plan - they are not blocked or suspended!
       } else {
-        // Global check for owner: must have at least one active license or be in trial
-        const activeLicense = db.prepare(`
-          SELECT id FROM licenses 
-          WHERE user_id = ? AND status = 'active' AND date(expiry_date) >= date('now')
-          LIMIT 1
-        `).get(ownerId);
-        
-        if (!activeLicense) {
-          // Check if they have any establishments at all
-          const establishmentCount = db.prepare("SELECT count(*) as count FROM establishments WHERE owner_id = ?").get(ownerId) as any;
-          // Only block if they have many establishments and none are active
-          // For now, let's just log and continue if it's a dashboard view without specific establishment
-          if (establishmentCount.count > 0 && req.path.includes('/api/owner/establishments')) {
-            // Allow listing establishments even if license is questionable
-          } else if (establishmentCount.count > 5 && !activeLicense) {
-             return res.status(403).json({ error: "A sua licença expirou. Por favor, contacte o suporte para renovar." });
+        // Effective accounts license check
+        if (currentEstablishmentId) {
+          const establishment = db.prepare("SELECT license_status, license_expiry FROM establishments WHERE id = ?").get(currentEstablishmentId) as any;
+          if (establishment && establishment.license_status === 'expired') {
+            return res.status(403).json({ error: "Licença expirada para este estabelecimento. Por favor, renove a sua subscrição." });
+          }
+          if (establishment && establishment.license_expiry && new Date(establishment.license_expiry) < new Date()) {
+             return res.status(403).json({ error: "A licença deste estabelecimento expirou em " + new Date(establishment.license_expiry).toLocaleDateString() });
+          }
+        } else {
+          // Global check for owner: must have at least one active license if effective
+          const activeLicense = db.prepare(`
+            SELECT id FROM licenses 
+            WHERE user_id = ? AND status = 'active' AND date(expiry_date) >= date('now')
+            LIMIT 1
+          `).get(ownerId);
+          
+          if (!activeLicense) {
+            const establishmentCount = db.prepare("SELECT count(*) as count FROM establishments WHERE owner_id = ?").get(ownerId) as any;
+            if (establishmentCount.count > 0 && req.path.includes('/api/owner/establishments')) {
+              // Allow listing
+            } else if (establishmentCount.count > 5 && !activeLicense) {
+               return res.status(403).json({ error: "A sua licença expirou. Por favor, contacte o suporte para renovar." });
+            }
           }
         }
       }
@@ -3395,25 +3377,50 @@ async function startServer() {
 
       const { ownerId } = getContextData(userId);
       let owner = null;
-      let activeLicense = null;
+      let activeLicense: any = null;
+      let licenseStatus = 'expired';
+      let licenseExpiry = null;
 
       if (ownerId) {
-        owner = db.prepare("SELECT status, fiscal_regime, billing_mode FROM users WHERE id = ?").get(ownerId) as any;
+        owner = db.prepare("SELECT status, fiscal_regime, billing_mode, is_test_account, created_at FROM users WHERE id = ?").get(ownerId) as any;
         if (owner && owner.status === 'suspended') {
           return res.status(403).json({ error: "A sua conta/acesso está suspensa. Contacte o administrador." });
         }
 
-        // License check for owner
-        activeLicense = db.prepare(`
-          SELECT id FROM licenses 
-          WHERE user_id = ? AND status = 'active' AND date(expiry_date) >= date('now')
-          LIMIT 1
-        `).get(ownerId);
+        const limits = resolveUserPlanAndLimits(ownerId);
 
-        if (!activeLicense) {
-          const establishmentCount = db.prepare("SELECT count(*) as count FROM establishments WHERE owner_id = ?").get(ownerId) as any;
-          if (establishmentCount.count > 0) {
-            return res.status(403).json({ error: "Licença expirada para o estabelecimento associado." });
+        if (owner && owner.is_test_account === 1) {
+          // Test trial accounts are active during their trial and downgrade instead of locking out on expiry.
+          licenseStatus = 'active'; 
+          
+          const createdAtStr = owner.created_at;
+          const createdAtTime = new Date(createdAtStr + (createdAtStr.includes('Z') || createdAtStr.includes('UTC') ? '' : ' UTC')).getTime();
+          const trialRemainingMs = (30 * 24 * 60 * 60 * 1000) - (Date.now() - createdAtTime);
+          const trialRemainingDays = Math.max(0, Math.ceil(trialRemainingMs / (24 * 60 * 60 * 1000)));
+          
+          if (trialRemainingDays > 0) {
+            licenseExpiry = new Date(createdAtTime + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          } else {
+            // Already expired trial but running on Basic
+            licenseExpiry = null;
+          }
+        } else {
+          // Effective accounts check block
+          activeLicense = db.prepare(`
+            SELECT id, expiry_date, plan_type FROM licenses 
+            WHERE user_id = ? AND status = 'active' AND date(expiry_date) >= date('now')
+            ORDER BY expiry_date DESC LIMIT 1
+          `).get(ownerId);
+
+          if (activeLicense) {
+            licenseStatus = 'active';
+            licenseExpiry = activeLicense.expiry_date;
+          } else {
+            licenseStatus = 'expired';
+            const establishmentCount = db.prepare("SELECT count(*) as count FROM establishments WHERE owner_id = ?").get(ownerId) as any;
+            if (establishmentCount.count > 0) {
+              return res.status(403).json({ error: "Licença expirada para o estabelecimento associado. Por favor, contacte o administrador." });
+            }
           }
         }
       }
@@ -3426,8 +3433,8 @@ async function startServer() {
         fiscal_regime: owner?.fiscal_regime || 'geral',
         billing_mode: owner?.billing_mode || 'tradicional',
         license: {
-          status: activeLicense ? 'active' : 'expired',
-          expiry_date: activeLicense ? (activeLicense as any).expiry_date : null
+          status: licenseStatus,
+          expiry_date: licenseExpiry
         }
       });
     } catch (e: any) {
@@ -3628,8 +3635,13 @@ async function startServer() {
     db.prepare(`
       INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, features)
       VALUES (?, ?, ?, ?, ?, 'active', ?)
-    `).run(user_id, establishment_id, plan_type, start_date, expiry_date, JSON.stringify(features));
+    `).run(user_id, establishment_id, plan_type, start_date, expiry_date, typeof features === 'string' ? features : JSON.stringify(features));
     
+    // Mark user as effective (non-test) account
+    if (user_id) {
+       db.prepare("UPDATE users SET is_test_account = 0 WHERE id = ?").run(user_id);
+    }
+
     // Update establishment expiry too
     if (establishment_id) {
       db.prepare("UPDATE establishments SET license_expiry = ? WHERE id = ?").run(expiry_date, establishment_id);
@@ -4859,7 +4871,89 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Helper to determine active plan and features/limits based on trial or assigned licenses
+  const resolveUserPlanAndLimits = (ownerId: number) => {
+    if (!ownerId) {
+      return { plan_type: "Básico", max_establishments: 1, max_products: 100, features: { reports: false, multi_establishment: false, api_access: false } };
+    }
 
+    try {
+      const user = db.prepare("SELECT is_test_account, created_at FROM users WHERE id = ?").get(ownerId) as any;
+      if (!user) {
+        return { plan_type: "Básico", max_establishments: 1, max_products: 100, features: { reports: false, multi_establishment: false, api_access: false } };
+      }
+
+      const isTest = user.is_test_account === 1;
+      const createdAtStr = user.created_at;
+      const createdAtTime = new Date(createdAtStr + (createdAtStr.includes('Z') || createdAtStr.includes('UTC') ? '' : ' UTC')).getTime();
+      const diffMs = Date.now() - createdAtTime;
+      const diffDays = diffMs / (24 * 60 * 60 * 1000);
+
+      // If test account and over 30 days, fallback to basic package limits
+      if (isTest && diffDays > 30) {
+        return {
+          plan_type: "Básico",
+          max_establishments: 1,
+          max_products: 100,
+          features: { reports: false, multi_establishment: false, api_access: false }
+        };
+      }
+
+      // Otherwise, look up active license
+      const activeLicense = db.prepare(`
+        SELECT plan_type, features FROM licenses 
+        WHERE user_id = ? AND status = 'active' AND date(expiry_date) >= date('now')
+        ORDER BY expiry_date DESC LIMIT 1
+      `).get(ownerId) as any;
+
+      if (activeLicense) {
+        let features: any = { reports: true, multi_establishment: true };
+        try {
+          features = typeof activeLicense.features === 'string' ? JSON.parse(activeLicense.features) : (activeLicense.features || {});
+        } catch (e) {}
+
+        let max_establishments = 2;
+        let max_products = 1000;
+        const planName = String(activeLicense.plan_type || '').toLowerCase();
+        
+        if (planName.includes('bas') || planName === 'base') {
+          max_establishments = 1;
+          max_products = 100;
+          features.reports = false;
+          features.multi_establishment = false;
+        } else if (planName.includes('empr') || planName.includes('enterprise') || planName.includes('premium')) {
+          max_establishments = 10;
+          max_products = 5000;
+          features.reports = true;
+          features.multi_establishment = true;
+          features.api_access = true;
+        } else if (planName.includes('prof') || planName.includes('pro')) {
+          max_establishments = 2;
+          max_products = 1000;
+          features.reports = true;
+          features.multi_establishment = true;
+        }
+
+        return {
+          plan_type: activeLicense.plan_type,
+          max_establishments,
+          max_products,
+          features
+        };
+      }
+
+      // Default fallback (within trial period, has default license or no active license yet)
+      return {
+        plan_type: "Premium (Teste)",
+        max_establishments: 10,
+        max_products: 5000,
+        features: { reports: true, multi_establishment: true, api_access: true }
+      };
+    } catch (e) {
+      console.error("[resolveUserPlanAndLimits] Error resolving user plan:", e);
+      return { plan_type: "Básico", max_establishments: 1, max_products: 100, features: { reports: false, multi_establishment: false, api_access: false } };
+    }
+  };
 
   // Helper to get establishment IDs and effective owner ID based on user role
   const getContextData = (rawUserId: string | number) => {
@@ -5111,27 +5205,12 @@ async function startServer() {
     
     try {
       // Check limits
-      const activeLicenses = db.prepare(`
-        SELECT features FROM licenses 
-        WHERE user_id = ? AND status = 'active' AND expiry_date >= DATE('now')
-      `).all(owner_id) as any[];
-
-      let maxEstablishments = 1; // Default for new users without license
-      
-      if (activeLicenses.length > 0) {
-        maxEstablishments = activeLicenses.reduce((max, lic) => {
-          try {
-            const feat = typeof lic.features === 'string' ? JSON.parse(lic.features) : (lic.features || []);
-            return Math.max(max, feat.max_establishments || feat.max_stores || 0);
-          } catch (e) {
-            return max;
-          }
-        }, 0);
-      }
+      const limits = resolveUserPlanAndLimits(owner_id);
+      const maxEstablishments = limits.max_establishments;
 
       const currentEstablishments = db.prepare("SELECT COUNT(*) as count FROM establishments WHERE owner_id = ?").get(owner_id) as any;
       
-      if (currentEstablishments.count >= maxEstablishments) {
+      if (maxEstablishments !== -1 && currentEstablishments.count >= maxEstablishments) {
         return res.status(403).json({ 
           error: `Limite de estabelecimentos atingido (${maxEstablishments}). Por favor, atualize o seu plano.` 
         });
@@ -7962,6 +8041,30 @@ function formatDateToIso(dateStr?: string) {
   app.post("/api/owner/products", (req, res) => {
     const { establishment_id, warehouse_id, name, price, cost, stock, category, image_url, min_stock, tax_id } = req.body;
     
+    // Check product count limits across all establishments of this owner
+    try {
+      const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
+      if (establishment) {
+        const ownerId = establishment.owner_id;
+        const limits = resolveUserPlanAndLimits(ownerId);
+        
+        // Find total product count across all establishments of this owner
+        const ownerEsts = db.prepare("SELECT id FROM establishments WHERE owner_id = ?").all(ownerId) as any[];
+        const estIds = ownerEsts.map(e => e.id);
+        if (estIds.length > 0) {
+          const placeholders = estIds.map(() => "?").join(",");
+          const currentProductsObj = db.prepare(`SELECT COUNT(*) as count FROM products WHERE establishment_id IN (${placeholders})`).get(...estIds) as any;
+          if (limits.max_products !== -1 && currentProductsObj.count >= limits.max_products) {
+            return res.status(403).json({
+              error: `Limite de produtos atingido (${limits.max_products}). Por favor, atualize o seu plano. (Limite: ${limits.max_products})`
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[Products Limit Check Error]", e);
+    }
+
     // Check if product with same name exists in this establishment
     const existing = db.prepare("SELECT id FROM products WHERE establishment_id = ? AND LOWER(name) = LOWER(?)").get(establishment_id, name);
     if (existing) {

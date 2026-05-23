@@ -54,6 +54,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [isPaidModalOpen, setIsPaidModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isHelpDropdownOpen, setIsHelpDropdownOpen] = useState(false);
+  const [selectedSector, setSelectedSector] = useState<'faturacao' | 'retalho'>('faturacao');
 
   const helpTimeoutRef = useRef<any>(null);
 
@@ -1180,7 +1181,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                         />
                       ))}
                     </div>
-                    <span className="text-[10px] font-mono text-slate-400 tracking-wider">
+                    <span className="text-[10px] font-mono text-slate-400 tracking-wider font-extrabold uppercase">
                       {String(heroSlideIndex + 1).padStart(2, '0')} / {String(heroSlides.length).padStart(2, '0')}
                     </span>
                   </div>
@@ -1192,25 +1193,291 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
         </div>
       </section>
 
-      {/* 4. VISUAL SUB-HERO DESIGN APPRECIATION GRID */}
-      <section className="bg-white py-12 border-b border-slate-200">
+      {/* 3.5 SECTOR SHOWCASE SECTION */}
+      <section className="bg-slate-50 py-20 border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-            <div className="p-4 space-y-1">
-              <p className="text-2xl md:text-3xl font-black text-blue-600">+15.000</p>
-              <p className="text-[11px] text-slate-500 font-black uppercase tracking-wider">Negócios em Angola</p>
+          <div className="text-center max-w-4xl mx-auto mb-14 space-y-4">
+            <span className="px-3.5 py-1 bg-orange-100 text-orange-600 border border-orange-200 text-[10px] font-black uppercase tracking-wider rounded-full">
+              Ideal para PMEs e Independentes
+            </span>
+            <h2 className="text-3xl sm:text-4.5xl font-black text-slate-900 tracking-tight leading-snug">
+              Software de faturação online ideal para escritórios e retalho!
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+            {/* Left Column: Beautiful Product Image Showcase with no frames */}
+            <div className="lg:col-span-6 flex justify-center lg:justify-start">
+              <img
+                src="https://i.ibb.co/Y71qsrf8/homepage-ao-tabs-faturacao.png"
+                alt="Fatu-R Faturação"
+                className="w-full h-auto"
+                referrerPolicy="no-referrer"
+              />
             </div>
-            <div className="p-4 space-y-1 border-l border-slate-100">
-              <p className="text-2xl md:text-3xl font-black text-blue-600">100%</p>
-              <p className="text-[11px] text-slate-500 font-black uppercase tracking-wider">Cloud Computador / Mobile</p>
+
+            {/* Right Column: Interactive info & benefits list */}
+            <div className="lg:col-span-6 space-y-8 text-left">
+              {/* Tabs Switcher for sectors */}
+              <div className="flex gap-8 border-b border-slate-200/40 pb-0.5 max-w-max select-none">
+                <button
+                  onClick={() => setSelectedSector('faturacao')}
+                  className={`relative pb-3.5 px-1 text-sm font-black tracking-wide transition-all cursor-pointer flex items-center gap-2 ${
+                    selectedSector === 'faturacao'
+                      ? 'text-slate-900 font-extrabold'
+                      : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <FileText size={16} />
+                  <span>Faturação</span>
+                  {selectedSector === 'faturacao' && (
+                    <motion.div
+                      layoutId="activeSectorUnderline"
+                      className="absolute bottom-[-2px] left-0 right-0 h-[3px] bg-gradient-to-r from-blue-950 via-blue-800 to-orange-500 rounded-full"
+                      transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                    />
+                  )}
+                </button>
+                <button
+                  onClick={() => setSelectedSector('retalho')}
+                  className={`relative pb-3.5 px-1 text-sm font-black tracking-wide transition-all cursor-pointer flex items-center gap-2 ${
+                    selectedSector === 'retalho'
+                      ? 'text-slate-900 font-extrabold'
+                      : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <Building2 size={16} />
+                  <span>Retalho</span>
+                  {selectedSector === 'retalho' && (
+                    <motion.div
+                      layoutId="activeSectorUnderline"
+                      className="absolute bottom-[-2px] left-0 right-0 h-[3px] bg-gradient-to-r from-blue-950 via-blue-800 to-orange-500 rounded-full"
+                      transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                    />
+                  )}
+                </button>
+              </div>
+
+              {/* Height-stabilized content container to prevent image shifting/jiggling on tab changes */}
+              <div className="min-h-[510px] sm:min-h-[450px] lg:min-h-[480px] flex flex-col justify-start space-y-6">
+                {selectedSector === 'faturacao' ? (
+                  <>
+                    {/* Tagline / Subtitle */}
+                    <div className="space-y-3">
+                      <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                        Faturação simples para si, rápida para os seus clientes!
+                      </h3>
+                      <p className="text-slate-500 text-sm max-w-lg">
+                        Otimizado especificamente para assegurar um fluxo de vendas ágil, sem esperas e totalmente de acordo com os requisitos legais da AGT.
+                      </p>
+                    </div>
+
+                    {/* Core Features list with orange checks */}
+                    <div className="space-y-3.5 pt-2">
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center border border-orange-200 shrink-0">
+                          <Check size={12} className="text-orange-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-slate-800">Compatível com qualquer equipamento</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Use no Computador, Tablet, Smartphone ou terminais POS dedicados.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center border border-orange-200 shrink-0">
+                          <Check size={12} className="text-orange-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-slate-800">Impressão em A4 e fatura eletrónica</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Emita faturas em formato PDF A4 tradicional ou tickets térmicos de 80mm e 58mm.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center border border-orange-200 shrink-0">
+                          <Check size={12} className="text-orange-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-slate-800">Pagamentos a prazo</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Controle o ciclo de vencimento de faturas, recibos e adiantamentos de clientes de forma limpa.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center border border-orange-200 shrink-0">
+                          <Check size={12} className="text-orange-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-slate-800">Conta corrente de clientes</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Gira saldos devedores, faturas pendentes de liquidação e extratos pormenorizados de clientes.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center border border-orange-200 shrink-0">
+                          <Check size={12} className="text-orange-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-slate-800">Relatórios</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Faturação automatizada por estabelecimento, caixa de registo e exportação imediata de ficheiros SAF-T AO.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Target audiences footer block */}
+                    <div className="pt-6 border-t border-slate-200">
+                      <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-2.5">A solução ideal para:</p>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="px-3.5 py-1.5 bg-white text-slate-700 text-xs font-black rounded-lg border border-slate-200 shadow-sm">Escritórios</span>
+                        <span className="px-3.5 py-1.5 bg-white text-slate-700 text-xs font-black rounded-lg border border-slate-200 shadow-sm">Agências</span>
+                        <span className="px-3.5 py-1.5 bg-white text-slate-700 text-xs font-black rounded-lg border border-slate-200 shadow-sm">Trabalhadores Independentes & Freelancers</span>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Tagline / Subtitle */}
+                    <div className="space-y-3">
+                      <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                        O Ponto de Venda (POS) pensado para o seu negócio!
+                      </h3>
+                      <p className="text-slate-500 text-sm max-w-lg">
+                        Uma experiência de venda rápida, intuitiva e otimizada para comércio ao público, lojas físicas e restauração com total conformidade.
+                      </p>
+                    </div>
+
+                    {/* Core Features list with orange checks */}
+                    <div className="space-y-3.5 pt-2">
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center border border-orange-200 shrink-0">
+                          <Check size={12} className="text-orange-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-slate-800">Emissão de faturas, orçamentos e outros documentos</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Documentos certificados no momento para entrega ao cliente final de forma simplificada.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center border border-orange-200 shrink-0">
+                          <Check size={12} className="text-orange-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-slate-800">Gestão de tamanhos e cores</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Controle completo do catálogo de artigos com múltiplas variações e atributos de produto.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center border border-orange-200 shrink-0">
+                          <Check size={12} className="text-orange-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-slate-800">Múltiplas vendas em simultâneo</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Deixe carrinhos em espera e atenda o próximo cliente de forma imediata.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center border border-orange-200 shrink-0">
+                          <Check size={12} className="text-orange-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-slate-800">Gestão de stocks</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Alertas de rutura, inventários automáticos e controlo de entradas/saídas de artigos.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center border border-orange-200 shrink-0">
+                          <Check size={12} className="text-orange-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-slate-800">Gestão de múltiplas lojas e POS</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Centralize a faturação de múltiplos postos de trabalho e pontos de venda em tempo real.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center border border-orange-200 shrink-0">
+                          <Check size={12} className="text-orange-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-slate-800">Fature num computador, tablet ou telemóvel</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">Solução 100% responsiva que funciona com a mesma fluidez em qualquer tamanho de ecrã.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Target audiences footer block */}
+                    <div className="pt-6 border-t border-slate-200">
+                      <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-2.5">A solução ideal para:</p>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="px-3.5 py-1.5 bg-white text-slate-700 text-xs font-black rounded-lg border border-slate-200 shadow-sm">Lojas Físicas</span>
+                        <span className="px-3.5 py-1.5 bg-white text-slate-700 text-xs font-black rounded-lg border border-slate-200 shadow-sm">Supermercados</span>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
-            <div className="p-4 space-y-1 border-l border-slate-100">
-              <p className="text-2xl md:text-3xl font-black text-blue-600">Nº 142</p>
-              <p className="text-[11px] text-slate-500 font-black uppercase tracking-wider">Licença de Validação AGT</p>
+          </div>
+        </div>
+      </section>
+
+      {/* 4. VISUAL SUB-HERO DESIGN APPRECIATION GRID */}
+      <section className="bg-white py-16 border-b border-slate-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+            {/* Left side: Personalized copywriting block with call to action */}
+            <div className="lg:col-span-7 space-y-6 text-left">
+              <h2 className="text-2xl sm:text-3.5xl font-extrabold text-slate-900 tracking-tight leading-snug">
+                A solução que precisa para gerir o seu negócio, sem complicações!
+              </h2>
+              <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
+                Mais de 15.000 empresas e profissionais confiam no <span className="font-extrabold text-slate-900">Fatu-R</span>, como o seu Software de Faturação Online e POS. A verdadeira fidelização advém da satisfação e, por essa razão, descomplicamos ao máximo.
+              </p>
+              <div className="pt-2">
+                <button
+                  onClick={() => {
+                    setRegError('');
+                    setIsRegisterModalOpen(true);
+                  }}
+                  className="inline-flex items-center justify-center bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs px-6 py-3 rounded-full transition-all shadow-md shadow-orange-500/15 group cursor-pointer"
+                >
+                  Experimente Grátis
+                  <span className="ml-1.5 group-hover:translate-x-0.5 transition-transform duration-200">→</span>
+                </button>
+              </div>
             </div>
-            <div className="p-4 space-y-1 border-l border-slate-100">
-              <p className="text-2xl md:text-3xl font-black text-blue-600">0%</p>
-              <p className="text-[11px] text-slate-500 font-black uppercase tracking-wider">Paragens ou Lentidão</p>
+
+            {/* Right side: Stats stacked vertically (increases visual sheet length) */}
+            <div className="lg:col-span-5 flex flex-col gap-5">
+              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-5 hover:shadow-md hover:border-blue-100 transition-all duration-300">
+                <div className="text-left">
+                  <p className="text-3xl md:text-4xl font-black text-blue-600">+15.000</p>
+                  <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Negócios em Angola</p>
+                </div>
+              </div>
+              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-5 hover:shadow-md hover:border-blue-100 transition-all duration-300">
+                <div className="text-left">
+                  <p className="text-3xl md:text-4xl font-black text-blue-600">100%</p>
+                  <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Cloud Computador / Mobile</p>
+                </div>
+              </div>
+              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-5 hover:shadow-md hover:border-blue-100 transition-all duration-300">
+                <div className="text-left">
+                  <p className="text-3xl md:text-4xl font-black text-blue-600">Nº 142</p>
+                  <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Licença de Validação AGT</p>
+                </div>
+              </div>
+              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-5 hover:shadow-md hover:border-blue-100 transition-all duration-300">
+                <div className="text-left">
+                  <p className="text-3xl md:text-4xl font-black text-blue-600">0%</p>
+                  <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Paragens ou Lentidão</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
