@@ -10580,19 +10580,53 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     }
     if (cart.length === 0) return;
     
-    // Check if in electronic billing mode and if series is approved
-    if (user.billing_mode === 'eletronica') {
-      if (!activeSeries) {
-        alert('Faturação Eletrónica Ativada: Você não possui uma série "E" ativa e aprovada para este estabelecimento. Por favor, solicite a aprovação de uma série nas definições.');
-        return;
-      }
-      if (activeSeries.agt_status !== 'aprovada') {
-        alert('Faturação Eletrónica Ativada: A sua série de faturação ainda não foi aprovada pela AGT. Aguarde a aprovação antes de faturar.');
-        return;
-      }
-    }
-    
     setIsProcessing(true);
+    let currentBillingMode = user.billing_mode || 'tradicional';
+    let latestActiveSeries = activeSeries;
+
+    try {
+      // 1. Fetch latest user status to prevent stale billing mode checks
+      const statusRes = await fetch(`/api/user-status/${user.id}`);
+      if (statusRes.ok) {
+        const userData = await statusRes.json();
+        currentBillingMode = userData.billing_mode || 'tradicional';
+        
+        // Sync state if changed
+        if (onUpdate && (userData.billing_mode !== user.billing_mode || userData.status !== user.status)) {
+          onUpdate({ ...user, ...userData });
+        }
+      }
+
+      const establishmentId = user.establishment_id || 1;
+
+      // 2. Fetch the latest active series list from the server to get fresh status
+      const seriesRes = await fetch(`/api/owner/invoice-series/${user.id}`);
+      if (seriesRes.ok) {
+        const seriesList = await seriesRes.json();
+        if (Array.isArray(seriesList)) {
+          const prefix = currentBillingMode === 'eletronica' ? 'E' : 'A';
+          latestActiveSeries = seriesList.find(s => s.establishment_id === establishmentId && s.prefix === prefix && s.type === 'FR' && s.status === 'active');
+          setActiveSeries(latestActiveSeries); // update state in-situ
+        }
+      }
+
+      // Check if in electronic billing mode and if series is approved
+      if (currentBillingMode === 'eletronica') {
+        if (!latestActiveSeries) {
+          alert('Faturação Eletrónica Ativada: Você não possui uma série "E" ativa e aprovada para este estabelecimento. Por favor, crie e solicite a aprovação de uma série de faturas (FR) correspondente nas definições.');
+          setIsProcessing(false);
+          return;
+        }
+        if (latestActiveSeries.agt_status !== 'aprovada') {
+          alert('Faturação Eletrónica Ativada: A sua série de faturação "E" ainda não foi aprovada pela AGT. Aguarde a aprovação antes de faturar.');
+          setIsProcessing(false);
+          return;
+        }
+      }
+    } catch (e) {
+      console.error('Error validating series on checkout:', e);
+    }
+
     try {
       const establishmentId = user.establishment_id || 1;
       let url = `/api/seller/active-session/${establishmentId}`;
@@ -10811,8 +10845,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         if (contentType && contentType.includes("application/json")) {
           const data = await res.json();
           if (res.status === 403) {
-            if (data.series_status) {
-              alert(`ERRO DE FATURAÇÃO ELETRÓNICA: ${data.error}\n\nPor favor, contacte o administrador para aprovar a série de faturação nas configurações fiscais.`);
+            if (data.series_status || data.is_series_error) {
+              alert(`ERRO DE FATURAÇÃO ELETRÓNICA: ${data.error}\n\nPor favor, aceda às definições para configurar e solicitar a aprovação de uma série de faturação.`);
               setIsPaymentModalOpen(false);
               return;
             } else {
@@ -10842,19 +10876,53 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     e.preventDefault();
     if (cart.length === 0) return;
 
-    // Check if in electronic billing mode and if series is approved
-    if (user.billing_mode === 'eletronica') {
-      if (!activeSeries) {
-        alert('Faturação Eletrónica Ativada: Você não possui uma série "E" ativa e aprovada para este estabelecimento. Por favor, solicite a aprovação de uma série nas definições.');
-        return;
+    setIsProcessing(true);
+    let currentBillingMode = user.billing_mode || 'tradicional';
+    let latestActiveSeries = activeSeries;
+
+    try {
+      // 1. Fetch latest user status to prevent stale billing mode checks
+      const statusRes = await fetch(`/api/user-status/${user.id}`);
+      if (statusRes.ok) {
+        const userData = await statusRes.json();
+        currentBillingMode = userData.billing_mode || 'tradicional';
+        
+        // Sync state if changed
+        if (onUpdate && (userData.billing_mode !== user.billing_mode || userData.status !== user.status)) {
+          onUpdate({ ...user, ...userData });
+        }
       }
-      if (activeSeries.agt_status !== 'aprovada') {
-        alert('Faturação Eletrónica Ativada: A sua série de faturação ainda não foi aprovada pela AGT. Aguarde a aprovação antes de faturar.');
-        return;
+
+      const establishmentId = user.establishment_id || 1;
+
+      // 2. Fetch the latest active series list from the server to get fresh status
+      const seriesRes = await fetch(`/api/owner/invoice-series/${user.id}`);
+      if (seriesRes.ok) {
+        const seriesList = await seriesRes.json();
+        if (Array.isArray(seriesList)) {
+          const prefix = currentBillingMode === 'eletronica' ? 'E' : 'A';
+          latestActiveSeries = seriesList.find(s => s.establishment_id === establishmentId && s.prefix === prefix && s.type === 'FR' && s.status === 'active');
+          setActiveSeries(latestActiveSeries); // update state in-situ
+        }
       }
+
+      // Check if in electronic billing mode and if series is approved
+      if (currentBillingMode === 'eletronica') {
+        if (!latestActiveSeries) {
+          alert('Faturação Eletrónica Ativada: Você não possui uma série "E" ativa e aprovada para este estabelecimento. Por favor, crie e solicite a aprovação de uma série de faturas (FR) correspondente nas definições.');
+          setIsProcessing(false);
+          return;
+        }
+        if (latestActiveSeries.agt_status !== 'aprovada') {
+          alert('Faturação Eletrónica Ativada: A sua série de faturação "E" ainda não foi aprovada pela AGT. Aguarde a aprovação antes de faturar.');
+          setIsProcessing(false);
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Error validating series on formal invoice:', err);
     }
 
-    setIsProcessing(true);
     try {
       const establishmentId = user.establishment_id || 1;
       const items = cart.map(i => {

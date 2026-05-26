@@ -2344,7 +2344,10 @@ async function startServer() {
         const errorMsg = billing_mode === 'eletronica' 
           ? "Faturação Eletrónica: Nenhuma série (prefixo 'E') ativa e aprovada foi encontrada. Por favor, solicite a aprovação de uma série nas definições."
           : "Não existe uma série ativa para Fatura Recibo (FR). Por favor, crie uma série em Definições.";
-        return res.status(403).json({ error: errorMsg });
+        return res.status(403).json({ 
+          error: errorMsg,
+          is_series_error: true
+        });
       }
 
       if (billing_mode === 'eletronica' && series.agt_status !== 'aprovada') {
