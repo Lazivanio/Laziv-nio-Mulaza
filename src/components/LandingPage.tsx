@@ -45,6 +45,7 @@ import {
 } from '../data/landingData';
 import { POSSubpage } from './POSSubpage';
 import { ClothingStoreSubpage } from './ClothingStoreSubpage';
+import { BlogSubpage } from './BlogSubpage';
 
 interface LandingPageProps {
   onLogin: (user: User) => void;
@@ -61,6 +62,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [isHelpDropdownOpen, setIsHelpDropdownOpen] = useState(false);
   const [isPOSSubpageOpen, setIsPOSSubpageOpen] = useState(false);
   const [isClothingSubpageOpen, setIsClothingSubpageOpen] = useState(false);
+  const [isBlogSubpageOpen, setIsBlogSubpageOpen] = useState(false);
   const [selectedSector, setSelectedSector] = useState<'faturacao' | 'retalho'>('faturacao');
 
   const helpTimeoutRef = useRef<any>(null);
@@ -589,9 +591,10 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
 
   const triggerScroll = (elementId: string) => {
     setIsMobileMenuOpen(false);
-    if (isPOSSubpageOpen || isClothingSubpageOpen) {
+    if (isPOSSubpageOpen || isClothingSubpageOpen || isBlogSubpageOpen) {
       setIsPOSSubpageOpen(false);
       setIsClothingSubpageOpen(false);
+      setIsBlogSubpageOpen(false);
       setTimeout(() => {
         const element = document.getElementById(elementId);
         if (element) {
@@ -665,6 +668,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               onClick={() => {
                 setIsPOSSubpageOpen(false);
                 setIsClothingSubpageOpen(false);
+                setIsBlogSubpageOpen(false);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
             >
@@ -689,6 +693,14 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               </button>
               <button onClick={() => triggerScroll('faq')} className="text-[13px] font-medium text-slate-600 hover:text-slate-900 transition-colors">
                 Perguntas Frequentes
+              </button>
+              <button onClick={() => {
+                setIsPOSSubpageOpen(false);
+                setIsClothingSubpageOpen(false);
+                setIsBlogSubpageOpen(true);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }} className="text-[13px] font-black text-orange-500 hover:text-orange-600 transition-colors">
+                Blog
               </button>
             </div>
           </div>
@@ -844,15 +856,14 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                     <button 
                       onClick={() => {
                         setIsHelpDropdownOpen(false);
-                        setHelpMessageModal({
-                          isOpen: true,
-                          title: "Fatu-R Blog & Recursos",
-                          body: "Visite o nosso canal de publicações em blog.fatur.ao para ler artigos sobre:\n\n1. Gestão financeira aplicada para PMEs em Angola.\n2. Como cumprir os regulamentos fiscais da AGT sem complicações.\n3. Estratégias de vendas de sucesso para o retalho e restauração.\n4. Novidades e atualizações sobre faturamento e software POS."
-                        });
+                        setIsPOSSubpageOpen(false);
+                        setIsClothingSubpageOpen(false);
+                        setIsBlogSubpageOpen(true);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
                       }}
                       className="text-left text-slate-500 hover:text-orange-500 font-bold transition-colors cursor-pointer"
                     >
-                      • Blog
+                      • Blog (Interativo)
                     </button>
                     <button 
                       onClick={() => {
@@ -936,6 +947,15 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 </button>
                 <button onClick={() => triggerScroll('faq')} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 rounded-lg hover:bg-slate-50">
                   Perguntas Frequentes
+                </button>
+                <button onClick={() => {
+                  setIsMobileMenuOpen(false);
+                  setIsPOSSubpageOpen(false);
+                  setIsClothingSubpageOpen(false);
+                  setIsBlogSubpageOpen(true);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }} className="w-full text-left px-3 py-2 text-xs font-bold text-orange-500 rounded-lg hover:bg-slate-50">
+                  Blog (Novidades, Ajuda, Informações)
                 </button>
                 
                 {/* Mobile Ajuda item and panel */}
@@ -1023,15 +1043,14 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                               onClick={() => {
                                 setIsMobileMenuOpen(false);
                                 setIsHelpDropdownOpen(false);
-                                setHelpMessageModal({
-                                  isOpen: true,
-                                  title: "Fatu-R Blog & Recursos",
-                                  body: "Visite o nosso canal de publicações em blog.fatur.ao para ler artigos sobre faturamentos, impostos AGT e negócios."
-                                });
+                                setIsPOSSubpageOpen(false);
+                                setIsClothingSubpageOpen(false);
+                                setIsBlogSubpageOpen(true);
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
                               }}
                               className="text-left py-0.5 hover:text-orange-500 cursor-pointer"
                             >
-                              Blog
+                              Blog (Interativo)
                             </button>
                             <button 
                               onClick={() => {
@@ -1132,6 +1151,17 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             setRegError('');
             setIsRegisterModalOpen(true);
           }} 
+        />
+      ) : isBlogSubpageOpen ? (
+        <BlogSubpage 
+          onBack={() => {
+            setIsBlogSubpageOpen(false);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          onRegister={() => {
+            setRegError('');
+            setIsRegisterModalOpen(true);
+          }}
         />
       ) : (
         <>
@@ -2646,7 +2676,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             <div className="space-y-4">
               <h4 className="text-white font-black text-xs uppercase tracking-wider">Suporte</h4>
               <ul className="space-y-2 text-slate-400 text-[11px]">
-                <li><a href="#blog" className="hover:text-orange-500 transition-colors">Blog & Finanças</a></li>
+                <li><button onClick={() => { setIsPOSSubpageOpen(false); setIsClothingSubpageOpen(false); setIsBlogSubpageOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Blog & Recursos</button></li>
                 <li><a href="#faq" className="hover:text-orange-500 transition-colors">Centro de Ajuda</a></li>
                 <li><a href="#sobre" className="hover:text-orange-500 transition-colors">Sobre Nós</a></li>
                 <li><a href="#api" className="hover:text-orange-500 transition-colors">API para Programadores</a></li>

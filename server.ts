@@ -5348,8 +5348,8 @@ async function startServer() {
         }
       }
 
-      const creditSql = `SELECT 'credit' as source, id, invoice_number, invoice_date, client_name, doc_type, payment_method, total_amount FROM credit_invoices WHERE ${creditWhere.join(' AND ')}`;
-      const posSql = `SELECT 'pos' as source, id, invoice_number, timestamp as invoice_date, client_name, 'FR' as doc_type, payment_method, total_amount FROM transactions WHERE ${posWhere.join(' AND ')}`;
+      const creditSql = `SELECT 'credit' as source, id, invoice_number, invoice_date, client_name, doc_type, payment_method, total_amount, status FROM credit_invoices WHERE ${creditWhere.join(' AND ')}`;
+      const posSql = `SELECT 'pos' as source, id, invoice_number, timestamp as invoice_date, client_name, 'FR' as doc_type, payment_method, total_amount, 'paid' as status FROM transactions WHERE ${posWhere.join(' AND ')}`;
       
       const billing = db.prepare(`
         SELECT * FROM (${creditSql} UNION ALL ${posSql}) 
