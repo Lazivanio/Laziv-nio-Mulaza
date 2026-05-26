@@ -1804,6 +1804,18 @@ function initializeDatabase() {
         details TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS public_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        email TEXT,
+        phone TEXT,
+        message TEXT,
+        status TEXT DEFAULT 'open',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        reply TEXT,
+        replied_at DATETIME
+      );
     `);
 
     // Run migrations after table creations
@@ -3693,6 +3705,47 @@ async function startServer() {
     db.prepare("UPDATE support_tickets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
     
     res.json({ success: true });
+  });
+
+  // Endpoints for Public Visitor Contact Messages
+  app.post("/api/public/contact", (req, res) => {
+    const { name, email, phone, message } = req.body;
+    try {
+      db.prepare(`
+        INSERT INTO public_messages (name, email, phone, message, status)
+        VALUES (?, ?, ?, ?, 'open')
+      `).run(name, email, phone || '', message);
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("Error creating public contact message:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/admin/public-messages", (req, res) => {
+    try {
+      const messages = db.prepare(`
+        SELECT * FROM public_messages
+        ORDER BY created_at DESC
+      `).all();
+      res.json(messages);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/admin/public-messages/:id/reply", (req, res) => {
+    const { reply } = req.body;
+    try {
+      db.prepare(`
+        UPDATE public_messages
+        SET reply = ?, status = 'replied', replied_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(reply, req.params.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   app.get("/api/admin/monitoring", (req, res) => {

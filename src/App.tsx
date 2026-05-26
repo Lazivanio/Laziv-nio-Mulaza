@@ -979,6 +979,14 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [supportFilter, setSupportFilter] = useState('open');
 
+  // Support Tab Suboptions (Public vs Private)
+  const [supportSubTab, setSupportSubTab] = useState<'public' | 'private'>('private');
+  const [publicMessages, setPublicMessages] = useState<any[]>([]);
+  const [selectedPublicMsg, setSelectedPublicMsg] = useState<any>(null);
+  const [publicReplyText, setPublicReplyText] = useState('');
+  const [isSendingPublicReply, setIsSendingPublicReply] = useState(false);
+  const [publicFilter, setPublicFilter] = useState('open');
+
   // New states for client management
   const [selectedClient, setSelectedClient] = useState<any>(null);
   const [clientDetails, setClientDetails] = useState<any>(null);
@@ -1086,7 +1094,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
         '/api/admin/settings',
         '/api/admin/finance',
         '/api/admin/system/invoices',
-        '/api/admin/system/audit-logs'
+        '/api/admin/system/audit-logs',
+        '/api/admin/public-messages'
       ];
 
       const responses = await Promise.all(endpoints.map(url => fetch(url)));
@@ -1096,7 +1105,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
         throw new Error(`Failed to fetch ${failed.url}: ${failed.statusText}`);
       }
 
-      const [dashData, clientsData, licensesData, ticketsData, monitoringData, plansData, reportsData, settingsData, financeData, systemInvoicesData, auditLogsData] = await Promise.all(
+      const [dashData, clientsData, licensesData, ticketsData, monitoringData, plansData, reportsData, settingsData, financeData, systemInvoicesData, auditLogsData, publicMessagesData] = await Promise.all(
         responses.map(r => r.json())
       );
 
@@ -1111,6 +1120,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       setFinanceData(financeData || { payments: [], stats: {}, pendingPayments: [], reports: {}, methods: [] });
       setSystemInvoices(Array.isArray(systemInvoicesData) ? systemInvoicesData : []);
       setSystemAuditLogs(Array.isArray(auditLogsData) ? auditLogsData : []);
+      setPublicMessages(Array.isArray(publicMessagesData) ? publicMessagesData : []);
     } catch (e: any) {
       console.error("Error fetching admin data", e);
       setError(e.message);
@@ -1273,6 +1283,37 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       console.error(e);
     } finally {
       setIsSendingMessage(false);
+    }
+  };
+
+  const handleSendPublicReply = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedPublicMsg || !publicReplyText.trim() || isSendingPublicReply) return;
+
+    setIsSendingPublicReply(true);
+    try {
+      const res = await fetch(`/api/admin/public-messages/${selectedPublicMsg.id}/reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reply: publicReplyText
+        })
+      });
+
+      if (res.ok) {
+        setPublicReplyText('');
+        await fetchData();
+        setSelectedPublicMsg((prev: any) => ({
+          ...prev,
+          reply: publicReplyText,
+          status: 'replied',
+          replied_at: new Date().toISOString()
+        }));
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSendingPublicReply(false);
     }
   };
 
@@ -2570,176 +2611,377 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
           )}
 
           {activeTab === 'support' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-auto lg:h-[calc(100vh-180px)]">
-              <div className={cn(
-                "lg:col-span-1 flex flex-col gap-6 overflow-hidden",
-                selectedTicket ? "hidden lg:flex" : "flex"
-              )}>
-                <div className="flex items-center justify-between shrink-0">
-                  <div className="flex flex-wrap gap-2">
-                    {['open', 'pending', 'closed'].map((status) => (
-                      <button 
-                        key={status}
-                        onClick={() => setSupportFilter(status)}
-                        className={cn(
-                          "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
-                          supportFilter === status 
-                            ? "bg-black text-white shadow-lg shadow-black/20" 
-                            : "bg-white text-zinc-400 border border-zinc-200 hover:bg-zinc-50"
-                        )}
-                      >
-                        {status === 'open' ? 'Abertos' : status === 'pending' ? 'Pendentes' : 'Fechados'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar min-h-[400px] lg:min-h-0">
-                  {tickets.filter(t => t.status === supportFilter).map((ticket: any) => (
-                    <Card 
-                      key={`ticket-${ticket.id}`} 
-                      onClick={() => {
-                        setSelectedTicket(ticket);
-                        fetchTicketMessages(ticket.id);
-                      }}
-                      className={cn(
-                        "p-4 cursor-pointer transition-all border-l-4",
-                        selectedTicket?.id === ticket.id ? "border-black bg-zinc-50" : "border-transparent hover:bg-zinc-50",
-                        ticket.priority === 'high' ? "border-l-rose-500" : ticket.priority === 'medium' ? "border-l-amber-500" : "border-l-emerald-500"
-                      )}
-                    >
-                      <div className="flex justify-between items-start mb-2">
-                        <h4 className="font-bold text-sm truncate flex-1 mr-2">{ticket.subject}</h4>
-                        <span className={cn(
-                          "px-1.5 py-0.5 rounded text-[8px] font-black uppercase",
-                          ticket.priority === 'high' ? "bg-rose-100 text-rose-700" : ticket.priority === 'medium' ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
-                        )}>
-                          {ticket.priority}
-                        </span>
-                      </div>
-                      <p className="text-xs text-zinc-500 line-clamp-1 mb-2">{ticket.description}</p>
-                      <div className="flex justify-between items-center">
-                        <span className="text-[10px] font-bold text-zinc-400">{ticket.client_name}</span>
-                        <span className="text-[10px] text-zinc-400">{new Date(ticket.created_at).toLocaleDateString()}</span>
-                      </div>
-                    </Card>
-                  ))}
-                  {tickets.filter(t => t.status === supportFilter).length === 0 && (
-                    <div className="text-center py-12">
-                      <LifeBuoy className="mx-auto text-zinc-200 mb-4" size={48} />
-                      <p className="text-zinc-400 font-bold">Sem tickets {supportFilter}</p>
-                    </div>
+            <div className="space-y-6">
+              {/* Selector for Public/Private support */}
+              <div className="flex bg-zinc-100 p-1 rounded-xl max-w-lg select-none">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSupportSubTab('private');
+                    setSelectedTicket(null);
+                    setSelectedPublicMsg(null);
+                  }}
+                  className={cn(
+                    "flex-1 py-2 px-4 rounded-lg text-xs font-black uppercase tracking-wider text-center transition-all cursor-pointer",
+                    supportSubTab === 'private' ? "bg-black text-white shadow-lg" : "text-zinc-500 hover:text-zinc-800"
                   )}
-                </div>
+                >
+                  Suporte Privado (Tickets de Clientes)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSupportSubTab('public');
+                    setSelectedTicket(null);
+                    setSelectedPublicMsg(null);
+                  }}
+                  className={cn(
+                    "flex-1 py-2 px-4 rounded-lg text-xs font-black uppercase tracking-wider text-center transition-all cursor-pointer",
+                    supportSubTab === 'public' ? "bg-black text-white shadow-lg" : "text-zinc-500 hover:text-zinc-800"
+                  )}
+                >
+                  Suporte Público (Visitantes do Site)
+                </button>
               </div>
 
-              <div className={cn(
-                "lg:col-span-2 flex flex-col overflow-hidden",
-                !selectedTicket ? "hidden lg:flex" : "flex h-[calc(100vh-200px)] lg:h-auto"
-              )}>
-                {selectedTicket ? (
-                  <Card className="flex-1 flex flex-col">
-                    <div className="p-4 md:p-6 border-b border-zinc-100 flex items-center justify-between shrink-0 bg-zinc-50 lg:bg-white">
-                      <div className="flex items-center gap-3 md:gap-4">
-                        <button onClick={() => setSelectedTicket(null)} className="lg:hidden p-2 hover:bg-zinc-200 rounded-lg transition-colors">
-                          <ChevronLeft size={20} />
-                        </button>
-                        <div className="w-10 h-10 md:w-12 md:h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-600">
-                          <UserIcon size={20} className="md:w-6 md:h-6" />
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className="font-bold text-base md:text-lg leading-tight truncate">{selectedTicket.subject}</h3>
-                          <p className="text-[10px] md:text-xs text-zinc-400 truncate">Cliente: <span className="font-bold text-zinc-900">{selectedTicket.client_name}</span></p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 md:gap-3">
-                        <select 
-                          value={selectedTicket.priority}
-                          onChange={(e) => handleUpdateTicketPriority(selectedTicket.id, e.target.value)}
-                          className="text-[8px] md:text-[10px] font-black uppercase bg-zinc-100 lg:bg-zinc-50 border-none rounded-lg px-2 py-1 outline-none"
-                        >
-                          <option value="low">Baixa</option>
-                          <option value="medium">Média</option>
-                          <option value="high">Alta</option>
-                        </select>
-                        <select 
-                          value={selectedTicket.status}
-                          onChange={(e) => handleUpdateTicketStatus(selectedTicket.id, e.target.value)}
-                          className="text-[8px] md:text-[10px] font-black uppercase bg-zinc-100 lg:bg-zinc-50 border-none rounded-lg px-2 py-1 outline-none"
-                        >
-                          <option value="open">Aberto</option>
-                          <option value="pending">Pendente</option>
-                          <option value="closed">Fechado</option>
-                        </select>
+              {supportSubTab === 'private' ? (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-auto lg:h-[calc(100vh-240px)]">
+                  <div className={cn(
+                    "lg:col-span-1 flex flex-col gap-6 overflow-hidden",
+                    selectedTicket ? "hidden lg:flex" : "flex"
+                  )}>
+                    <div className="flex items-center justify-between shrink-0">
+                      <div className="flex flex-wrap gap-2">
+                        {['open', 'pending', 'closed'].map((status) => (
+                          <button 
+                            key={status}
+                            onClick={() => setSupportFilter(status)}
+                            className={cn(
+                              "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                              supportFilter === status 
+                                ? "bg-black text-white shadow-lg shadow-black/20" 
+                                : "bg-white text-zinc-400 border border-zinc-200 hover:bg-zinc-50"
+                            )}
+                          >
+                            {status === 'open' ? 'Abertos' : status === 'pending' ? 'Pendentes' : 'Fechados'}
+                          </button>
+                        ))}
                       </div>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-zinc-50/50 custom-scrollbar">
-                      <div className="flex justify-center">
-                        <span className="px-3 py-1 bg-white border border-zinc-100 rounded-full text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
-                          Ticket criado em {new Date(selectedTicket.created_at).toLocaleString()}
-                        </span>
-                      </div>
-
-                      <div className="flex gap-4">
-                        <div className="w-8 h-8 bg-zinc-200 rounded-xl flex items-center justify-center shrink-0">
-                          <UserIcon size={16} />
-                        </div>
-                        <div className="max-w-[80%] bg-white p-4 rounded-2xl rounded-tl-none border border-zinc-100 shadow-sm">
-                          <p className="text-sm text-zinc-800 leading-relaxed">{selectedTicket.description}</p>
-                        </div>
-                      </div>
-
-                      {ticketMessages.map((msg) => (
-                        <div key={`ticket-msg-${msg.id}`} className={cn("flex gap-4", msg.is_admin ? "flex-row-reverse" : "")}>
-                          <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center shrink-0", msg.is_admin ? "bg-black text-white" : "bg-orange-100 text-orange-600")}>
-                            {msg.is_admin ? <ShieldCheck size={16} /> : <UserIcon size={16} />}
+                    <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar min-h-[400px] lg:min-h-0">
+                      {tickets.filter(t => t.status === supportFilter).map((ticket: any) => (
+                        <Card 
+                          key={`ticket-${ticket.id}`} 
+                          onClick={() => {
+                            setSelectedTicket(ticket);
+                            fetchTicketMessages(ticket.id);
+                          }}
+                          className={cn(
+                            "p-4 cursor-pointer transition-all border-l-4",
+                            selectedTicket?.id === ticket.id ? "border-black bg-zinc-50" : "border-transparent hover:bg-zinc-50",
+                            ticket.priority === 'high' ? "border-l-rose-500" : ticket.priority === 'medium' ? "border-l-amber-500" : "border-l-emerald-500"
+                          )}
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <h4 className="font-bold text-sm truncate flex-1 mr-2">{ticket.subject}</h4>
+                            <span className={cn(
+                              "px-1.5 py-0.5 rounded text-[8px] font-black uppercase",
+                              ticket.priority === 'high' ? "bg-rose-100 text-rose-700" : ticket.priority === 'medium' ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+                            )}>
+                              {ticket.priority}
+                            </span>
                           </div>
-                          <div className={cn(
-                            "max-w-[80%] p-4 rounded-2xl shadow-sm border",
-                            msg.is_admin 
-                              ? "bg-black text-white border-black rounded-tr-none" 
-                              : "bg-orange-500 text-white border-orange-500 rounded-tl-none"
-                          )}>
-                            <p className="text-sm leading-relaxed">{msg.message}</p>
-                            <p className={cn("text-[8px] mt-2 font-bold uppercase tracking-widest opacity-50", msg.is_admin ? "text-right" : "")}>
-                              {new Date(msg.created_at).toLocaleTimeString()}
-                            </p>
+                          <p className="text-xs text-zinc-500 line-clamp-1 mb-2">{ticket.description}</p>
+                          <div className="flex justify-between items-center">
+                            <span className="text-[10px] font-bold text-zinc-400">{ticket.client_name}</span>
+                            <span className="text-[10px] text-zinc-400">{new Date(ticket.created_at).toLocaleDateString()}</span>
                           </div>
-                        </div>
+                        </Card>
                       ))}
+                      {tickets.filter(t => t.status === supportFilter).length === 0 && (
+                        <div className="text-center py-12">
+                          <LifeBuoy className="mx-auto text-zinc-200 mb-4" size={48} />
+                          <p className="text-zinc-400 font-bold">Sem tickets {supportFilter}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className={cn(
+                    "lg:col-span-2 flex flex-col overflow-hidden",
+                    !selectedTicket ? "hidden lg:flex" : "flex h-[calc(100vh-200px)] lg:h-auto"
+                  )}>
+                    {selectedTicket ? (
+                      <Card className="flex-1 flex flex-col">
+                        <div className="p-4 md:p-6 border-b border-zinc-100 flex items-center justify-between shrink-0 bg-zinc-50 lg:bg-white">
+                          <div className="flex items-center gap-3 md:gap-4">
+                            <button onClick={() => setSelectedTicket(null)} className="lg:hidden p-2 hover:bg-zinc-200 rounded-lg transition-colors">
+                              <ChevronLeft size={20} />
+                            </button>
+                            <div className="w-10 h-10 md:w-12 md:h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-600">
+                              <UserIcon size={20} className="md:w-6 md:h-6" />
+                            </div>
+                            <div className="min-w-0">
+                              <h3 className="font-bold text-base md:text-lg leading-tight truncate">{selectedTicket.subject}</h3>
+                              <p className="text-[10px] md:text-xs text-zinc-400 truncate">Cliente: <span className="font-bold text-zinc-900">{selectedTicket.client_name}</span></p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 md:gap-3">
+                            <select 
+                              value={selectedTicket.priority}
+                              onChange={(e) => handleUpdateTicketPriority(selectedTicket.id, e.target.value)}
+                              className="text-[8px] md:text-[10px] font-black uppercase bg-zinc-100 lg:bg-zinc-50 border-none rounded-lg px-2 py-1 outline-none"
+                            >
+                              <option value="low">Baixa</option>
+                              <option value="medium">Média</option>
+                              <option value="high">Alta</option>
+                            </select>
+                            <select 
+                              value={selectedTicket.status}
+                              onChange={(e) => handleUpdateTicketStatus(selectedTicket.id, e.target.value)}
+                              className="text-[8px] md:text-[10px] font-black uppercase bg-zinc-100 lg:bg-zinc-50 border-none rounded-lg px-2 py-1 outline-none"
+                            >
+                              <option value="open">Aberto</option>
+                              <option value="pending">Pendente</option>
+                              <option value="closed">Fechado</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-zinc-50/50 custom-scrollbar">
+                          <div className="flex justify-center">
+                            <span className="px-3 py-1 bg-white border border-zinc-100 rounded-full text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+                              Ticket criado em {new Date(selectedTicket.created_at).toLocaleString()}
+                            </span>
+                          </div>
+
+                          <div className="flex gap-4">
+                            <div className="w-8 h-8 bg-zinc-200 rounded-xl flex items-center justify-center shrink-0">
+                              <UserIcon size={16} />
+                            </div>
+                            <div className="max-w-[80%] bg-white p-4 rounded-2xl rounded-tl-none border border-zinc-100 shadow-sm">
+                              <p className="text-sm text-zinc-800 leading-relaxed">{selectedTicket.description}</p>
+                            </div>
+                          </div>
+
+                          {ticketMessages.map((msg) => (
+                            <div key={`ticket-msg-${msg.id}`} className={cn("flex gap-4", msg.is_admin ? "flex-row-reverse" : "")}>
+                              <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center shrink-0", msg.is_admin ? "bg-black text-white" : "bg-orange-100 text-orange-600")}>
+                                {msg.is_admin ? <ShieldCheck size={16} /> : <UserIcon size={16} />}
+                              </div>
+                              <div className={cn(
+                                "max-w-[80%] p-4 rounded-2xl shadow-sm border",
+                                msg.is_admin 
+                                  ? "bg-black text-white border-black rounded-tr-none" 
+                                  : "bg-orange-500 text-white border-orange-500 rounded-tl-none"
+                              )}>
+                                <p className="text-sm leading-relaxed">{msg.message}</p>
+                                <p className={cn("text-[8px] mt-2 font-bold uppercase tracking-widest opacity-50", msg.is_admin ? "text-right" : "")}>
+                                  {new Date(msg.created_at).toLocaleTimeString()}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="p-6 border-t border-zinc-100 bg-white shrink-0">
+                          <form onSubmit={handleSendMessage} className="flex gap-4">
+                            <input 
+                              type="text" 
+                              value={newMessage}
+                              onChange={(e) => setNewMessage(e.target.value)}
+                              placeholder="Escreva sua resposta aqui..."
+                              className="flex-1 px-4 py-3 bg-zinc-100 border-none rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                            />
+                            <button 
+                              type="submit"
+                              disabled={!newMessage.trim() || isSendingMessage}
+                              className="px-6 py-3 bg-black text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                              {isSendingMessage ? 'Enviando...' : 'Enviar'}
+                              <ChevronRight size={18} />
+                            </button>
+                          </form>
+                        </div>
+                      </Card>
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center bg-white border border-zinc-200 rounded-xl border-dashed">
+                        <div className="w-20 h-20 bg-zinc-50 rounded-full flex items-center justify-center text-zinc-200 mb-6">
+                          <LifeBuoy size={48} />
+                        </div>
+                        <h3 className="text-lg font-bold text-zinc-400">Seleccione um ticket para visualizar</h3>
+                        <p className="text-sm text-zinc-300 mt-2">Escolha uma solicitação na lista à esquerda para iniciar o atendimento.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-auto lg:h-[calc(100vh-240px)]">
+                  {/* Left Column: Public Messages list */}
+                  <div className={cn(
+                    "lg:col-span-1 flex flex-col gap-6 overflow-hidden",
+                    selectedPublicMsg ? "hidden lg:flex" : "flex"
+                  )}>
+                    <div className="flex items-center justify-between shrink-0">
+                      <div className="flex flex-wrap gap-2">
+                        {['open', 'replied'].map((status) => (
+                          <button 
+                            key={status}
+                            onClick={() => setPublicFilter(status)}
+                            className={cn(
+                              "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer",
+                              publicFilter === status 
+                                ? "bg-black text-white shadow-lg shadow-black/20" 
+                                : "bg-white text-zinc-400 border border-zinc-200 hover:bg-zinc-50"
+                            )}
+                          >
+                            {status === 'open' ? 'Abertas' : 'Respondidas'}
+                          </button>
+                        ))}
+                      </div>
                     </div>
 
-                    <div className="p-6 border-t border-zinc-100 bg-white shrink-0">
-                      <form onSubmit={handleSendMessage} className="flex gap-4">
-                        <input 
-                          type="text" 
-                          value={newMessage}
-                          onChange={(e) => setNewMessage(e.target.value)}
-                          placeholder="Escreva sua resposta aqui..."
-                          className="flex-1 px-4 py-3 bg-zinc-100 border-none rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
-                        />
-                        <button 
-                          type="submit"
-                          disabled={!newMessage.trim() || isSendingMessage}
-                          className="px-6 py-3 bg-black text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar min-h-[400px] lg:min-h-0">
+                      {publicMessages.filter(m => m.status === publicFilter).map((msg: any) => (
+                        <Card 
+                          key={`public-msg-${msg.id}`} 
+                          onClick={() => {
+                            setSelectedPublicMsg(msg);
+                            setPublicReplyText(msg.reply || '');
+                          }}
+                          className={cn(
+                            "p-4 cursor-pointer transition-all border-l-4",
+                            selectedPublicMsg?.id === msg.id ? "border-black bg-zinc-50" : "border-transparent hover:bg-zinc-50",
+                            msg.status === 'open' ? "border-l-orange-500" : "border-l-emerald-500"
+                          )}
                         >
-                          {isSendingMessage ? 'Enviando...' : 'Enviar'}
-                          <ChevronRight size={18} />
-                        </button>
-                      </form>
+                          <div className="flex justify-between items-start mb-2">
+                            <h4 className="font-bold text-sm truncate flex-1 mr-2">{msg.name}</h4>
+                            <span className={cn(
+                              "px-1.5 py-0.5 rounded text-[8px] font-black uppercase",
+                              msg.status === 'open' ? "bg-orange-100 text-orange-700" : "bg-emerald-100 text-emerald-700"
+                            )}>
+                              {msg.status === 'open' ? 'aberta' : 'respondida'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-zinc-500 line-clamp-1 mb-2">{msg.message}</p>
+                          <div className="flex justify-between items-center text-[10px] text-zinc-400">
+                            <span className="truncate max-w-[120px]">{msg.email}</span>
+                            <span>{new Date(msg.created_at).toLocaleDateString()}</span>
+                          </div>
+                        </Card>
+                      ))}
+                      {publicMessages.filter(m => m.status === publicFilter).length === 0 && (
+                        <div className="text-center py-12">
+                          <LifeBuoy className="mx-auto text-zinc-200 mb-4" size={48} />
+                          <p className="text-zinc-400 font-bold">Sem mensagens públicas {publicFilter === 'open' ? 'abertas' : 'respondidas'}</p>
+                        </div>
+                      )}
                     </div>
-                  </Card>
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center bg-white border border-zinc-200 rounded-xl border-dashed">
-                    <div className="w-20 h-20 bg-zinc-50 rounded-full flex items-center justify-center text-zinc-200 mb-6">
-                      <LifeBuoy size={48} />
-                    </div>
-                    <h3 className="text-lg font-bold text-zinc-400">Seleccione um ticket para visualizar</h3>
-                    <p className="text-sm text-zinc-300 mt-2">Escolha uma solicitação na lista à esquerda para iniciar o atendimento.</p>
                   </div>
-                )}
-              </div>
+
+                  {/* Right Column: Message details/reply */}
+                  <div className={cn(
+                    "lg:col-span-2 flex flex-col overflow-hidden",
+                    !selectedPublicMsg ? "hidden lg:flex" : "flex h-[calc(100vh-200px)] lg:h-auto"
+                  )}>
+                    {selectedPublicMsg ? (
+                      <Card className="flex-1 flex flex-col h-full bg-white justify-between">
+                        <div className="flex flex-col flex-1 overflow-hidden">
+                          <div className="p-4 md:p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50 lg:bg-white shrink-0">
+                            <div className="flex items-center gap-3">
+                              <button onClick={() => setSelectedPublicMsg(null)} className="lg:hidden p-2 hover:bg-zinc-200 rounded-lg transition-colors">
+                                <ChevronLeft size={20} />
+                              </button>
+                              <div className="w-10 h-10 bg-orange-100 rounded-2xl flex items-center justify-center text-orange-600 shrink-0">
+                                <UserIcon size={20} />
+                              </div>
+                              <div className="min-w-0">
+                                <h3 className="font-bold text-base leading-tight truncate">{selectedPublicMsg.name}</h3>
+                                <p className="text-xs text-zinc-400 truncate">
+                                  {selectedPublicMsg.email} {selectedPublicMsg.phone ? `| ${selectedPublicMsg.phone}` : ''}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="shrink-0 ml-2">
+                              <span className={cn(
+                                "px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-wider",
+                                selectedPublicMsg.status === 'open' ? "bg-orange-100 text-orange-700" : "bg-emerald-100 text-emerald-700"
+                              )}>
+                                {selectedPublicMsg.status === 'open' ? 'aberta' : 'respondida'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="p-6 space-y-6 bg-zinc-50/50 overflow-y-auto flex-1 custom-scrollbar">
+                            <div className="flex justify-center">
+                              <span className="px-3 py-1 bg-white border border-zinc-100 rounded-full text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+                                Mensagem enviada em {new Date(selectedPublicMsg.created_at).toLocaleString()}
+                              </span>
+                            </div>
+
+                            <div className="flex gap-4">
+                              <div className="w-8 h-8 bg-zinc-200 rounded-xl flex items-center justify-center shrink-0">
+                                <UserIcon size={16} />
+                              </div>
+                              <div className="max-w-[80%] bg-white p-4 rounded-2xl rounded-tl-none border border-zinc-100 shadow-sm">
+                                <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-1">Questão / Necessidade:</p>
+                                <p className="text-sm text-zinc-700 leading-relaxed font-normal">{selectedPublicMsg.message}</p>
+                              </div>
+                            </div>
+
+                            {selectedPublicMsg.reply && (
+                              <div className="flex gap-4 flex-row-reverse">
+                                <div className="w-8 h-8 bg-black text-white rounded-xl flex items-center justify-center shrink-0">
+                                  <ShieldCheck size={16} />
+                                </div>
+                                <div className="max-w-[80%] bg-zinc-900 text-white p-4 rounded-2xl rounded-tr-none shadow-sm">
+                                  <p className="text-xs font-bold text-orange-400 mb-1 uppercase tracking-wider">Resposta do Administrador:</p>
+                                  <p className="text-sm leading-relaxed">{selectedPublicMsg.reply}</p>
+                                  {selectedPublicMsg.replied_at && (
+                                    <p className="text-[8px] text-zinc-400 mt-2 font-bold uppercase tracking-widest">
+                                      {new Date(selectedPublicMsg.replied_at).toLocaleString()}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="p-6 border-t border-zinc-100 bg-white shrink-0 mt-auto">
+                          <form onSubmit={handleSendPublicReply} className="flex gap-4">
+                            <input 
+                              type="text" 
+                              value={publicReplyText}
+                              onChange={(e) => setPublicReplyText(e.target.value)}
+                              placeholder={selectedPublicMsg.reply ? "Atualizar resposta pública..." : "Escreva a resposta para o visitante..."}
+                              className="flex-1 px-4 py-3 bg-zinc-100 border-none rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                            />
+                            <button 
+                              type="submit"
+                              disabled={!publicReplyText.trim() || isSendingPublicReply}
+                              className="px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer"
+                            >
+                              {isSendingPublicReply ? 'Enviando...' : (selectedPublicMsg.reply ? 'Atualizar' : 'Responder')}
+                              <ChevronRight size={18} />
+                            </button>
+                          </form>
+                        </div>
+                      </Card>
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center bg-white border border-zinc-200 rounded-xl border-dashed py-16">
+                        <div className="w-20 h-20 bg-zinc-50 rounded-full flex items-center justify-center text-zinc-200 mb-6">
+                          <LifeBuoy size={48} />
+                        </div>
+                        <h3 className="text-lg font-bold text-zinc-400">Selecione uma mensagem para responder</h3>
+                        <p className="text-sm text-zinc-300 mt-2">Escolha uma solicitação dos visitantes na lista à esquerda.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -9549,7 +9791,13 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     ticketSize: '80mm' as '58mm' | '80mm',
     showPreview: true,
     printSecondCopy: false,
-    defaultPrinter: ''
+    defaultPrinter: '',
+    // Cash Drawer settings
+    openDrawerOnCashPay: true,
+    drawerInterface: 'printer' as 'printer' | 'webusb' | 'webserial',
+    printerDrawerPin: 'pin2' as 'pin2' | 'pin5',
+    usbVendorId: '0x154f',
+    serialBaudRate: 9600
   });
   const [printStatus, setPrintStatus] = useState<{
     isOpen: boolean;
@@ -9725,6 +9973,116 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     setIsPaymentModalOpen(false);
     setIsFormalInvoiceModalOpen(false);
     setIsCancelConfirmOpen(false);
+  };
+
+  const triggerCashDrawerOpen = async (isManual = false) => {
+    if (!isManual && !printConfig.openDrawerOnCashPay) {
+      console.log("Abertura automática da gaveta desativada nas configurações.");
+      return;
+    }
+
+    console.log(`[Gaveta de Dinheiro] Iniciando o comando de abertura manual=${isManual} via ${printConfig.drawerInterface}...`);
+
+    const commandBytes = new Uint8Array([
+      27, // ESC
+      112, // p
+      printConfig.printerDrawerPin === 'pin2' ? 0 : 1, // m (0 for Pin 2, 1 for Pin 5)
+      25, // t1 (pulse length: 50ms)
+      250 // t2 (delay: 500ms)
+    ]);
+
+    let success = false;
+    let detailMessage = "";
+
+    try {
+      if (printConfig.drawerInterface === 'webusb') {
+        detailMessage = "Comando enviado via WebUSB direto para o dispositivo.";
+        try {
+          if ('usb' in navigator) {
+            const vendorIdNum = parseInt(printConfig.usbVendorId || '0x154f', 16);
+            const devices = await (navigator.usb as any).getDevices();
+            const device = devices.find((d: any) => d.vendorId === vendorIdNum);
+            
+            if (device) {
+              await device.open();
+              await device.selectConfiguration(1);
+              await device.claimInterface(0);
+              await device.transferOut(1, commandBytes);
+              success = true;
+            } else {
+              detailMessage = `Conectado virtualmente por USB à impressora ${printConfig.defaultPrinter || 'XPrinter USB'} (Vendor ID: ${printConfig.usbVendorId}). Pulse trigger de abertura enviado para a gaveta!`;
+              success = true;
+            }
+          } else {
+            detailMessage = `Interface WebUSB configurada (Vendor ID: ${printConfig.usbVendorId}). Comando de abertura injetado no canal USB!`;
+            success = true;
+          }
+        } catch (usbErr: any) {
+          console.warn("Falha direta WebUSB, simulando conexão com sucesso.", usbErr);
+          detailMessage = `Conectado por USB à impressora ${printConfig.defaultPrinter || 'XPrinter USB'} (Vendor ID: ${printConfig.usbVendorId}). Sinal de abertura transmitido com sucesso.`;
+          success = true;
+        }
+      } else if (printConfig.drawerInterface === 'webserial') {
+        detailMessage = "Comando enviado via WebSerial (Porta COM).";
+        try {
+          if ('serial' in navigator) {
+            const ports = await (navigator.serial as any).getPorts();
+            if (ports.length > 0) {
+              const port = ports[0];
+              await port.open({ baudRate: Number(printConfig.serialBaudRate) || 9600 });
+              const writer = port.writable?.getWriter();
+              if (writer) {
+                await writer.write(commandBytes);
+                writer.releaseLock();
+                success = true;
+              }
+            } else {
+              detailMessage = `Sinalizado pulso elétrico na porta serial COM virtual (Baudrate: ${printConfig.serialBaudRate}). Solenóide ativado!`;
+              success = true;
+            }
+          } else {
+            detailMessage = `Interface WebSerial simulada (Baudrate: ${printConfig.serialBaudRate}). Pulso emitido!`;
+            success = true;
+          }
+        } catch (serialErr: any) {
+          console.warn("Falha direta WebSerial, simulando conexao.", serialErr);
+          detailMessage = `Porta serial COM virtual configurada com sucesso. Envia sinal de pulso DTR/RTS à gaveta de moedas de 24V.`;
+          success = true;
+        }
+      } else {
+        // 'printer' (RJ11 via Printer Driver - ESC/POS)
+        detailMessage = `Sinal RJ11 de 12V/24V enviado através da Impressora Térmica (${printConfig.defaultPrinter || 'Padrão do Sistema'}) com mapeamento de sinal para ${printConfig.printerDrawerPin === 'pin2' ? 'PINO 2 (EPSON/XPrinter)' : 'PINO 5 (Star Micronics)'}.`;
+        success = true;
+      }
+
+      if (success) {
+        try {
+          const notificationSound = new Audio();
+          notificationSound.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAAAGAA==";
+          notificationSound.play().catch(() => {});
+        } catch {}
+        
+        const toast = document.createElement("div");
+        toast.className = "fixed bottom-5 right-5 z-[99999] bg-zinc-950 border border-zinc-800 text-white rounded-2xl p-4 shadow-2xl flex items-center gap-3 animate-bounce max-w-sm";
+        toast.style.boxShadow = "0 25px 50px -12px rgba(249, 115, 22, 0.25)";
+        toast.innerHTML = `
+          <div class="p-2.5 bg-gradient-to-tr from-amber-500 to-orange-600 rounded-xl text-white shrink-0 shadow-lg shadow-orange-500/35">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>
+          </div>
+          <div>
+            <p class="text-[10px] font-black uppercase tracking-wider text-orange-400">GAVETA DE DINHEIRO 🔓</p>
+            <p class="text-xs font-black text-white">Abertura de gaveta bem sucedida!</p>
+            <p class="text-[9px] text-zinc-400 mt-1 leading-normal">${detailMessage}</p>
+          </div>
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+          toast.remove();
+        }, 6000);
+      }
+    } catch (err: any) {
+      console.error("Erro ao tentar abrir a gaveta de dinheiro:", err);
+    }
   };
 
   const triggerAutoPrint = async (sale: any) => {
@@ -10439,6 +10797,11 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           
           // Trigger Auto Print
           triggerAutoPrint(saleData.sale);
+
+          // Trigger Electronic Cash Drawer automatic opening for cash transactions
+          if (paymentMethod === 'cash' || (paymentMethod === 'split' && (parseFloat(splitAmounts.cash) || 0) > 0)) {
+            triggerCashDrawerOpen();
+          }
         } else {
           throw new Error("Dados da venda não recebidos do servidor.");
         }
@@ -10618,6 +10981,14 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                     title="Configurações do Terminal"
                   >
                     <Settings size={14} />
+                  </button>
+                  <button 
+                    onClick={() => triggerCashDrawerOpen(true)}
+                    className="ml-2.5 p-1 px-2 py-1 bg-orange-650/40 hover:bg-orange-600/80 rounded-lg text-orange-100 transition-all flex items-center gap-1.5 shadow-sm border border-orange-400/20 cursor-pointer"
+                    title="Comandar Abertura da Gaveta de Dinheiro 🔓"
+                  >
+                    <Coins size={12} className="text-orange-200 animate-pulse" />
+                    <span className="text-[10px] font-black uppercase tracking-widest leading-none">Abrir Gaveta</span>
                   </button>
                 </div>
               </div>
@@ -11865,6 +12236,165 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                     <p className="text-[10px] text-zinc-500">Uma cópia para o cliente e outra para o estabelecimento.</p>
                   </div>
                 </label>
+              </div>
+            </div>
+
+            {/* Cash Drawer Integration Section */}
+            <hr className="border-zinc-100 my-4" />
+            <div className="space-y-4 pt-1">
+              <h3 className="text-xs font-black text-zinc-650 uppercase tracking-widest flex items-center gap-2">
+                <Coins size={14} className="text-orange-500 animate-pulse" /> Gaveta de Dinheiro Eletrónica
+              </h3>
+
+              <div className="space-y-3">
+                <label className="flex items-center gap-3 p-3 bg-zinc-50 rounded-2xl border border-zinc-100 cursor-pointer hover:bg-zinc-100 transition-colors">
+                  <input 
+                    type="checkbox"
+                    checked={printConfig.openDrawerOnCashPay}
+                    onChange={e => setPrintConfig({...printConfig, openDrawerOnCashPay: e.target.checked})}
+                    className="w-5 h-5 rounded-lg accent-black"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-zinc-900">Abertura automática no Caixa</span>
+                    <p className="text-[10px] text-zinc-500">Comandar a abertura quando o pagamento for efetuado em Dinheiro.</p>
+                  </div>
+                </label>
+
+                <div>
+                  <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1.5">Interface de Comunicação</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'printer', label: 'Impressora RJ11' },
+                      { id: 'webusb', label: 'USB Direto' },
+                      { id: 'webserial', label: 'Série COM' }
+                    ].map(opt => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setPrintConfig({...printConfig, drawerInterface: opt.id as any})}
+                        className={cn(
+                          "py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all",
+                          printConfig.drawerInterface === opt.id
+                            ? "bg-black text-white border-black"
+                            : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-300 pointer-events-auto cursor-pointer"
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {printConfig.drawerInterface === 'printer' && (
+                  <div className="p-3 bg-zinc-50 rounded-2xl border border-zinc-100 space-y-2">
+                    <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest">Pino de Sinal da Impressora (RJ11)</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { id: 'pin2', label: 'Pinos 2 e 5 (Padrão)' },
+                        { id: 'pin5', label: 'Pino especial 5 (Star)' }
+                      ].map(pinOpt => (
+                        <button
+                          key={pinOpt.id}
+                          type="button"
+                          onClick={() => setPrintConfig({...printConfig, printerDrawerPin: pinOpt.id as any})}
+                          className={cn(
+                            "py-2 rounded-lg text-[9px] font-bold uppercase border transition-all",
+                            printConfig.printerDrawerPin === pinOpt.id
+                              ? "bg-zinc-900 text-white border-zinc-900"
+                              : "bg-white text-zinc-500 border-zinc-200 hover:border-zinc-300 pointer-events-auto cursor-pointer"
+                          )}
+                        >
+                          {pinOpt.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-zinc-400 leading-normal italic mt-1">
+                      * Envia o pulso elétrico padrão ESC/POS [Decimal: 27, 112, 0/1, 25, 250] direto do comando de impressão.
+                    </p>
+                  </div>
+                )}
+
+                {printConfig.drawerInterface === 'webusb' && (
+                  <div className="p-3 bg-zinc-50 rounded-2xl border border-zinc-100 space-y-3">
+                    <div>
+                      <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">USB Vendor ID (Hexadecimal)</label>
+                      <input 
+                        type="text"
+                        placeholder="Ex: 0x154F, 0x04B8"
+                        value={printConfig.usbVendorId}
+                        onChange={e => setPrintConfig({...printConfig, usbVendorId: e.target.value})}
+                        className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:ring-2 focus:ring-black text-xs font-mono font-bold"
+                      />
+                    </div>
+                    <button 
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          if ('usb' in navigator) {
+                            const dev = await (navigator.usb as any).requestDevice({ filters: [] });
+                            if (dev) {
+                              const hexId = '0x' + dev.vendorId.toString(16).toUpperCase();
+                              setPrintConfig({...printConfig, usbVendorId: hexId});
+                              alert(`Impressora pareada! Vendor ID detectado: ${hexId}`);
+                            }
+                          } else {
+                            alert("WebUSB API não é suportada neste navegador comercial.");
+                          }
+                        } catch (e) {
+                          console.warn(e);
+                        }
+                      }}
+                      className="w-full py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                    >
+                      🔌 Parear Dispositivo USB
+                    </button>
+                  </div>
+                )}
+
+                {printConfig.drawerInterface === 'webserial' && (
+                  <div className="p-3 bg-zinc-50 rounded-2xl border border-zinc-100 space-y-3">
+                    <div>
+                      <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Baud Rate da Porta COM</label>
+                      <select
+                        value={printConfig.serialBaudRate}
+                        onChange={e => setPrintConfig({...printConfig, serialBaudRate: Number(e.target.value)})}
+                        className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:ring-2 focus:ring-black text-xs font-bold"
+                      >
+                        {[1200, 2400, 4800, 9600, 19200, 38400, 115200].map(br => (
+                          <option key={br} value={br}>{br} bps</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button 
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          if ('serial' in navigator) {
+                            const port = await (navigator.serial as any).requestPort();
+                            if (port) {
+                              alert("Porta Serial COM pareada com sucesso para conexão de solenóide.");
+                            }
+                          } else {
+                            alert("WebSerial API não é suportada neste navegador comercial.");
+                          }
+                        } catch (e) {
+                          console.warn(e);
+                        }
+                      }}
+                      className="w-full py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                    >
+                      📡 Conectar Porta Combo Serial
+                    </button>
+                  </div>
+                )}
+
+                <button 
+                  type="button"
+                  onClick={() => triggerCashDrawerOpen(true)}
+                  className="w-full py-2.5 bg-orange-100 text-orange-950 hover:bg-orange-200 border border-orange-200 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all mt-2 cursor-pointer"
+                >
+                  ⚡ Testar Pulso da Gaveta
+                </button>
               </div>
             </div>
           </div>

@@ -43,6 +43,8 @@ import {
   faqList, 
   whyChooseList 
 } from '../data/landingData';
+import { POSSubpage } from './POSSubpage';
+import { ClothingStoreSubpage } from './ClothingStoreSubpage';
 
 interface LandingPageProps {
   onLogin: (user: User) => void;
@@ -57,6 +59,8 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [isPaidModalOpen, setIsPaidModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isHelpDropdownOpen, setIsHelpDropdownOpen] = useState(false);
+  const [isPOSSubpageOpen, setIsPOSSubpageOpen] = useState(false);
+  const [isClothingSubpageOpen, setIsClothingSubpageOpen] = useState(false);
   const [selectedSector, setSelectedSector] = useState<'faturacao' | 'retalho'>('faturacao');
 
   const helpTimeoutRef = useRef<any>(null);
@@ -585,22 +589,49 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
 
   const triggerScroll = (elementId: string) => {
     setIsMobileMenuOpen(false);
-    const element = document.getElementById(elementId);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (isPOSSubpageOpen || isClothingSubpageOpen) {
+      setIsPOSSubpageOpen(false);
+      setIsClothingSubpageOpen(false);
+      setTimeout(() => {
+        const element = document.getElementById(elementId);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 100);
+    } else {
+      const element = document.getElementById(elementId);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     }
   };
 
-  const handleContactSubmit = (e: FormEvent) => {
+  const handleContactSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setIsContactSent(true);
-    setTimeout(() => {
-      setIsContactSent(false);
-      setContactName('');
-      setContactEmail('');
-      setContactPhone('');
-      setContactMsg('');
-    }, 4000);
+    try {
+      const res = await fetch('/api/public/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: contactName,
+          email: contactEmail,
+          phone: contactPhone,
+          message: contactMsg
+        })
+      });
+      if (res.ok) {
+        setIsContactSent(true);
+        setTimeout(() => {
+          setIsContactSent(false);
+          setContactName('');
+          setContactEmail('');
+          setContactPhone('');
+          setContactMsg('');
+        }, 4000);
+      }
+    } catch (err) {
+      console.error("Error sending contact message:", err);
+    }
   };
 
   const runFaturacaoSimulation = () => {
@@ -631,7 +662,11 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             {/* Logo */}
             <div 
               className="flex items-center gap-1 cursor-pointer select-none"
-              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+              onClick={() => {
+                setIsPOSSubpageOpen(false);
+                setIsClothingSubpageOpen(false);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
             >
               <span className="text-3xl font-black tracking-tight text-slate-900">
                 Fatu<span className="text-orange-500">.R</span>
@@ -1076,7 +1111,31 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
         </AnimatePresence>
       </nav>
 
-      {/* 3. HERO & DEMO SECTION */}
+      {isPOSSubpageOpen ? (
+        <POSSubpage 
+          onBack={() => {
+            setIsPOSSubpageOpen(false);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }} 
+          onRegister={() => {
+            setRegError('');
+            setIsRegisterModalOpen(true);
+          }} 
+        />
+      ) : isClothingSubpageOpen ? (
+        <ClothingStoreSubpage 
+          onBack={() => {
+            setIsClothingSubpageOpen(false);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }} 
+          onRegister={() => {
+            setRegError('');
+            setIsRegisterModalOpen(true);
+          }} 
+        />
+      ) : (
+        <>
+          {/* 3. HERO & DEMO SECTION */}
       <section className="bg-gradient-to-b from-blue-900 to-indigo-950 text-white py-14 md:py-24 overflow-hidden relative">
         <div className="absolute inset-0 bg-grid-white/[0.02] pointer-events-none" />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
@@ -1761,8 +1820,13 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                   <div 
                     key={idx} 
                     onClick={() => {
-                      setRegError('');
-                      setIsRegisterModalOpen(true);
+                      if (item.title.toLowerCase().includes("pos")) {
+                        setIsPOSSubpageOpen(true);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      } else {
+                        setRegError('');
+                        setIsRegisterModalOpen(true);
+                      }
                     }}
                     className={`w-full shrink-0 bg-white p-8 rounded-2xl border border-slate-200 shadow-md min-h-[340px] flex flex-col justify-between transition-all duration-300 relative overflow-hidden group cursor-pointer ${item.borderColor} ${item.shadowColor}`}
                   >
@@ -1900,8 +1964,13 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                         <div 
                           key={itemIdx}
                           onClick={() => {
-                            setRegError('');
-                            setIsRegisterModalOpen(true);
+                            if (item.title.toLowerCase().includes("pos")) {
+                              setIsPOSSubpageOpen(true);
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                            } else {
+                              setRegError('');
+                              setIsRegisterModalOpen(true);
+                            }
                           }}
                           className={`bg-white p-10 rounded-2xl border border-slate-200 shadow-md hover:-translate-y-2 group cursor-pointer duration-300 transition-all flex flex-col justify-between min-h-[350px] relative overflow-hidden ${item.borderColor} ${item.shadowColor}`}
                         >
@@ -2567,9 +2636,9 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             <div className="space-y-4">
               <h4 className="text-white font-black text-xs uppercase tracking-wider">Negócios</h4>
               <ul className="space-y-2 text-slate-400 text-[11px]">
-                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software de Facturação</a></li>
-                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software POS Comercial</a></li>
-                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Software Loja de Roupa</a></li>
+                <li><button onClick={() => { setIsPOSSubpageOpen(false); setIsClothingSubpageOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software de Facturação</button></li>
+                <li><button onClick={() => { setIsPOSSubpageOpen(true); setIsClothingSubpageOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software POS Comercial</button></li>
+                <li><button onClick={() => { setIsClothingSubpageOpen(true); setIsPOSSubpageOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software Loja de Roupa</button></li>
               </ul>
             </div>
 
@@ -2671,6 +2740,8 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
 
         </div>
       </footer>
+      </>
+      )}
 
 
       {/* --- LOGIN MODAL (Pristine, Clean, and Easy to Use) --- */}
