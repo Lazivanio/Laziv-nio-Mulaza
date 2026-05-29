@@ -52,11 +52,27 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user, defaultTab = '
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState<'income' | 'expense' | 'receivable' | 'payable'>('income');
 
+  // Product sales profit calculation output from API
+  const [productProfit, setProductProfit] = useState<{ revenue: number; cost: number; profit: number }>({
+    revenue: 0,
+    cost: 0,
+    profit: 0
+  });
+
   // Billing filters
   const [billingFilters, setBillingFilters] = useState({
     startDate: '',
     endDate: '',
     type: ''
+  });
+
+  // Profit calculations date filters
+  const [profitStartDate, setProfitStartDate] = useState<string>(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+  });
+  const [profitEndDate, setProfitEndDate] = useState<string>(() => {
+    return new Date().toISOString().split('T')[0];
   });
 
   // Form states
@@ -75,7 +91,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user, defaultTab = '
 
   useEffect(() => {
     fetchData();
-  }, [user.id, selectedEstablishmentId, billingFilters]);
+  }, [user.id, selectedEstablishmentId, billingFilters, profitStartDate, profitEndDate]);
 
   useEffect(() => {
     fetchSettings();
@@ -128,13 +144,18 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user, defaultTab = '
       if (billingFilters.endDate) billingQuery += (billingQuery ? '&' : '?') + `endDate=${billingFilters.endDate}`;
       if (billingFilters.type) billingQuery += (billingQuery ? '&' : '?') + `type=${billingFilters.type}`;
 
+      let profitQuery = queryParams;
+      if (profitStartDate) profitQuery += (profitQuery ? '&' : '?') + `startDate=${profitStartDate}`;
+      if (profitEndDate) profitQuery += (profitQuery ? '&' : '?') + `endDate=${profitEndDate}`;
+
       const endpoints = [
         `/api/owner/financial/summary/${user.id}${queryParams}`,
         `/api/owner/financial/transactions/${user.id}${queryParams}`,
         `/api/owner/financial/receivable/${user.id}${queryParams}`,
         `/api/owner/financial/payable/${user.id}${queryParams}`,
         `/api/owner/establishments/${user.id}`,
-        `/api/owner/billing/${user.id}${billingQuery}`
+        `/api/owner/billing/${user.id}${billingQuery}`,
+        `/api/owner/financial/product-profit/${user.id}${profitQuery}`
       ];
 
       const responses = await Promise.all(endpoints.map(url => fetch(url)));
@@ -155,7 +176,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user, defaultTab = '
         }
       }));
 
-      const [summaryData, transData, recData, payData, establishmentsData, billingData] = data;
+      const [summaryData, transData, recData, payData, establishmentsData, billingData, profitData] = data;
 
       if (summaryData) setSummary(summaryData);
       if (transData) setTransactions(transData);
@@ -163,6 +184,7 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user, defaultTab = '
       if (payData) setPayables(payData);
       if (establishmentsData) setEstablishments(Array.isArray(establishmentsData) ? establishmentsData : []);
       if (billingData) setBilling(Array.isArray(billingData) ? billingData : []);
+      if (profitData) setProductProfit(profitData);
     } catch (error) {
       console.error('Error fetching financial data:', error);
     } finally {
@@ -359,6 +381,84 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user, defaultTab = '
             </div>
           </div>
         </div>
+
+        {/* Profit by Date Filter Block */}
+        {(() => {
+          const revenue = productProfit.revenue || 0;
+          const cost = productProfit.cost || 0;
+          const profit = productProfit.profit || 0;
+          const profitMargin = revenue > 0 ? (profit / revenue) * 100 : 0;
+
+          return (
+            <div className="bg-white p-6 rounded-xl border border-zinc-200 shadow-sm space-y-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-100 pb-4">
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+                    <Coins className="w-5 h-5 text-orange-500" />
+                    Quadro de Lucros por Período
+                  </h3>
+                  <p className="text-xs text-zinc-500">Filtragem de lucros reais baseada nos preços de venda menos os preços de compra dos produtos (Kz).</p>
+                </div>
+                <div className="flex items-center gap-2 bg-zinc-50 border border-zinc-200 rounded-lg p-2 self-start md:self-auto">
+                  <Calendar size={14} className="text-zinc-400" />
+                  <input 
+                    type="date" 
+                    className="text-xs outline-none bg-transparent text-zinc-600 font-medium"
+                    value={profitStartDate}
+                    onChange={e => setProfitStartDate(e.target.value)}
+                  />
+                  <span className="text-zinc-400 text-xs font-bold">até</span>
+                  <input 
+                    type="date" 
+                    className="text-xs outline-none bg-transparent text-zinc-600 font-medium"
+                    value={profitEndDate}
+                    onChange={e => setProfitEndDate(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Total Receipts */}
+                <div className="bg-emerald-50/50 border border-emerald-100 p-5 rounded-xl">
+                  <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block mb-1">Preço Total de Venda</span>
+                  <p className="text-2xl font-black text-emerald-900">{formatCurrency(revenue)}</p>
+                  <span className="text-[10px] text-emerald-600 font-semibold block mt-2">
+                    Soma das vendas brutas de produtos no período
+                  </span>
+                </div>
+
+                {/* Dynamic Net Profit */}
+                <div className={cn(
+                  "p-5 rounded-xl border",
+                  profit >= 0 
+                    ? "bg-blue-50/60 border-blue-100 text-blue-900" 
+                    : "bg-red-50/60 border-red-100 text-red-900"
+                )}>
+                  <span className={cn(
+                    "text-[10px] font-black uppercase tracking-wider block mb-1",
+                    profit >= 0 ? "text-blue-800" : "text-red-800"
+                  )}>
+                    Lucro Líquido Real
+                  </span>
+                  <p className={cn(
+                    "text-2xl font-black animate-fade-in",
+                    profit >= 0 ? "text-blue-950" : "text-red-950"
+                  )}>
+                    {formatCurrency(profit)}
+                  </p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className={cn(
+                      "text-[10px] font-black px-1.5 py-0.5 rounded",
+                      profit >= 0 ? "bg-blue-100 text-blue-800" : "bg-red-100 text-red-800"
+                    )}>
+                      {profitMargin >= 0 ? '+' : ''}{profitMargin.toFixed(1)}% de Rentabilidade
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Recent Transactions */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">

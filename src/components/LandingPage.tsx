@@ -46,6 +46,7 @@ import {
 import { POSSubpage } from './POSSubpage';
 import { ClothingStoreSubpage } from './ClothingStoreSubpage';
 import { BlogSubpage } from './BlogSubpage';
+import { DesktopOfflineSubpage } from './DesktopOfflineSubpage';
 
 interface LandingPageProps {
   onLogin: (user: User) => void;
@@ -63,6 +64,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [isPOSSubpageOpen, setIsPOSSubpageOpen] = useState(false);
   const [isClothingSubpageOpen, setIsClothingSubpageOpen] = useState(false);
   const [isBlogSubpageOpen, setIsBlogSubpageOpen] = useState(false);
+  const [isDesktopOfflineSubpageOpen, setIsDesktopOfflineSubpageOpen] = useState(false);
   const [selectedSector, setSelectedSector] = useState<'faturacao' | 'retalho'>('faturacao');
 
   const helpTimeoutRef = useRef<any>(null);
@@ -282,20 +284,36 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [dbPlans, setDbPlans] = useState<any[]>([]);
 
   React.useEffect(() => {
-    const fetchPlans = async () => {
+    let active = true;
+    const fetchPlansWithRetry = async (attempt = 1) => {
       try {
         const res = await fetch(`/api/admin/plans?t=${Date.now()}`);
         if (res.ok) {
           const data = await res.json();
-          if (Array.isArray(data) && data.length > 0) {
+          if (active && Array.isArray(data) && data.length > 0) {
             setDbPlans(data);
           }
+        } else {
+          throw new Error(`HTTP status ${res.status}`);
         }
-      } catch (err) {
-        console.error('Erro ao buscar planos dinâmicos:', err);
+      } catch (err: any) {
+        if (active) {
+          if (attempt < 3) {
+            setTimeout(() => {
+              if (active) {
+                fetchPlansWithRetry(attempt + 1);
+              }
+            }, attempt * 1500);
+          } else {
+            console.log('Informação de planos dinâmicos: Usando planos padrão locais.', err?.message || err);
+          }
+        }
       }
     };
-    fetchPlans();
+    fetchPlansWithRetry();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const displayPlans = dbPlans.length > 0 
@@ -591,10 +609,11 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
 
   const triggerScroll = (elementId: string) => {
     setIsMobileMenuOpen(false);
-    if (isPOSSubpageOpen || isClothingSubpageOpen || isBlogSubpageOpen) {
+    if (isPOSSubpageOpen || isClothingSubpageOpen || isBlogSubpageOpen || isDesktopOfflineSubpageOpen) {
       setIsPOSSubpageOpen(false);
       setIsClothingSubpageOpen(false);
       setIsBlogSubpageOpen(false);
+      setIsDesktopOfflineSubpageOpen(false);
       setTimeout(() => {
         const element = document.getElementById(elementId);
         if (element) {
@@ -673,7 +692,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               }}
             >
               <span className="text-3xl font-black tracking-tight text-slate-900">
-                Fatu<span className="text-orange-500">.R</span>
+                Fatu<span className="text-orange-500">-R</span>
               </span>
               <span className="ml-1 px-2 py-0.5 bg-slate-100 text-slate-500 text-[9px] font-black tracking-widest rounded-md uppercase border border-slate-200">
                 AO
@@ -693,14 +712,6 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               </button>
               <button onClick={() => triggerScroll('faq')} className="text-[13px] font-medium text-slate-600 hover:text-slate-900 transition-colors">
                 Perguntas Frequentes
-              </button>
-              <button onClick={() => {
-                setIsPOSSubpageOpen(false);
-                setIsClothingSubpageOpen(false);
-                setIsBlogSubpageOpen(true);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }} className="text-[13px] font-black text-orange-500 hover:text-orange-600 transition-colors">
-                Blog
               </button>
             </div>
           </div>
@@ -785,6 +796,25 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                       </p>
                     </button>
 
+                    {/* Blog do Software */}
+                    <button 
+                      onClick={() => {
+                        setIsHelpDropdownOpen(false);
+                        setIsPOSSubpageOpen(false);
+                        setIsClothingSubpageOpen(false);
+                        setIsBlogSubpageOpen(true);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                      className="w-full text-left group block focus:outline-none cursor-pointer"
+                    >
+                      <h4 className="font-bold text-slate-900 group-hover:text-orange-500 text-sm transition-colors">
+                        Blog do Fatu-R
+                      </h4>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-normal">
+                        Novidades de software, tutoriais de ajuda, obrigações fiscais da AGT e informações essenciais para pequenas empresas.
+                      </p>
+                    </button>
+
                     {/* Contactos */}
                     <button 
                       onClick={() => {
@@ -863,7 +893,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                       }}
                       className="text-left text-slate-500 hover:text-orange-500 font-bold transition-colors cursor-pointer"
                     >
-                      • Blog (Interativo)
+                      • Blog (Novidades, Ajuda, Informações)
                     </button>
                     <button 
                       onClick={() => {
@@ -948,15 +978,6 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 <button onClick={() => triggerScroll('faq')} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 rounded-lg hover:bg-slate-50">
                   Perguntas Frequentes
                 </button>
-                <button onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  setIsPOSSubpageOpen(false);
-                  setIsClothingSubpageOpen(false);
-                  setIsBlogSubpageOpen(true);
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }} className="w-full text-left px-3 py-2 text-xs font-bold text-orange-500 rounded-lg hover:bg-slate-50">
-                  Blog (Novidades, Ajuda, Informações)
-                </button>
                 
                 {/* Mobile Ajuda item and panel */}
                 <div className="border-t border-slate-100 pt-1.5 mt-0.5">
@@ -989,6 +1010,21 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                         >
                           <h4 className="font-bold text-slate-900 text-[12px]">Centro de Ajuda</h4>
                           <p className="text-[10px] text-slate-500 mt-0.5">Dicas, tutoriais e vídeos sobre a utilização do Fatu-R e obrigações fiscais.</p>
+                        </button>
+
+                        <button 
+                          onClick={() => {
+                            setIsMobileMenuOpen(false);
+                            setIsHelpDropdownOpen(false);
+                            setIsPOSSubpageOpen(false);
+                            setIsClothingSubpageOpen(false);
+                            setIsBlogSubpageOpen(true);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="w-full text-left block cursor-pointer"
+                        >
+                          <h4 className="font-bold text-slate-900 text-[12px]">Blog do Fatu-R</h4>
+                          <p className="text-[10px] text-slate-500 mt-0.5 font-sans">Novidades de software, tutoriais, obrigações fiscais da AGT e informações.</p>
                         </button>
 
                         <button 
@@ -1050,7 +1086,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                               }}
                               className="text-left py-0.5 hover:text-orange-500 cursor-pointer"
                             >
-                              Blog (Interativo)
+                              Blog (Novidades, Ajuda, Informações)
                             </button>
                             <button 
                               onClick={() => {
@@ -1154,8 +1190,31 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
         />
       ) : isBlogSubpageOpen ? (
         <BlogSubpage 
-          onBack={() => {
+          onBack={(section?: string) => {
             setIsBlogSubpageOpen(false);
+            if (section === 'videos') {
+              setTimeout(() => {
+                const element = document.getElementById('videos');
+                if (element) {
+                  element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+              }, 100);
+            } else if (section === 'desktop-offline') {
+              setIsDesktopOfflineSubpageOpen(true);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          }}
+          onRegister={() => {
+            setRegError('');
+            setIsRegisterModalOpen(true);
+          }}
+        />
+      ) : isDesktopOfflineSubpageOpen ? (
+        <DesktopOfflineSubpage 
+          onBack={() => {
+            setIsDesktopOfflineSubpageOpen(false);
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
           onRegister={() => {
@@ -2655,10 +2714,8 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               <h4 className="text-white font-black text-xs uppercase tracking-wider">Porquê o Fatu-R?</h4>
               <ul className="space-y-2 text-slate-400 text-[11px]">
                 <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Loja Online Grátis - Fatu-R Go</a></li>
-                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Equipamentos & Hardware</a></li>
-                <li><a href="#testemunhos" className="hover:text-orange-500 transition-colors">Testemunhos de Sucesso</a></li>
-                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Integrações de API</a></li>
-                <li><a href="#funcionalidades" className="hover:text-orange-500 transition-colors">Fatu-R Desktop Offline</a></li>
+                <li><button onClick={() => triggerScroll('videos')} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Testemunhos de Sucesso</button></li>
+                <li><button onClick={() => { setIsPOSSubpageOpen(false); setIsClothingSubpageOpen(false); setIsBlogSubpageOpen(false); setIsDesktopOfflineSubpageOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Fatu-R Desktop Offline</button></li>
               </ul>
             </div>
 
@@ -2702,7 +2759,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             {/* Left: Brand Name only */}
             <div className="flex items-center gap-1">
               <span className="text-xl font-black tracking-tight text-white">
-                Fatu<span className="text-orange-500">.R</span>
+                Fatu<span className="text-orange-500">-R</span>
               </span>
             </div>
 

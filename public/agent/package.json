@@ -1,0 +1,16 @@
+{
+  "name": "fatur-print-agent",
+  "version": "1.0.0",
+  "description": "Fatu-R Enterprise Hardware Integration Agent - Windows background printer & cash drawer cue service",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "install-service": "node install_service.js",
+    "uninstall-service": "node uninstall_service.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "node-windows": "^1.0.0-beta.6"
+  }
+}

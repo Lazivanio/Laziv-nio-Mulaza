@@ -5161,6 +5161,11 @@ async function startServer() {
       const staffCount = db.prepare(`SELECT COUNT(*) as count FROM staff WHERE establishment_id IN (${placeholders})`).get(...establishmentIds) as any;
       const totalExpenses = db.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM financial_transactions WHERE establishment_id IN (${placeholders}) AND type = 'expense' AND date >= ?`).get(...establishmentIds, monthStart) as any;
       
+      // Calculate dynamic COGS (Cost of goods sold) for current month of products sold
+      const monthProfitInfo = getProductProfitForRange(establishmentIds, monthStart, undefined);
+      const productCost = monthProfitInfo?.cost || 0;
+      const finalTotalExpenses = (totalExpenses?.total || 0) + productCost;
+
       // Financial Health check (Salaries vs Income)
       const salarySettings = db.prepare("SELECT financial_reminder_enabled FROM owner_settings WHERE owner_id = ?").get(resolvedOwnerId) as any;
       let financialHealth = { enabled: !!salarySettings?.financial_reminder_enabled, enoughForSalaries: false, totalSalaries: 0, monthlyIncome: monthlySales };
@@ -5209,7 +5214,7 @@ async function startServer() {
         openTills: openSessionsResult?.count || 0,
         lowStockCount: lowStockCount?.count || 0,
         staffCount: staffCount?.count || 0,
-        totalExpenses: totalExpenses?.total || 0,
+        totalExpenses: finalTotalExpenses,
         financialHealth,
         topProducts,
         recentTransactions: [],
@@ -5527,6 +5532,117 @@ async function startServer() {
     }
   });
 
+  function getProductProfitForRange(targetEstIds: number[], startDate?: string, endDate?: string) {
+    const placeholders = targetEstIds.map(() => '?').join(',');
+
+    // 1. Get products cost map for fallback
+    const productsList = db.prepare(`SELECT id, cost FROM products WHERE establishment_id IN (${placeholders})`).all(...targetEstIds) as any[];
+    const productToCost: Record<string, number> = {};
+    productsList.forEach((p: any) => {
+      productToCost[String(p.id)] = Number(p.cost) || 0;
+    });
+
+    // 2. Fetch POS transactions in date range (if any)
+    let posSql = `SELECT items FROM transactions WHERE establishment_id IN (${placeholders})`;
+    const posParams: (number | string)[] = [...targetEstIds];
+    if (startDate) {
+      posSql += " AND date(timestamp) >= ?";
+      posParams.push(startDate);
+    }
+    if (endDate) {
+      posSql += " AND date(timestamp) <= ?";
+      posParams.push(endDate);
+    }
+    const posTx = db.prepare(posSql).all(...posParams) as any[];
+
+    // 3. Fetch invoices in date range
+    let invSql = `SELECT items FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type IN ('FT', 'FR', 'ND')`;
+    const invParams: (number | string)[] = [...targetEstIds];
+    if (startDate) {
+      invSql += " AND date(invoice_date) >= ?";
+      invParams.push(startDate);
+    }
+    if (endDate) {
+      invSql += " AND date(invoice_date) <= ?";
+      invParams.push(endDate);
+    }
+    const invoices = db.prepare(invSql).all(...invParams) as any[];
+
+    // 4. Fetch credit notes (negative factor) in date range
+    let cnSql = `SELECT items FROM credit_invoices WHERE establishment_id IN (${placeholders}) AND doc_type = 'NC'`;
+    const cnParams: (number | string)[] = [...targetEstIds];
+    if (startDate) {
+      cnSql += " AND date(invoice_date) >= ?";
+      cnParams.push(startDate);
+    }
+    if (endDate) {
+      cnSql += " AND date(invoice_date) <= ?";
+      cnParams.push(endDate);
+    }
+    const creditNotes = db.prepare(cnSql).all(...cnParams) as any[];
+
+    // Calculate total revenue and cost of products sold
+    let totalRevenue = 0;
+    let totalCost = 0;
+
+    const processItems = (itemStr: string, factor = 1) => {
+      if (!itemStr) return;
+      try {
+        const items = JSON.parse(itemStr);
+        if (!Array.isArray(items)) return;
+        items.forEach((item: any) => {
+          const id = String(item.id || item.product_id || item.ProductCode || '');
+          const quantity = Number(item.quantity || item.qty || 1);
+          const unitPrice = Number(item.price || item.unit_price || item.UnitPrice || 0);
+          
+          let unitCost = Number(item.cost || item.unit_cost || item.unit_price_cost || item.UnitCost || 0);
+          if (!unitCost && id && productToCost[id] !== undefined) {
+            unitCost = productToCost[id];
+          }
+
+          totalRevenue += (unitPrice * quantity) * factor;
+          totalCost += (unitCost * quantity) * factor;
+        });
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    posTx.forEach((t) => processItems(t.items, 1));
+    invoices.forEach((i) => processItems(i.items, 1));
+    creditNotes.forEach((cn) => processItems(cn.items, -1));
+
+    return {
+      revenue: totalRevenue,
+      cost: totalCost,
+      profit: totalRevenue - totalCost
+    };
+  }
+
+  app.get("/api/owner/financial/product-profit/:requestId", (req, res) => {
+    try {
+      const { requestId } = req.params;
+      const { establishmentIds, ownerId: resolvedOwnerId } = getContextData(requestId);
+      if (establishmentIds.length === 0 || !resolvedOwnerId) {
+        return res.json({ profit: 0, revenue: 0, cost: 0 });
+      }
+
+      const { establishmentId, startDate, endDate } = req.query;
+
+      // Filter by requested establishmentId or all of owner's
+      const targetEstIds = establishmentId ? [Number(establishmentId)] : establishmentIds;
+      if (establishmentId && !establishmentIds.includes(Number(establishmentId))) {
+        return res.status(403).json({ error: "Access denied to this establishment" });
+      }
+
+      const result = getProductProfitForRange(targetEstIds, startDate as string, endDate as string);
+      res.json(result);
+    } catch (e: any) {
+      console.error("Error in product-profit calculation:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/owner/financial/summary/:requestId", (req, res) => {
     try {
       const { requestId } = req.params;
@@ -5537,7 +5653,7 @@ async function startServer() {
       const today = new Date().toISOString().split('T')[0];
       const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
 
-      let todaySummary, monthSummary, totals, pendingReceivable, pendingPayable;
+      let todaySummary, monthSummary, pendingReceivable, pendingPayable;
 
       // Determine which establishment IDs to filter by
       const targetEstIds = establishmentId ? [Number(establishmentId)] : establishmentIds;
@@ -5586,31 +5702,84 @@ async function startServer() {
         )
       `).get(...targetEstIds, firstDayOfMonth, ...targetEstIds, firstDayOfMonth, ...targetEstIds, firstDayOfMonth, ...targetEstIds, firstDayOfMonth, ...targetEstIds, firstDayOfMonth, ...targetEstIds, firstDayOfMonth) as any;
 
-      totals = db.prepare(`
-        SELECT 
-          SUM(CASE WHEN payment_method = 'cash' AND type = 'income' THEN amount WHEN payment_method = 'cash' AND type = 'expense' THEN -amount ELSE 0 END) as cash_balance,
-          SUM(CASE WHEN payment_method = 'transfer' AND type = 'income' THEN amount WHEN payment_method = 'transfer' AND type = 'expense' THEN -amount ELSE 0 END) as bank_balance
+      // Extract accurate balances from financial_transactions with robust method normalizer mapping
+      const financialTx = db.prepare(`
+        SELECT id, type, amount, payment_method, reference_id, reference_type 
         FROM financial_transactions 
-        WHERE establishment_id IN (${placeholders})
-      `).get(...targetEstIds) as any;
+        WHERE establishment_id IN (${placeholders}) AND status = 'paid'
+      `).all(...targetEstIds) as any[];
+
+      let cash_balance = 0;
+      let bank_balance = 0;
+
+      financialTx.forEach((tx) => {
+        const amt = Number(tx.amount) || 0;
+        const method = String(tx.payment_method || '').toLowerCase();
+        const factor = tx.type === 'income' ? 1 : -1;
+
+        if (
+          method === 'cash' || 
+          method === 'dinheiro' || 
+          method === 'numerário' || 
+          method === 'numerario'
+        ) {
+          cash_balance += amt * factor;
+        } else if (
+          method === 'transfer' || 
+          method === 'transferência' || 
+          method === 'transferencia' || 
+          method === 'bank_transfer' || 
+          method === 'card' || 
+          method === 'multicaixa'
+        ) {
+          bank_balance += amt * factor;
+        } else if (method === 'split' && tx.reference_type === 'transaction' && tx.reference_id) {
+          try {
+            const orgTx = db.prepare("SELECT split_details FROM transactions WHERE id = ?").get(tx.reference_id) as any;
+            if (orgTx && orgTx.split_details) {
+              const details = typeof orgTx.split_details === 'string' ? JSON.parse(orgTx.split_details) : orgTx.split_details;
+              if (details) {
+                const cashPortion = Number(details.cash) || 0;
+                const cardPortion = Number(details.card) || 0;
+                cash_balance += cashPortion * factor;
+                bank_balance += cardPortion * factor;
+              } else {
+                cash_balance += (amt / 2) * factor;
+                bank_balance += (amt / 2) * factor;
+              }
+            } else {
+              cash_balance += amt * factor;
+            }
+          } catch (e) {
+            cash_balance += amt * factor;
+          }
+        } else {
+          // Fallback: default unknown payments to cash for safety
+          cash_balance += amt * factor;
+        }
+      });
 
       pendingReceivable = db.prepare(`SELECT SUM(amount) as total FROM accounts_receivable WHERE establishment_id IN (${placeholders}) AND status != 'paid'`).get(...targetEstIds) as any;
       pendingPayable = db.prepare(`SELECT SUM(amount) as total FROM accounts_payable WHERE establishment_id IN (${placeholders}) AND status != 'paid'`).get(...targetEstIds) as any;
+
+      // Extract real product level profitability
+      const todayProfitInfo = getProductProfitForRange(targetEstIds, today, today);
+      const monthProfitInfo = getProductProfitForRange(targetEstIds, firstDayOfMonth, undefined);
 
       res.json({
         today: {
           income: todaySummary?.income || 0,
           expense: todaySummary?.expense || 0,
-          profit: (todaySummary?.income || 0) - (todaySummary?.expense || 0)
+          profit: todayProfitInfo.profit
         },
         month: {
-          income: monthSummary?.income || 0,
+          income: monthProfitInfo.revenue || monthSummary?.income || 0,
           expense: monthSummary?.expense || 0,
-          profit: (monthSummary?.income || 0) - (monthSummary?.expense || 0)
+          profit: monthProfitInfo.profit
         },
         balances: {
-          cash: totals?.cash_balance || 0,
-          bank: totals?.bank_balance || 0
+          cash: cash_balance,
+          bank: bank_balance
         },
         pending: {
           receivable: pendingReceivable?.total || 0,
@@ -8071,12 +8240,17 @@ function formatDateToIso(dateStr?: string) {
     const totalSalaries = salaries?.total || 0;
     const enoughForSalaries = monthlyIncome >= totalSalaries;
 
+    // Calculate dynamic COGS (Cost of goods sold) for this establishment/owner
+    const monthProfitInfo = getProductProfitForRange(params.map(Number), monthStart, undefined);
+    const productCost = monthProfitInfo?.cost || 0;
+    const finalTotalExpenses = (financialMonth?.expense || 0) + productCost;
+
     res.json({
       todaySales,
       todayCount,
       todayExpense: financialToday?.expense || 0,
       monthlySales: monthlyIncome,
-      monthlyExpense: financialMonth?.expense || 0,
+      monthlyExpense: (financialMonth?.expense || 0) + productCost,
       lowStockCount: lowStock?.count || 0,
       staffCount: staffCount?.count || 0,
       topProducts,
@@ -8084,7 +8258,7 @@ function formatDateToIso(dateStr?: string) {
       salesByDay,
       salesByEstablishment,
       paymentMethods,
-      totalExpenses: financialMonth?.expense || 0,
+      totalExpenses: finalTotalExpenses,
       financialHealth: {
         enabled: ownerSettings?.financial_reminder_enabled === 1,
         totalSalaries: totalSalaries,

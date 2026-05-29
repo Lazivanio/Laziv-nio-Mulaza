@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 
 interface BlogSubpageProps {
-  onBack: () => void;
+  onBack: (section?: string) => void;
   onRegister: () => void;
 }
 
@@ -711,11 +711,9 @@ O Fatu-R ajuda-o a registar as margens exatas na sua listagem de produtos e serv
             <div className="space-y-4">
               <h4 className="text-white font-black text-xs uppercase tracking-wider">Porquê o Fatu-R?</h4>
               <ul className="space-y-2 text-slate-400 text-[11px]">
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Loja Online Grátis - Fatu-R Go</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Equipamentos & Hardware</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Testemunhos de Sucesso</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Integrações de API</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Fatu-R Desktop Offline</button></li>
+                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Loja Online Grátis - Fatu-R Go</button></li>
+                <li><button onClick={() => onBack('videos')} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Testemunhos de Sucesso</button></li>
+                <li><button onClick={() => onBack('desktop-offline')} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Fatu-R Desktop Offline</button></li>
               </ul>
             </div>
 
@@ -723,9 +721,9 @@ O Fatu-R ajuda-o a registar as margens exatas na sua listagem de produtos e serv
             <div className="space-y-4">
               <h4 className="text-white font-black text-xs uppercase tracking-wider">Negócios</h4>
               <ul className="space-y-2 text-slate-400 text-[11px]">
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software de Facturação</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software POS Comercial</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software Loja de Roupa</button></li>
+                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software de Facturação</button></li>
+                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software POS Comercial</button></li>
+                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software Loja de Roupa</button></li>
               </ul>
             </div>
 
@@ -734,10 +732,10 @@ O Fatu-R ajuda-o a registar as margens exatas na sua listagem de produtos e serv
               <h4 className="text-white font-black text-xs uppercase tracking-wider">Suporte</h4>
               <ul className="space-y-2 text-slate-400 text-[11px]">
                 <li><button onClick={() => { setSelectedPost(null); setSelectedCategory(null); setSelectedType('all'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Blog & Recursos</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Centro de Ajuda</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Sobre Nós</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">API para Programadores</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Contactos e Apoio</button></li>
+                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Centro de Ajuda</button></li>
+                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Sobre Nós</button></li>
+                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">API para Programadores</button></li>
+                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Contactos e Apoio</button></li>
               </ul>
             </div>
 
@@ -747,9 +745,9 @@ O Fatu-R ajuda-o a registar as margens exatas na sua listagem de produtos e serv
               <ul className="space-y-2 text-slate-400 text-[11px]">
                 <li><button onClick={onRegister} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Login / Entrar</button></li>
                 <li><button onClick={onRegister} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Criar Conta Grátis</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Termos e Condições</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Política de Privacidade</button></li>
-                <li><button onClick={onBack} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Proteção de Dados</button></li>
+                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Termos e Condições</button></li>
+                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Política de Privacidade</button></li>
+                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Proteção de Dados</button></li>
               </ul>
             </div>
 
@@ -759,7 +757,7 @@ O Fatu-R ajuda-o a registar as margens exatas na sua listagem de produtos e serv
             {/* Left: Brand Name only */}
             <div className="flex items-center gap-1">
               <span className="text-xl font-black tracking-tight text-white">
-                Fatu<span className="text-orange-500">.R</span>
+                Fatu<span className="text-orange-500">-R</span>
               </span>
             </div>
 
