@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { Printer, Download } from 'lucide-react';
 import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 
 export const ProformaInvoice = ({ proforma, establishment }: { proforma: any, establishment: any }) => {
   const invoiceRef = useRef<HTMLDivElement>(null);

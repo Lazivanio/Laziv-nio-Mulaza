@@ -147,8 +147,13 @@ export const MyEstablishments = ({ user }: { user: User }) => {
         }
         alert('Caixa aberto com sucesso!');
       } else {
-        const data = await res.json();
-        alert(data.error || 'Erro ao abrir caixa.');
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          alert(data.error || 'Erro ao abrir caixa.');
+        } else {
+          alert(`Erro ao abrir caixa (Código: ${res.status}). Por favor, tente novamente.`);
+        }
       }
     } catch (error) {
       console.error("Error opening session:", error);
@@ -186,8 +191,13 @@ export const MyEstablishments = ({ user }: { user: User }) => {
         }
         alert('Caixa fechado com sucesso!');
       } else {
-        const data = await res.json();
-        alert(data.error || 'Erro ao fechar caixa.');
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          alert(data.error || 'Erro ao fechar caixa.');
+        } else {
+          alert(`Erro ao fechar caixa (Código: ${res.status}). Por favor, tente novamente.`);
+        }
       }
     } catch (error) {
       console.error("Error closing session:", error);
@@ -576,8 +586,8 @@ export const MyEstablishments = ({ user }: { user: User }) => {
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
             {registersForSelectedEstablishment.map(register => {
-              const isOpenedByMe = register.session_status === 'open' && register.seller_id === user.id;
-              const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id;
+              const isOpenedByMe = register.session_status === 'open' && (register.seller_id === user.id || register.current_seller_id === user.id);
+              const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id && register.current_seller_id !== user.id;
 
               return (
                 <div key={`open-reg-${register.id}`} className="p-6 border border-zinc-100 rounded-2xl space-y-4 hover:border-orange-200 transition-all group">

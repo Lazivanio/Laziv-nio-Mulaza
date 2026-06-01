@@ -20,7 +20,7 @@ import {
   Cell, 
   Legend 
 } from 'recharts';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
 import { User } from '../types';

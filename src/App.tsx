@@ -2,7 +2,7 @@ import React, { useState, useEffect, ReactNode, FormEvent, useRef } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable';
-import html2canvas from "html2canvas";
+import html2canvas from "html2canvas-pro";
 import QRCode from 'qrcode';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -4808,8 +4808,13 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         fetchData();
         alert('Caixa aberto com sucesso!');
       } else {
-        const data = await res.json();
-        alert(data.error || 'Erro ao abrir caixa.');
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          alert(data.error || 'Erro ao abrir caixa.');
+        } else {
+          alert(`Erro ao abrir caixa (Código: ${res.status}). Por favor, tente novamente.`);
+        }
       }
     } catch (error) {
       console.error("Error opening session:", error);
@@ -4865,9 +4870,14 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         fetchData();
         alert('Caixa fechado com sucesso!');
       } else {
-        const data = await res.json();
-        console.error('Failed to close session:', data);
-        alert(data.error || 'Erro ao fechar caixa.');
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          console.error('Failed to close session:', data);
+          alert(data.error || 'Erro ao fechar caixa.');
+        } else {
+          alert(`Erro ao fechar caixa (Código: ${res.status}). Por favor, tente novamente.`);
+        }
       }
     } catch (error) {
       console.error('Error closing session:', error);
@@ -7040,7 +7050,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                       {creditInvoices
                         .filter(inv => {
                           const matchesType = invoiceTypeFilter === 'ALL' || inv.doc_type === invoiceTypeFilter;
-                          const invDate = inv.invoice_date.split('T')[0];
+                          const invDate = inv.invoice_date ? inv.invoice_date.slice(0, 10) : '';
                           const matchesStart = !startDateFilter || invDate >= startDateFilter;
                           const matchesEnd = !endDateFilter || invDate <= endDateFilter;
                           return matchesType && matchesStart && matchesEnd;
@@ -7055,7 +7065,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                         creditInvoices
                           .filter(inv => {
                             const matchesType = invoiceTypeFilter === 'ALL' || inv.doc_type === invoiceTypeFilter;
-                            const invDate = inv.invoice_date.split('T')[0];
+                            const invDate = inv.invoice_date ? inv.invoice_date.slice(0, 10) : '';
                             const matchesStart = !startDateFilter || invDate >= startDateFilter;
                             const matchesEnd = !endDateFilter || invDate <= endDateFilter;
                             return matchesType && matchesStart && matchesEnd;
@@ -7541,7 +7551,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                             <td className="px-6 py-4 text-sm font-medium text-rose-600">Kz {register.max_limit.toLocaleString()}</td>
                             <td className="px-6 py-4 text-right">
                               <div className="flex justify-end gap-2">
-                                {register.session_status === 'open' && (user.role === 'owner' || register.seller_id === user.id) ? (
+                                {register.session_status === 'open' && (user.role === 'owner' || user.role === 'manager' || register.seller_id === user.id || register.current_seller_id === user.id) ? (
                                   <button 
                                     onClick={() => handleCloseSessionDashboard(register.current_session_id!)}
                                     className="bg-orange-500 text-white px-3 py-1 rounded text-xs font-bold hover:bg-orange-600 transition-all mr-4"
@@ -8090,8 +8100,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {cashRegisters.map(register => {
-              const isOpenedByMe = register.session_status === 'open' && register.seller_id === user.id;
-              const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id;
+              const isOpenedByMe = register.session_status === 'open' && (register.seller_id === user.id || register.current_seller_id === user.id);
+              const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id && register.current_seller_id !== user.id;
 
               return (
                 <div key={`reg-open-modal-${register.id}`} className="p-6 border border-zinc-100 rounded-2xl space-y-4 hover:border-orange-200 transition-all group">
@@ -10357,17 +10367,25 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       } catch (err) {
         console.warn("Falha de ligação ao Agente Local. Mostrando fallback de impressão do navegador.", err);
         setPrintStatus({
-          isOpen: true,
+          isOpen: false,
           message: "⚠️ O Agente Local foi ativado mas não respondeu (localhost). Deseja imprimir gerando o documento via Navegador?",
           sale,
           establishment: establishmentInfo
         });
+        // Since local agent failed, trigger direct browser print automatically
+        setTimeout(() => {
+          try {
+            window.print();
+          } catch (e) {
+            console.error(e);
+          }
+        }, 600);
         return false;
       }
     } else {
       // 2. Direct browser printing with beautiful visual HTML receipt shown + print dialog opened automatically
       setPrintStatus({
-        isOpen: true,
+        isOpen: false,
         message: "O sistema gerou o seu recibo bonito (HTML). O navegador abrirá a janela de impressão automaticamente.",
         sale,
         establishment: establishmentInfo
@@ -10396,11 +10414,12 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     // Only block about missing printer name if they actively configured local agent spooler
     if (printConfig.useLocalAgent && !printConfig.defaultPrinter) {
       setPrintStatus({
-        isOpen: true,
+        isOpen: false,
         message: "Impressão falhou. O motor local está selecionado mas nenhuma impressora Windows Spooler foi preenchida.",
         sale,
         establishment: establishmentInfo
       });
+      alert("⚠️ O motor local está selecionado mas nenhuma impressora Windows Spooler foi preenchida. Por favor, configure a impressora nas definições.");
       return;
     }
 
@@ -10731,8 +10750,13 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         setOpeningAmounts(prev => ({ ...prev, [registerId]: '' }));
         await handleSelectRegister(registerId);
       } else {
-        const data = await res.json();
-        alert(data.error || 'Erro ao abrir caixa.');
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          alert(data.error || 'Erro ao abrir caixa.');
+        } else {
+          alert(`Erro ao abrir caixa (Código: ${res.status}). Por favor, tente novamente.`);
+        }
       }
     } catch (error) {
       console.error("Error opening session:", error);
@@ -10804,8 +10828,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         <div className="flex-1 overflow-y-auto px-1 custom-scrollbar pb-32" style={{ maxHeight: 'calc(100vh - 350px)' }}>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {cashRegisters.map(register => {
-            const isOpenedByMe = register.session_status === 'open' && register.seller_id === user.id;
-            const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id;
+            const isOpenedByMe = register.session_status === 'open' && (register.seller_id === user.id || register.current_seller_id === user.id);
+            const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id && register.current_seller_id !== user.id;
 
             return (
               <Card key={register.id} className="p-8 border-zinc-100 shadow-sm rounded-[2.5rem] hover:border-orange-200 transition-all group relative overflow-hidden">
@@ -13183,113 +13207,94 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       <Modal 
         isOpen={printStatus.isOpen} 
         onClose={() => setPrintStatus({...printStatus, isOpen: false})} 
-        title="Recibo de Venda"
+        title="Fatura Gerada"
         maxWidth="max-w-md"
       >
-        <div className="space-y-5 py-2">
+        <div className="space-y-4 py-2">
           {/* Visual Receipt Preview: Center-focused, beautiful on-screen representation */}
           {printStatus.sale && (
-            <div className="space-y-2">
-              <p className="text-[10px] font-black uppercase tracking-wider text-zinc-400 mb-1">Visualização do Recibo Bonito (HTML)</p>
-              <div 
-                id="print-fallback-target" 
-                className="p-4 bg-zinc-50 rounded-2xl border border-zinc-200/80 flex justify-center max-h-[360px] overflow-y-auto shadow-inner"
-              >
-                <Invoice 
-                  sale={printStatus.sale} 
-                  establishment={establishmentInfo} 
-                  user={user} 
-                  ticketSize={printConfig.ticketSize} 
-                />
-              </div>
+            <div 
+              id="print-fallback-target" 
+              className="p-4 bg-zinc-50 rounded-2xl border border-zinc-200/80 flex justify-center max-h-[420px] overflow-y-auto shadow-inner"
+            >
+              <Invoice 
+                sale={printStatus.sale} 
+                establishment={establishmentInfo} 
+                user={user} 
+                ticketSize={printConfig.ticketSize} 
+              />
             </div>
           )}
 
-          {/* Contextualized message informing user about print status */}
-          <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl flex items-start gap-3">
-            <div className="w-10 h-10 bg-emerald-500 text-white rounded-xl flex items-center justify-center shrink-0 shadow-md shadow-emerald-500/20">
-              <Check size={20} />
-            </div>
-            <div>
-              <p className="text-xs font-black text-emerald-950 uppercase tracking-wide">Venda Concluída com Sucesso!</p>
-              <p className="text-[10px] text-emerald-900 leading-snug mt-0.5">
-                {printStatus.message.includes("⚠️") ? printStatus.message : "O recibo foi preparado no formato correto (" + printConfig.ticketSize + "). A janela de impressão do sistema foi aberta."}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-2 pt-1 border-t border-zinc-100">
-            {/* Direct Window Print trigger on manual request */}
+          <div className="flex gap-2 pt-2 border-t border-zinc-100">
             <button 
               onClick={() => {
                 window.print();
               }}
-              className="w-full py-3.5 bg-zinc-900 text-white rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-black transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+              className="flex-1 py-3 bg-zinc-900 hover:bg-black text-white rounded-xl font-black uppercase tracking-wider text-[10px] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              <Printer size={15} /> Imprimir Recibo
+              <Printer size={14} /> Imprimir
             </button>
             
-            <div className="flex gap-2">
-              <button 
-                onClick={async () => {
-                  if (printStatus.sale) {
-                    const fallbackEl = document.querySelector('#print-fallback-target .invoice-print') as HTMLDivElement;
-                    if (fallbackEl) {
-                      const canvas = await html2canvas(fallbackEl, {
-                        scale: 3,
-                        useCORS: true,
-                        logging: false,
-                        backgroundColor: '#ffffff',
-                        windowWidth: printConfig.ticketSize === '58mm' ? 260 : 350,
-                        onclone: (clonedDoc) => {
-                          const styleEl = clonedDoc.createElement('style');
-                          const is58 = printConfig.ticketSize === '58mm';
-                          styleEl.textContent = `
-                            .invoice-print {
-                              box-sizing: border-box !important;
-                              width: ${is58 ? '210px' : '280px'} !important;
-                              max-width: ${is58 ? '210px' : '280px'} !important;
-                              min-width: ${is58 ? '210px' : '280px'} !important;
-                              padding: ${is58 ? '8px' : '16px'} !important;
-                              margin: 0 !important;
-                              background-color: #ffffff !important;
-                              border: 1px solid #e4e4e7 !important;
-                              box-shadow: none !important;
-                              border-radius: 8px !important;
-                            }
-                            .invoice-print * {
-                              box-sizing: border-box !important;
-                            }
-                          `;
-                          clonedDoc.head.appendChild(styleEl);
-                        }
-                      });
-                      const imgData = canvas.toDataURL('image/png');
-                      const imgProps = new jsPDF().getImageProperties(imgData);
-                      const pdfWidth = printConfig.ticketSize === '58mm' ? 58 : 80;
-                      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-                      const pdf = new jsPDF({
-                        orientation: 'portrait',
-                        unit: 'mm',
-                        format: [pdfWidth, pdfHeight]
-                      });
-                      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-                      pdf.save(`FATURA_${printStatus.sale.invoice_number.replace('/', '_')}.pdf`);
-                    }
+            <button 
+              onClick={async () => {
+                if (printStatus.sale) {
+                  const fallbackEl = document.querySelector('#print-fallback-target .invoice-print') as HTMLDivElement;
+                  if (fallbackEl) {
+                    const canvas = await html2canvas(fallbackEl, {
+                      scale: 3,
+                      useCORS: true,
+                      logging: false,
+                      backgroundColor: '#ffffff',
+                      windowWidth: printConfig.ticketSize === '58mm' ? 260 : 350,
+                      onclone: (clonedDoc) => {
+                        const styleEl = clonedDoc.createElement('style');
+                        const is58 = printConfig.ticketSize === '58mm';
+                        styleEl.textContent = `
+                          .invoice-print {
+                            box-sizing: border-box !important;
+                            width: ${is58 ? '210px' : '280px'} !important;
+                            max-width: ${is58 ? '210px' : '280px'} !important;
+                            min-width: ${is58 ? '210px' : '280px'} !important;
+                            padding: ${is58 ? '8px' : '16px'} !important;
+                            margin: 0 !important;
+                            background-color: #ffffff !important;
+                            border: 1px solid #e4e4e7 !important;
+                            box-shadow: none !important;
+                            border-radius: 8px !important;
+                          }
+                          .invoice-print * {
+                            box-sizing: border-box !important;
+                          }
+                        `;
+                        clonedDoc.head.appendChild(styleEl);
+                      }
+                    });
+                    const imgData = canvas.toDataURL('image/png');
+                    const imgProps = new jsPDF().getImageProperties(imgData);
+                    const pdfWidth = printConfig.ticketSize === '58mm' ? 58 : 80;
+                    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+                    const pdf = new jsPDF({
+                      orientation: 'portrait',
+                      unit: 'mm',
+                      format: [pdfWidth, pdfHeight]
+                    });
+                    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+                    pdf.save(`FATURA_${printStatus.sale.invoice_number.replace('/', '_')}.pdf`);
                   }
-                }}
-                className="flex-1 py-3 bg-zinc-100 text-zinc-900 rounded-xl font-bold uppercase tracking-wider text-[9px] hover:bg-zinc-200 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Download size={14} /> Baixar PDF
-              </button>
-              
-              <button 
-                onClick={() => setPrintStatus({...printStatus, isOpen: false})}
-                className="flex-1 py-3 bg-zinc-900 hover:bg-black text-white rounded-xl font-black uppercase tracking-wider text-[9px] transition-all cursor-pointer"
-              >
-                Nova Venda
-              </button>
-            </div>
+                }
+              }}
+              className="flex-1 py-3 bg-zinc-100 text-zinc-900 rounded-xl font-bold uppercase tracking-wider text-[10px] hover:bg-zinc-200 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Download size={14} /> Descarregar PDF
+            </button>
+            
+            <button 
+              onClick={() => setPrintStatus({...printStatus, isOpen: false})}
+              className="flex-1 py-3 bg-rose-50 hover:bg-rose-150 text-rose-700 rounded-xl font-bold uppercase tracking-wider text-[10px] transition-all cursor-pointer"
+            >
+              Nova Venda
+            </button>
           </div>
         </div>
       </Modal>
@@ -14025,10 +14030,10 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
   const queryEstablishmentId = searchParams.get('establishmentId');
   const queryRegisterId = searchParams.get('registerId');
 
-  const fetchSession = async () => {
+  const fetchSession = async (forcedRegisterId?: number | string) => {
     setLoading(true);
     const establishmentId = queryEstablishmentId || user.establishment_id || 1;
-    const registerId = queryRegisterId || selectedRegisterId || user.cash_register_id;
+    const registerId = forcedRegisterId || queryRegisterId || selectedRegisterId || user.cash_register_id;
     
     if (!registerId) {
       setSession(null);
@@ -14121,10 +14126,15 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
         // First select the register to update global state
         await handleSelectRegister(registerId);
         // Then explicitly fetch the session to update local state immediately
-        await fetchSession();
+        await fetchSession(registerId);
       } else {
-        const data = await res.json();
-        alert(data.error || 'Erro ao abrir caixa.');
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          alert(data.error || 'Erro ao abrir caixa.');
+        } else {
+          alert(`Erro ao abrir caixa (Código: ${res.status}). Por favor, tente novamente.`);
+        }
       }
     } catch (error) {
       console.error("Error opening session:", error);
@@ -14139,8 +14149,8 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
       return;
     }
 
-    if (user.role !== 'owner' && session.seller_id !== user.id) {
-      alert('Apenas o funcionário que abriu este caixa ou o proprietário podem fechá-lo.');
+    if (user.role !== 'owner' && user.role !== 'manager' && session.seller_id !== user.id) {
+      alert('Apenas o funcionário que abriu este caixa, o gerente ou o proprietário podem fechá-lo.');
       return;
     }
 
@@ -14162,8 +14172,13 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
         await fetchRegisters();
         alert('Caixa fechado com sucesso!');
       } else {
-        const data = await res.json();
-        alert(data.error || 'Erro ao fechar caixa.');
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          alert(data.error || 'Erro ao fechar caixa.');
+        } else {
+          alert(`Erro ao fechar caixa (Código: ${res.status}). Por favor, tente novamente.`);
+        }
       }
     } catch (error) {
       console.error("Error closing session:", error);
@@ -14194,8 +14209,8 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {cashRegisters.map(register => {
-            const isOpenedByMe = register.session_status === 'open' && register.seller_id === user.id;
-            const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id;
+            const isOpenedByMe = register.session_status === 'open' && (register.seller_id === user.id || register.current_seller_id === user.id);
+            const isOpenedByOthers = register.session_status === 'open' && register.seller_id !== user.id && register.current_seller_id !== user.id;
 
             return (
               <Card key={`close-reg-pos-${register.id}`} className="p-6 border-zinc-100 shadow-sm rounded-3xl hover:border-orange-200 transition-all group">
@@ -14229,7 +14244,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
                         isOpenedByMe ? "bg-orange-500 hover:bg-orange-600 text-white" : "bg-green-600 hover:bg-green-700 text-white"
                       )}
                     >
-                      {isOpenedByMe ? 'Fechar Meu Caixa' : (user.role === 'owner' && hasPermission(user, 'pos_close_cashier') ? 'Fechar Caixa' : 'Entrar no Caixa')}
+                      {isOpenedByMe ? 'Fechar Meu Caixa' : ((user.role === 'owner' || user.role === 'manager') && hasPermission(user, 'pos_close_cashier') ? 'Fechar Caixa' : 'Entrar no Caixa')}
                     </button>
                   </div>
                 ) : hasPermission(user, 'pos_open_cashier') ? (
@@ -14343,7 +14358,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
             <h4 className="font-bold text-xl mb-2">Encerrar Operações</h4>
             <p className="text-sm text-zinc-500">Ao fechar o caixa, você não poderá realizar novas vendas nesta sessão.</p>
           </div>
-          {hasPermission(user, 'pos_close_cashier') && (user.role === 'owner' || session.seller_id === user.id) ? (
+          {hasPermission(user, 'pos_close_cashier') && (user.role === 'owner' || user.role === 'manager' || session.seller_id === user.id) ? (
             <button
               onClick={handleCloseSession}
               disabled={!physicalAmount}
@@ -14355,7 +14370,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
             <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl text-center">
               <Lock size={20} className="mx-auto mb-2 text-rose-400" />
               <p className="text-xs font-bold text-rose-600 uppercase tracking-wider">Sem Permissão</p>
-              <p className="text-[10px] text-rose-400 mt-1">Apenas o funcionário que abriu este caixa ou o proprietário podem fechá-lo.</p>
+              <p className="text-[10px] text-rose-400 mt-1">Apenas o funcionário que abriu este caixa, o gerente ou o proprietário podem fechá-lo.</p>
             </div>
           )}
         </Card>

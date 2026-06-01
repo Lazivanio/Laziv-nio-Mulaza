@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { Printer, Download, FileText, ShoppingBag } from 'lucide-react';
 import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 

@@ -13,6 +13,18 @@ import { PassThrough } from "stream";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const logServerError = (context: string, err: any) => {
+  try {
+    const errorLogPath = path.join(process.cwd(), "server-error.log");
+    const timestamp = new Date().toISOString();
+    const errorMessage = err instanceof Error ? `${err.message}\nStack: ${err.stack}` : `${err}`;
+    const logLine = `[${timestamp}] [${context}] ${errorMessage}\n\n`;
+    fs.appendFileSync(errorLogPath, logLine, 'utf8');
+  } catch (logErr) {
+    console.error("FATAL: Failed to write to server-error.log", logErr);
+  }
+};
+
 
 let db: Database.Database;
 
@@ -56,14 +68,14 @@ function acquireLock() {
         try {
           // Verifica se o processo dono do lock ainda existe
           process.kill(pid, 0);
-          console.error(`[SERVER] FATAL: O Banco de Dados já está em uso pelo processo PID ${pid}.`);
-          process.exit(1);
+          console.warn(`[SERVER] WARNING: O Banco de Dados pode estar em uso pelo processo PID ${pid}. Sobrescrevendo lock para evitar bloqueios...`);
+          fs.unlinkSync(LOCK_FILE);
         } catch (e) {
           console.warn(`[SERVER] Lock antigo detetado (PID ${pid} não existe). Removendo...`);
-          fs.unlinkSync(LOCK_FILE);
+          try { fs.unlinkSync(LOCK_FILE); } catch (err) {}
         }
       } else {
-        fs.unlinkSync(LOCK_FILE); // Ficheiro de lock inválido
+        try { fs.unlinkSync(LOCK_FILE); } catch (err) {}
       }
     }
     fs.writeFileSync(LOCK_FILE, process.pid.toString());
@@ -307,11 +319,12 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('uncaughtException', (err) => {
   console.error('[SERVER] UNCAUGHT EXCEPTION:', err);
+  logServerError('UNCAUGHT EXCEPTION', err);
   gracefulShutdown('EXCEPTION');
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[SERVER] UNHANDLED REJECTION:', reason);
-  gracefulShutdown('REJECTION');
+  logServerError('UNHANDLED REJECTION', reason);
 });
 
 
@@ -1226,6 +1239,9 @@ function initializeDatabase() {
         prev_signature TEXT,
         key_version_id INTEGER,
         cancellation_id INTEGER,
+        currency_code TEXT DEFAULT 'Kz',
+        exchange_rate REAL DEFAULT 1.0,
+        base_amount REAL,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         items TEXT,
         FOREIGN KEY(establishment_id) REFERENCES establishments(id),
@@ -1561,6 +1577,10 @@ function initializeDatabase() {
         assigned_staff TEXT,
         scheduled_date DATETIME NOT NULL,
         status TEXT DEFAULT 'pending',
+        total_amount REAL DEFAULT 0,
+        selected_fees TEXT,
+        payment_method TEXT DEFAULT 'Dinheiro',
+        fiscal_document_id INTEGER REFERENCES credit_invoices(id),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(establishment_id) REFERENCES establishments(id),
         FOREIGN KEY(service_id) REFERENCES services(id)
@@ -2027,6 +2047,11 @@ function hasPermission(userId: number, permissionId: string): boolean {
   
   // Admin and Owner always have all permissions
   if (user.role === 'admin' || user.role === 'owner') {
+    return true;
+  }
+
+  // Managers always have permission to open and close cash registers
+  if (user.role === 'manager' && (permissionId === 'pos_close_cashier' || permissionId === 'pos_open_cashier')) {
     return true;
   }
 
@@ -4868,6 +4893,7 @@ async function startServer() {
       SELECT cr.*, 
              s.status as session_status,
              s.seller_id as current_seller_id,
+             s.seller_id as seller_id,
              u.name as current_seller_name,
              s.id as current_session_id
       FROM cash_registers cr 
@@ -7576,6 +7602,7 @@ function formatDateToIso(dateStr?: string) {
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error creating employee:", error);
+      logServerError("POST /api/owner/hr/employees", error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -7609,7 +7636,7 @@ function formatDateToIso(dateStr?: string) {
         }
 
         db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, establishment_id = ?, role_id = ?, custom_permissions = ?, status = ?, cash_register_id = ?, bi_number = ?, address = ?, nif = ?, social_security_number = ? WHERE id = ?").run(
-          name, normEmail, normUsername, finalRole, estId, rId, JSON.stringify(custom_permissions || []), status, crId, bi_number || null, address || null, nif || null, social_security_number || null, req.params.id
+          name, normEmail, normUsername, finalRole, estId, rId, JSON.stringify(custom_permissions || []), status || 'active', crId, bi_number || null, address || null, nif || null, social_security_number || null, req.params.id
         );
 
         if (password && password.trim() !== '') {
@@ -7632,6 +7659,7 @@ function formatDateToIso(dateStr?: string) {
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error updating employee:", error);
+      logServerError(`PUT /api/owner/hr/employees/${req.params.id}`, error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -10286,7 +10314,7 @@ function formatDateToIso(dateStr?: string) {
         SELECT 
           id, establishment_id, NULL as owner_id, seller_id, NULL as parent_invoice_id,
           '🛒 PDV - ' || client_name as client_name, client_nif, '' as address, 'Angola' as country, 'FR' as doc_type,
-          '' as series, invoice_number, timestamp as invoice_date, 'AOA' as currency, total_amount,
+          '' as series, invoice_number, SUBSTR(timestamp, 1, 10) as invoice_date, 'AOA' as currency, total_amount,
           tax_amount, payment_method, '' as reason, '' as note_category,
           0 as adjustment_amount, '' as observations, items, NULL as due_date, timestamp as created_at,
           'liquidado' as status,
@@ -10591,6 +10619,7 @@ function formatDateToIso(dateStr?: string) {
   // Global Error Handler
   app.use((err: any, req: any, res: any, next: any) => {
     console.error("Global Error Handler detected error:", err);
+    logServerError(`GLOBAL ERROR HANDLER: ${req.method} ${req.path}`, err);
     
     // Always return JSON if it's an API request
     if (req.path.startsWith('/api')) {
