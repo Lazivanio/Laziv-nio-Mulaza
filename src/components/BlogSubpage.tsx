@@ -733,9 +733,9 @@ O Fatu-R ajuda-o a registar as margens exatas na sua listagem de produtos e serv
               <ul className="space-y-2 text-slate-400 text-[11px]">
                 <li><button onClick={() => { setSelectedPost(null); setSelectedCategory(null); setSelectedType('all'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Blog & Recursos</button></li>
                 <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Centro de Ajuda</button></li>
-                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Sobre Nós</button></li>
+                <li><button onClick={() => onBack('sobre')} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Sobre Nós</button></li>
                 <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">API para Programadores</button></li>
-                <li><button onClick={() => onBack()} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Contactos e Apoio</button></li>
+                <li><button onClick={() => onBack('contacto')} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Contactos e Apoio</button></li>
               </ul>
             </div>
 

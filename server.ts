@@ -9792,9 +9792,9 @@ function formatDateToIso(dateStr?: string) {
       return res.status(403).json({ error: "Você não tem permissão para abrir o caixa." });
     }
 
-    // Check if seller already has an open session (exempt owners and admins)
+    // Check if seller already has an open session (exempt owners, admins and managers)
     const user = db.prepare("SELECT role FROM users WHERE id = ?").get(seller_id) as any;
-    if (user && user.role !== 'owner' && user.role !== 'admin') {
+    if (user && user.role !== 'owner' && user.role !== 'admin' && user.role !== 'manager') {
       const existingSellerSession = db.prepare("SELECT id FROM cashier_sessions WHERE seller_id = ? AND status = 'open'").get(seller_id);
       if (existingSellerSession) {
         return res.status(400).json({ error: "Você já possui uma sessão de caixa aberta. Feche-a antes de abrir outra." });

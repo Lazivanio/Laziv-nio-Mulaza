@@ -47,6 +47,8 @@ import { POSSubpage } from './POSSubpage';
 import { ClothingStoreSubpage } from './ClothingStoreSubpage';
 import { BlogSubpage } from './BlogSubpage';
 import { DesktopOfflineSubpage } from './DesktopOfflineSubpage';
+import { ContactosSubpage } from './ContactosSubpage';
+import { SobreNosSubpage } from './SobreNosSubpage';
 
 interface LandingPageProps {
   onLogin: (user: User) => void;
@@ -65,6 +67,8 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [isClothingSubpageOpen, setIsClothingSubpageOpen] = useState(false);
   const [isBlogSubpageOpen, setIsBlogSubpageOpen] = useState(false);
   const [isDesktopOfflineSubpageOpen, setIsDesktopOfflineSubpageOpen] = useState(false);
+  const [isContactosSubpageOpen, setIsContactosSubpageOpen] = useState(false);
+  const [isSobreNosSubpageOpen, setIsSobreNosSubpageOpen] = useState(false);
   const [selectedSector, setSelectedSector] = useState<'faturacao' | 'retalho'>('faturacao');
 
   const helpTimeoutRef = useRef<any>(null);
@@ -609,11 +613,13 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
 
   const triggerScroll = (elementId: string) => {
     setIsMobileMenuOpen(false);
-    if (isPOSSubpageOpen || isClothingSubpageOpen || isBlogSubpageOpen || isDesktopOfflineSubpageOpen) {
+    if (isPOSSubpageOpen || isClothingSubpageOpen || isBlogSubpageOpen || isDesktopOfflineSubpageOpen || isContactosSubpageOpen || isSobreNosSubpageOpen) {
       setIsPOSSubpageOpen(false);
       setIsClothingSubpageOpen(false);
       setIsBlogSubpageOpen(false);
       setIsDesktopOfflineSubpageOpen(false);
+      setIsContactosSubpageOpen(false);
+      setIsSobreNosSubpageOpen(false);
       setTimeout(() => {
         const element = document.getElementById(elementId);
         if (element) {
@@ -819,11 +825,12 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                     <button 
                       onClick={() => {
                         setIsHelpDropdownOpen(false);
-                        setHelpMessageModal({
-                          isOpen: true,
-                          title: "Contactos de Suporte",
-                          body: "Estamos sempre disponíveis para ajudar o seu negócio a crescer!\n\nEmail: suporte@fatur.ao\nTelefone: +244 923 000 000 (Segunda a Sexta, das 8h às 17h)\nChat Oficial: Disponível diretamente na sua consola de administração Fatu-R."
-                        });
+                        setIsPOSSubpageOpen(false);
+                        setIsClothingSubpageOpen(false);
+                        setIsBlogSubpageOpen(false);
+                        setIsDesktopOfflineSubpageOpen(false);
+                        setIsContactosSubpageOpen(true);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
                       }}
                       className="w-full text-left group block focus:outline-none cursor-pointer"
                     >
@@ -898,11 +905,13 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                     <button 
                       onClick={() => {
                         setIsHelpDropdownOpen(false);
-                        setHelpMessageModal({
-                          isOpen: true,
-                          title: "Sobre Nós",
-                          body: "Fatu-R é uma plataforma líder de faturação eletrónica online certificada em Angola sob o registo Nº 142/AGT. Desenvolvido para simplificar a gestão empresarial moderna com ferramentas poderosas de POS, inventário e fluxos de faturamento em conformidade legal."
-                        });
+                        setIsPOSSubpageOpen(false);
+                        setIsClothingSubpageOpen(false);
+                        setIsBlogSubpageOpen(false);
+                        setIsDesktopOfflineSubpageOpen(false);
+                        setIsContactosSubpageOpen(false);
+                        setIsSobreNosSubpageOpen(true);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
                       }}
                       className="text-left text-slate-500 hover:text-orange-500 font-bold transition-colors cursor-pointer"
                     >
@@ -1031,11 +1040,12 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                           onClick={() => {
                             setIsMobileMenuOpen(false);
                             setIsHelpDropdownOpen(false);
-                            setHelpMessageModal({
-                              isOpen: true,
-                              title: "Contactos de Suporte",
-                              body: "Estamos sempre disponíveis para ajudar o seu negócio a crescer!\n\nEmail: suporte@fatur.ao\nTelefone: +244 923 000 000 (Segunda a Sexta, das 8h às 17h)\nChat Oficial: Disponível diretamente na sua consola de administração Fatu-R."
-                            });
+                            setIsPOSSubpageOpen(false);
+                            setIsClothingSubpageOpen(false);
+                            setIsBlogSubpageOpen(false);
+                            setIsDesktopOfflineSubpageOpen(false);
+                            setIsContactosSubpageOpen(true);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
                           }}
                           className="w-full text-left block cursor-pointer"
                         >
@@ -1092,11 +1102,13 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                               onClick={() => {
                                 setIsMobileMenuOpen(false);
                                 setIsHelpDropdownOpen(false);
-                                setHelpMessageModal({
-                                  isOpen: true,
-                                  title: "Sobre Nós",
-                                  body: "Fatu-R é uma plataforma de faturação eletrónica online certificada sob o registo Nº 142/AGT, criada para revolucionar a simplificação operacional angolana."
-                                });
+                                setIsPOSSubpageOpen(false);
+                                setIsClothingSubpageOpen(false);
+                                setIsBlogSubpageOpen(false);
+                                setIsDesktopOfflineSubpageOpen(false);
+                                setIsContactosSubpageOpen(false);
+                                setIsSobreNosSubpageOpen(true);
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
                               }}
                               className="text-left py-0.5 hover:text-orange-500 cursor-pointer"
                             >
@@ -1202,6 +1214,12 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             } else if (section === 'desktop-offline') {
               setIsDesktopOfflineSubpageOpen(true);
               window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else if (section === 'contacto') {
+              setIsContactosSubpageOpen(true);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else if (section === 'sobre') {
+              setIsSobreNosSubpageOpen(true);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
             } else {
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }
@@ -1213,9 +1231,52 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
         />
       ) : isDesktopOfflineSubpageOpen ? (
         <DesktopOfflineSubpage 
-          onBack={() => {
+          onBack={(section?: string) => {
             setIsDesktopOfflineSubpageOpen(false);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            if (section === 'contacto') {
+              setIsContactosSubpageOpen(true);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else if (section === 'sobre') {
+              setIsSobreNosSubpageOpen(true);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          }}
+          onRegister={() => {
+            setRegError('');
+            setIsRegisterModalOpen(true);
+          }}
+        />
+      ) : isContactosSubpageOpen ? (
+        <ContactosSubpage 
+          onBack={(section?: string) => {
+            setIsContactosSubpageOpen(false);
+            if (section === 'sobre') {
+              setIsSobreNosSubpageOpen(true);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          }}
+          onRegister={() => {
+            setRegError('');
+            setIsRegisterModalOpen(true);
+          }}
+          onInitiateChat={() => {
+            setIsChatBoxOpen(true);
+          }}
+        />
+      ) : isSobreNosSubpageOpen ? (
+        <SobreNosSubpage 
+          onBack={(section?: string) => {
+            setIsSobreNosSubpageOpen(false);
+            if (section === 'contacto') {
+              setIsContactosSubpageOpen(true);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
           }}
           onRegister={() => {
             setRegError('');
@@ -2735,9 +2796,38 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               <ul className="space-y-2 text-slate-400 text-[11px]">
                 <li><button onClick={() => { setIsPOSSubpageOpen(false); setIsClothingSubpageOpen(false); setIsBlogSubpageOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Blog & Recursos</button></li>
                 <li><a href="#faq" className="hover:text-orange-500 transition-colors">Centro de Ajuda</a></li>
-                <li><a href="#sobre" className="hover:text-orange-500 transition-colors">Sobre Nós</a></li>
+                <li>
+                  <button 
+                    onClick={() => {
+                      setIsPOSSubpageOpen(false);
+                      setIsClothingSubpageOpen(false);
+                      setIsBlogSubpageOpen(false);
+                      setIsDesktopOfflineSubpageOpen(false);
+                      setIsContactosSubpageOpen(false);
+                      setIsSobreNosSubpageOpen(true);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="hover:text-orange-500 transition-colors text-left cursor-pointer"
+                  >
+                    Sobre Nós
+                  </button>
+                </li>
                 <li><a href="#api" className="hover:text-orange-500 transition-colors">API para Programadores</a></li>
-                <li><a href="#contacto" className="hover:text-orange-500 transition-colors">Contactos e Apoio</a></li>
+                <li>
+                  <button 
+                    onClick={() => {
+                      setIsPOSSubpageOpen(false);
+                      setIsClothingSubpageOpen(false);
+                      setIsBlogSubpageOpen(false);
+                      setIsDesktopOfflineSubpageOpen(false);
+                      setIsContactosSubpageOpen(true);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="hover:text-orange-500 transition-colors text-left cursor-pointer"
+                  >
+                    Contactos e Apoio
+                  </button>
+                </li>
               </ul>
             </div>
 
