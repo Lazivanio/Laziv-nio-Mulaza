@@ -4949,25 +4949,36 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     }
   };
 
-  const handleDeletePharmacyEntity = async (type: string, id: number) => {
-    if (!confirm("Tem certeza que deseja eliminar este item? Isso pode afetar os produtos associados.")) return;
-    try {
-      const res = await fetch(`/api/pharmacy/${type}/${id}`, {
-        method: 'DELETE'
-      });
-      if (res.ok) {
-        // Re-fetch list
-        const listRes = await fetch(`/api/pharmacy/${type}/${establishmentId}`);
-        const listData = await listRes.json();
-        if (type === 'categories') setPharmacyCategories(listData);
-        else if (type === 'manufacturers') setPharmacyManufacturers(listData);
-        else if (type === 'active_substances') setPharmacyActiveSubstances(listData);
-        else if (type === 'forms') setPharmacyForms(listData);
-        else if (type === 'units') setPharmacyUnits(listData);
+  const handleDeletePharmacyEntity = (type: string, id: number) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Eliminar Item",
+      message: "Tem certeza que deseja eliminar este item? Isso pode afetar os produtos associados.",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/pharmacy/${type}/${id}`, {
+            method: 'DELETE'
+          });
+          if (res.ok) {
+            // Re-fetch list
+            const listRes = await fetch(`/api/pharmacy/${type}/${establishmentId}`);
+            const listData = await listRes.json();
+            if (type === 'categories') setPharmacyCategories(listData);
+            else if (type === 'manufacturers') setPharmacyManufacturers(listData);
+            else if (type === 'active_substances') setPharmacyActiveSubstances(listData);
+            else if (type === 'forms') setPharmacyForms(listData);
+            else if (type === 'units') setPharmacyUnits(listData);
+          } else {
+            const data = await res.json().catch(() => ({}));
+            alert(data.error || "Erro ao eliminar este item.");
+          }
+        } catch (err) {
+          console.error("Error deleting pharmacy entity:", err);
+          alert("Ocorreu um erro ao tentar eliminar o item.");
+        }
       }
-    } catch (err) {
-      console.error("Error deleting pharmacy entity:", err);
-    }
+    });
   };
 
   const handleSaveCashRegister = async (e: FormEvent) => {
@@ -5093,10 +5104,27 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     }
   };
 
-  const handleDeleteCashRegister = async (id: number) => {
-    if (!confirm('Tem certeza que deseja eliminar este caixa?')) return;
-    const res = await fetch(`/api/owner/establishments/cash-registers/${id}`, { method: 'DELETE' });
-    if (res.ok) fetchData();
+  const handleDeleteCashRegister = (id: number) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Eliminar Caixa",
+      message: "Tem certeza que deseja eliminar este caixa?",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/owner/establishments/cash-registers/${id}`, { method: 'DELETE' });
+          if (res.ok) {
+            fetchData();
+          } else {
+            const data = await res.json().catch(() => ({}));
+            alert(data.error || "Erro ao eliminar o caixa.");
+          }
+        } catch (err) {
+          console.error(err);
+          alert("Ocorreu um erro ao tentar eliminar o caixa.");
+        }
+      }
+    });
   };
 
   const parseInputNumber = (val: string | number) => {
@@ -5269,7 +5297,16 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
       message: "Tem certeza que deseja eliminar este produto?",
       variant: "danger",
       onConfirm: async () => {
-        await fetch(`/api/owner/products/${id}`, { method: 'DELETE' });
+        try {
+          const res = await fetch(`/api/owner/products/${id}`, { method: 'DELETE' });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            alert(data.error || "Erro ao eliminar produto.");
+          }
+        } catch (err) {
+          console.error(err);
+          alert("Ocorreu um erro ao tentar eliminar o produto.");
+        }
         fetchData();
       }
     });

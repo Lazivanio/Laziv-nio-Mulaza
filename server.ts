@@ -8463,8 +8463,13 @@ function formatDateToIso(dateStr?: string) {
     res.json({ success: true });
   });
   app.delete("/api/pharmacy/categories/:id", (req, res) => {
-    db.prepare("DELETE FROM pharmacy_categories WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+    try {
+      db.prepare("DELETE FROM pharmacy_categories WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting category:", err);
+      res.status(500).json({ error: err.message || "Erro ao deletar categoria." });
+    }
   });
 
   // Pharmacy Manufacturers Endpoints
@@ -8478,8 +8483,13 @@ function formatDateToIso(dateStr?: string) {
     res.json({ success: true });
   });
   app.delete("/api/pharmacy/manufacturers/:id", (req, res) => {
-    db.prepare("DELETE FROM pharmacy_manufacturers WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+    try {
+      db.prepare("DELETE FROM pharmacy_manufacturers WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting manufacturer:", err);
+      res.status(500).json({ error: err.message || "Erro ao deletar fabricante." });
+    }
   });
 
   // Pharmacy Active Substances Endpoints
@@ -8493,8 +8503,13 @@ function formatDateToIso(dateStr?: string) {
     res.json({ success: true });
   });
   app.delete("/api/pharmacy/active_substances/:id", (req, res) => {
-    db.prepare("DELETE FROM pharmacy_active_substances WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+    try {
+      db.prepare("DELETE FROM pharmacy_active_substances WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting active substance:", err);
+      res.status(500).json({ error: err.message || "Erro ao deletar princípio ativo." });
+    }
   });
 
   // Pharmacy Forms Endpoints
@@ -8508,8 +8523,13 @@ function formatDateToIso(dateStr?: string) {
     res.json({ success: true });
   });
   app.delete("/api/pharmacy/forms/:id", (req, res) => {
-    db.prepare("DELETE FROM pharmacy_forms WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+    try {
+      db.prepare("DELETE FROM pharmacy_forms WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting form:", err);
+      res.status(500).json({ error: err.message || "Erro ao deletar forma farmacêutica." });
+    }
   });
 
   // Pharmacy Units Endpoints
@@ -8523,8 +8543,13 @@ function formatDateToIso(dateStr?: string) {
     res.json({ success: true });
   });
   app.delete("/api/pharmacy/units/:id", (req, res) => {
-    db.prepare("DELETE FROM pharmacy_units WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+    try {
+      db.prepare("DELETE FROM pharmacy_units WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting unit:", err);
+      res.status(500).json({ error: err.message || "Erro ao deletar unidade de medida." });
+    }
   });
 
   app.post("/api/owner/products", (req, res) => {
@@ -8589,8 +8614,72 @@ function formatDateToIso(dateStr?: string) {
   });
 
   app.delete("/api/owner/products/:id", (req, res) => {
-    db.prepare("DELETE FROM products WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+    try {
+      const productId = req.params.id;
+
+      // Fetch potential transactions that contain this product
+      const transactions = db.prepare(`
+        SELECT items FROM transactions 
+        WHERE items LIKE ? OR items LIKE ?
+      `).all(`%"id":${productId}%`, `%"product_id":${productId}%`) as { items: string }[];
+
+      let isSold = false;
+      for (const t of transactions) {
+        try {
+          const items = JSON.parse(t.items || "[]");
+          if (Array.isArray(items)) {
+            for (const item of items) {
+              const itemId = item.id || item.product_id;
+              if (String(itemId) === String(productId)) {
+                isSold = true;
+                break;
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Error parsing items in transaction:", e);
+        }
+        if (isSold) break;
+      }
+
+      if (!isSold) {
+        // Fetch potential credit_invoices that contain this product
+        const invoices = db.prepare(`
+          SELECT items FROM credit_invoices 
+          WHERE items LIKE ? OR items LIKE ?
+        `).all(`%"id":${productId}%`, `%"product_id":${productId}%`) as { items: string }[];
+
+        for (const inv of invoices) {
+          try {
+            const items = JSON.parse(inv.items || "[]");
+            if (Array.isArray(items)) {
+              for (const item of items) {
+                const itemId = item.id || item.product_id;
+                if (String(itemId) === String(productId)) {
+                  isSold = true;
+                  break;
+                }
+              }
+            }
+          } catch (e) {
+            console.error("Error parsing items in invoice:", e);
+          }
+          if (isSold) break;
+        }
+      }
+
+      if (isSold) {
+        return res.status(400).json({ error: "Não é possível eliminar um produto que já foi faturado." });
+      }
+
+      db.prepare("DELETE FROM promotion_products WHERE product_id = ?").run(productId);
+      db.prepare("DELETE FROM stock_movements WHERE product_id = ?").run(productId);
+      db.prepare("DELETE FROM products WHERE id = ?").run(productId);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting product:", err);
+      res.status(500).json({ error: err.message || "Erro ao deletar produto." });
+    }
   });
 
   app.put("/api/owner/products/:id", (req, res) => {
