@@ -65,7 +65,8 @@ export const MyEstablishments = ({ user }: { user: User }) => {
     logo_url: '',
     establishment_code: '',
     status: 'active' as 'active' | 'inactive',
-    bank_accounts: [] as BankAccount[]
+    bank_accounts: [] as BankAccount[],
+    type: 'comum' as 'comum' | 'farmácia'
   });
 
   const [viewingProformasEstablishment, setViewingProformasEstablishment] = useState<EstablishmentType | null>(null);
@@ -219,7 +220,7 @@ export const MyEstablishments = ({ user }: { user: User }) => {
     if (res.ok) {
       setIsModalOpen(false);
       setEditingEstablishment(null);
-      setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', establishment_code: '', status: 'active', bank_accounts: [] });
+      setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', establishment_code: '', status: 'active', bank_accounts: [], type: 'comum' });
       fetchEstablishments();
     } else {
       const data = await res.json();
@@ -238,7 +239,8 @@ export const MyEstablishments = ({ user }: { user: User }) => {
       logo_url: establishment.logo_url || '',
       establishment_code: establishment.establishment_code || '',
       status: establishment.status,
-      bank_accounts: establishment.bank_accounts || []
+      bank_accounts: establishment.bank_accounts || [],
+      type: (establishment.type as any) || 'comum'
     });
     setIsModalOpen(true);
   };
@@ -274,7 +276,7 @@ export const MyEstablishments = ({ user }: { user: User }) => {
           <button 
             onClick={() => {
               setEditingEstablishment(null);
-              setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', establishment_code: '', status: 'active', bank_accounts: [] });
+              setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', establishment_code: '', status: 'active', bank_accounts: [], type: 'comum' });
               setIsModalOpen(true);
             }}
             className="w-full md:w-auto bg-black text-white px-6 py-3 rounded-xl flex items-center justify-center gap-2 font-bold hover:bg-zinc-800 transition-all active:scale-95 shadow-lg shadow-black/10"
@@ -333,11 +335,19 @@ export const MyEstablishments = ({ user }: { user: User }) => {
               </div>
 
               <div className="mb-6">
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex items-center gap-1.5 flex-wrap mb-1">
                   <h3 className="text-lg font-bold">{establishment.name}</h3>
                   {establishment.establishment_code && (
                     <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[10px] font-bold">
                       {establishment.establishment_code}
+                    </span>
+                  )}
+                  {establishment.type && (
+                    <span className={cn(
+                      "px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border",
+                      establishment.type === 'farmácia' ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-zinc-50 text-zinc-500 border-zinc-200"
+                    )}>
+                      {establishment.type}
                     </span>
                   )}
                   <span className={cn(
@@ -482,6 +492,19 @@ export const MyEstablishments = ({ user }: { user: User }) => {
                 )}
               </div>
             </div>
+
+            <div className="col-span-2">
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Tipo de Estabelecimento</label>
+              <select 
+                value={formData.type}
+                onChange={e => setFormData({...formData, type: e.target.value as any})}
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold text-sm"
+              >
+                <option value="comum">Comum (Default)</option>
+                <option value="farmácia">Farmácia</option>
+              </select>
+            </div>
+
             {editingEstablishment && (
               <div className="col-span-2">
                 <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Estado do Estabelecimento</label>

@@ -944,6 +944,7 @@ function initializeDatabase() {
         license_status TEXT DEFAULT 'active',
         license_expiry TEXT,
         bank_accounts TEXT,
+        type TEXT DEFAULT 'comum',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(owner_id) REFERENCES users(id)
       );
@@ -1212,6 +1213,15 @@ function initializeDatabase() {
         min_stock INTEGER DEFAULT 5,
         barcode TEXT,
         tax_id INTEGER,
+        internal_code TEXT,
+        laboratory TEXT,
+        active_substance TEXT,
+        pharmaceutical_form TEXT,
+        dosage TEXT,
+        sale_unit TEXT,
+        requires_prescription INTEGER DEFAULT 0,
+        controlled_substance INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'active',
         FOREIGN KEY(establishment_id) REFERENCES establishments(id),
         FOREIGN KEY(tax_id) REFERENCES taxes(id)
       );
@@ -1315,6 +1325,46 @@ function initializeDatabase() {
         name TEXT,
         type TEXT,
         status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS pharmacy_categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS pharmacy_manufacturers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS pharmacy_active_substances (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS pharmacy_forms (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS pharmacy_units (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(establishment_id) REFERENCES establishments(id)
       );
@@ -1854,6 +1904,33 @@ function initializeDatabase() {
       db.exec("ALTER TABLE users ADD COLUMN owner_id INTEGER REFERENCES users(id)");
       console.log("[DB] Added owner_id column to users table");
     }
+
+    // Migration: Add type column to establishments table if missing
+    const estCols = db.prepare("PRAGMA table_info(establishments)").all() as any[];
+    if (!estCols.find(c => c.name === 'type')) {
+      db.exec("ALTER TABLE establishments ADD COLUMN type TEXT DEFAULT 'comum'");
+      console.log("[DB] Added type column to establishments table");
+    }
+
+    // Migration: Add pharmacy columns to products table if missing
+    const prodCols = db.prepare("PRAGMA table_info(products)").all() as any[];
+    const pharmacyCols = [
+      { name: 'internal_code', def: 'TEXT' },
+      { name: 'laboratory', def: 'TEXT' },
+      { name: 'active_substance', def: 'TEXT' },
+      { name: 'pharmaceutical_form', def: 'TEXT' },
+      { name: 'dosage', def: 'TEXT' },
+      { name: 'sale_unit', def: 'TEXT' },
+      { name: 'requires_prescription', def: 'INTEGER DEFAULT 0' },
+      { name: 'controlled_substance', def: 'INTEGER DEFAULT 0' },
+      { name: 'status', def: 'TEXT DEFAULT "active"' }
+    ];
+    pharmacyCols.forEach(col => {
+      if (!prodCols.find(c => c.name === col.name)) {
+        db.exec(`ALTER TABLE products ADD COLUMN ${col.name} ${col.def}`);
+        console.log(`[DB] Added ${col.name} column to products table`);
+      }
+    });
 
     // Ensure default admin exists
     let adminUser = db.prepare("SELECT id FROM users WHERE email = ?").get("admin@factu.com") as any;
@@ -3565,16 +3642,95 @@ async function startServer() {
   });
 
   app.post("/api/admin/clients", (req, res) => {
-    const { name, company_name, email, password, phone, nif, address } = req.body;
+    const { name, company_name, email, password, phone, nif, address, plan_type, establishment_types, license_duration_months } = req.body;
     try {
+      // 1. Create the owner user
       const result = db.prepare("INSERT INTO users (name, company_name, email, password, role, phone, nif, address) VALUES (?, ?, ?, ?, 'owner', ?, ?, ?)").run(name, company_name, email, password, phone, nif, address);
       const ownerId = result.lastInsertRowid as number;
       
+      // Update self owner_id
+      db.prepare("UPDATE users SET owner_id = ? WHERE id = ?").run(ownerId, ownerId);
+
       // Generate digital signature keys
       DigitalSignatureService.generateCompanyKeys(ownerId, ownerId);
       
+      // 2. Setup licensing and establishments
+      const resolvedPlan = plan_type || "Básico";
+      const estTypes = Array.isArray(establishment_types) ? establishment_types : ["comum"];
+      
+      let numEsts = 1;
+      if (resolvedPlan === "Profissional") {
+        numEsts = 2;
+      } else if (resolvedPlan === "Empresarial") {
+        numEsts = Math.max(1, estTypes.length);
+      }
+      
+      const duration = Number(license_duration_months) || 12;
+      const expiryDate = new Date();
+      expiryDate.setMonth(expiryDate.getMonth() + duration);
+      const expiryDateStr = expiryDate.toISOString().split('T')[0];
+      
+      let firstEstId: number | null = null;
+      
+      for (let i = 0; i < numEsts; i++) {
+        const type = estTypes[i] || 'comum';
+        const estName = i === 0 ? `${company_name} - Sede` : `${company_name} - Filial ${i}`;
+        const estCode = `EST-${ownerId}-0${i + 1}`;
+        
+        const estResult = db.prepare(`
+          INSERT INTO establishments (owner_id, name, address, phone, email, nif, license_status, license_expiry, status, establishment_code, type)
+          VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 'active', ?, ?)
+        `).run(ownerId, estName, address || '', phone || '', email || '', nif || '', expiryDateStr, estCode, type);
+        
+        const estId = estResult.lastInsertRowid as number;
+        if (i === 0) {
+          firstEstId = estId;
+        }
+        
+        // Create a default cashier register for this establishment
+        const regCode = `CX-${ownerId}-0${i + 1}`;
+        db.prepare(`
+          INSERT INTO cash_registers (establishment_id, name, code, default_initial_balance, max_limit)
+          VALUES (?, 'Caixa Principal', ?, 0, 150000)
+        `).run(estId, regCode);
+      }
+      
+      // Set default establishment for owner
+      if (firstEstId) {
+        db.prepare("UPDATE users SET establishment_id = ? WHERE id = ?").run(firstEstId, ownerId);
+      }
+      
+      // Create active license
+      const startDateStr = new Date().toISOString().split('T')[0];
+      let max_establishments = 1;
+      let max_products = 100;
+      let features = { reports: false, multi_establishment: false };
+      
+      if (resolvedPlan === "Profissional") {
+        max_establishments = 2;
+        max_products = 1000;
+        features = { reports: true, multi_establishment: true };
+      } else if (resolvedPlan === "Empresarial") {
+        max_establishments = 10;
+        max_products = 5000;
+        features = { reports: true, multi_establishment: true, api_access: true } as any;
+      }
+      
+      db.prepare(`
+        INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, features)
+        VALUES (?, ?, ?, ?, ?, 'active', ?)
+      `).run(
+        ownerId, 
+        null, 
+        resolvedPlan, 
+        startDateStr, 
+        expiryDateStr, 
+        JSON.stringify({ max_establishments, max_products, ...features })
+      );
+
       res.json({ success: true });
     } catch (e: any) {
+      console.error("[Create Client Admin Error]:", e);
       res.status(400).json({ error: e.message });
     }
   });
@@ -5288,7 +5444,7 @@ async function startServer() {
   });
 
   app.post("/api/owner/establishments", (req, res) => {
-    const { owner_id, name, address, phone, email, nif, logo_url, bank_accounts, establishment_code } = req.body;
+    const { owner_id, name, address, phone, email, nif, logo_url, bank_accounts, establishment_code, type } = req.body;
     
     try {
       // Check limits
@@ -5304,9 +5460,9 @@ async function startServer() {
       }
 
       db.prepare(`
-        INSERT INTO establishments (owner_id, name, address, phone, email, nif, logo_url, license_expiry, bank_accounts, establishment_code) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(owner_id, name, address, phone, email, nif, logo_url, "2026-12-31", JSON.stringify(bank_accounts || []), establishment_code || null);
+        INSERT INTO establishments (owner_id, name, address, phone, email, nif, logo_url, license_expiry, bank_accounts, establishment_code, type) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(owner_id, name, address, phone, email, nif, logo_url, "2026-12-31", JSON.stringify(bank_accounts || []), establishment_code || null, type || 'comum');
       
       res.json({ success: true });
     } catch (error: any) {
@@ -5315,12 +5471,12 @@ async function startServer() {
   });
 
   app.put("/api/owner/establishments/:establishmentId", (req, res) => {
-    const { name, address, phone, email, nif, logo_url, status, bank_accounts, establishment_code } = req.body;
+    const { name, address, phone, email, nif, logo_url, status, bank_accounts, establishment_code, type } = req.body;
     db.prepare(`
       UPDATE establishments 
-      SET name = ?, address = ?, phone = ?, email = ?, nif = ?, logo_url = ?, status = ?, bank_accounts = ?, establishment_code = ? 
+      SET name = ?, address = ?, phone = ?, email = ?, nif = ?, logo_url = ?, status = ?, bank_accounts = ?, establishment_code = ?, type = ? 
       WHERE id = ?
-    `).run(name, address, phone, email, nif, logo_url, status, JSON.stringify(bank_accounts || []), establishment_code || null, req.params.establishmentId);
+    `).run(name, address, phone, email, nif, logo_url, status, JSON.stringify(bank_accounts || []), establishment_code || null, type || 'comum', req.params.establishmentId);
     res.json({ success: true });
   });
 
@@ -8296,8 +8452,87 @@ function formatDateToIso(dateStr?: string) {
     });
   });
 
+  // Pharmacy Categories Endpoints
+  app.get("/api/pharmacy/categories/:establishmentId", (req, res) => {
+    const list = db.prepare("SELECT * FROM pharmacy_categories WHERE establishment_id = ? ORDER BY name ASC").all(req.params.establishmentId);
+    res.json(list);
+  });
+  app.post("/api/pharmacy/categories", (req, res) => {
+    const { establishment_id, name } = req.body;
+    db.prepare("INSERT INTO pharmacy_categories (establishment_id, name) VALUES (?, ?)").run(establishment_id, name);
+    res.json({ success: true });
+  });
+  app.delete("/api/pharmacy/categories/:id", (req, res) => {
+    db.prepare("DELETE FROM pharmacy_categories WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Pharmacy Manufacturers Endpoints
+  app.get("/api/pharmacy/manufacturers/:establishmentId", (req, res) => {
+    const list = db.prepare("SELECT * FROM pharmacy_manufacturers WHERE establishment_id = ? ORDER BY name ASC").all(req.params.establishmentId);
+    res.json(list);
+  });
+  app.post("/api/pharmacy/manufacturers", (req, res) => {
+    const { establishment_id, name } = req.body;
+    db.prepare("INSERT INTO pharmacy_manufacturers (establishment_id, name) VALUES (?, ?)").run(establishment_id, name);
+    res.json({ success: true });
+  });
+  app.delete("/api/pharmacy/manufacturers/:id", (req, res) => {
+    db.prepare("DELETE FROM pharmacy_manufacturers WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Pharmacy Active Substances Endpoints
+  app.get("/api/pharmacy/active_substances/:establishmentId", (req, res) => {
+    const list = db.prepare("SELECT * FROM pharmacy_active_substances WHERE establishment_id = ? ORDER BY name ASC").all(req.params.establishmentId);
+    res.json(list);
+  });
+  app.post("/api/pharmacy/active_substances", (req, res) => {
+    const { establishment_id, name } = req.body;
+    db.prepare("INSERT INTO pharmacy_active_substances (establishment_id, name) VALUES (?, ?)").run(establishment_id, name);
+    res.json({ success: true });
+  });
+  app.delete("/api/pharmacy/active_substances/:id", (req, res) => {
+    db.prepare("DELETE FROM pharmacy_active_substances WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Pharmacy Forms Endpoints
+  app.get("/api/pharmacy/forms/:establishmentId", (req, res) => {
+    const list = db.prepare("SELECT * FROM pharmacy_forms WHERE establishment_id = ? ORDER BY name ASC").all(req.params.establishmentId);
+    res.json(list);
+  });
+  app.post("/api/pharmacy/forms", (req, res) => {
+    const { establishment_id, name } = req.body;
+    db.prepare("INSERT INTO pharmacy_forms (establishment_id, name) VALUES (?, ?)").run(establishment_id, name);
+    res.json({ success: true });
+  });
+  app.delete("/api/pharmacy/forms/:id", (req, res) => {
+    db.prepare("DELETE FROM pharmacy_forms WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Pharmacy Units Endpoints
+  app.get("/api/pharmacy/units/:establishmentId", (req, res) => {
+    const list = db.prepare("SELECT * FROM pharmacy_units WHERE establishment_id = ? ORDER BY name ASC").all(req.params.establishmentId);
+    res.json(list);
+  });
+  app.post("/api/pharmacy/units", (req, res) => {
+    const { establishment_id, name } = req.body;
+    db.prepare("INSERT INTO pharmacy_units (establishment_id, name) VALUES (?, ?)").run(establishment_id, name);
+    res.json({ success: true });
+  });
+  app.delete("/api/pharmacy/units/:id", (req, res) => {
+    db.prepare("DELETE FROM pharmacy_units WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
   app.post("/api/owner/products", (req, res) => {
-    const { establishment_id, warehouse_id, name, price, cost, stock, category, image_url, min_stock, tax_id } = req.body;
+    const { 
+      establishment_id, warehouse_id, name, price, cost, stock, category, image_url, min_stock, tax_id,
+      internal_code, laboratory, active_substance, pharmaceutical_form, dosage, sale_unit, 
+      requires_prescription, controlled_substance, status, barcode: customBarcode
+    } = req.body;
     
     // Check product count limits across all establishments of this owner
     try {
@@ -8338,8 +8573,18 @@ function formatDateToIso(dateStr?: string) {
       if (isento) finalTaxId = isento.id;
     }
 
-    const barcode = Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
-    db.prepare("INSERT INTO products (establishment_id, warehouse_id, name, price, cost, stock, category, image_url, min_stock, barcode, tax_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(establishment_id, warehouse_id || null, name, price, cost || 0, stock, category, image_url, min_stock || 5, barcode, finalTaxId || null);
+    const barcode = customBarcode || Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
+    db.prepare(`
+      INSERT INTO products (
+        establishment_id, warehouse_id, name, price, cost, stock, category, image_url, min_stock, barcode, tax_id,
+        internal_code, laboratory, active_substance, pharmaceutical_form, dosage, sale_unit, 
+        requires_prescription, controlled_substance, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      establishment_id, warehouse_id || null, name, price, cost || 0, stock, category, image_url, min_stock || 5, barcode, finalTaxId || null,
+      internal_code || null, laboratory || null, active_substance || null, pharmaceutical_form || null, dosage || null, sale_unit || null,
+      requires_prescription ? 1 : 0, controlled_substance ? 1 : 0, status || 'active'
+    );
     res.json({ success: true });
   });
 
@@ -8349,7 +8594,11 @@ function formatDateToIso(dateStr?: string) {
   });
 
   app.put("/api/owner/products/:id", (req, res) => {
-    const { warehouse_id, name, price, cost, stock, category, image_url, min_stock, tax_id } = req.body;
+    const { 
+      warehouse_id, name, price, cost, stock, category, image_url, min_stock, tax_id,
+      internal_code, laboratory, active_substance, pharmaceutical_form, dosage, sale_unit, 
+      requires_prescription, controlled_substance, status, barcode
+    } = req.body;
     
     // Get establishment_id for this product
     const product = db.prepare("SELECT establishment_id FROM products WHERE id = ?").get(req.params.id) as { establishment_id: number } | undefined;
@@ -8372,10 +8621,75 @@ function formatDateToIso(dateStr?: string) {
 
     db.prepare(`
       UPDATE products 
-      SET name = ?, price = ?, cost = ?, stock = ?, category = ?, image_url = ?, min_stock = ?, tax_id = ?, warehouse_id = ? 
+      SET name = ?, price = ?, cost = ?, stock = ?, category = ?, image_url = ?, min_stock = ?, tax_id = ?, warehouse_id = ?,
+          internal_code = ?, laboratory = ?, active_substance = ?, pharmaceutical_form = ?, dosage = ?, sale_unit = ?,
+          requires_prescription = ?, controlled_substance = ?, status = ?, barcode = ?
       WHERE id = ?
-    `).run(name, price, cost || 0, stock, category, image_url, min_stock, finalTaxId || null, warehouse_id || null, req.params.id);
+    `).run(
+      name, price, cost || 0, stock, category, image_url, min_stock, finalTaxId || null, warehouse_id || null,
+      internal_code || null, laboratory || null, active_substance || null, pharmaceutical_form || null, dosage || null, sale_unit || null,
+      requires_prescription ? 1 : 0, controlled_substance ? 1 : 0, status || 'active', barcode || null,
+      req.params.id
+    );
     res.json({ success: true });
+  });
+
+  app.post("/api/owner/bulk-replenish", (req, res) => {
+    try {
+      const { items } = req.body;
+      if (!items || !Array.isArray(items)) {
+        return res.status(400).json({ error: "Parâmetros inválidos." });
+      }
+
+      const updateStock = db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
+      
+      const transaction = db.transaction(() => {
+        for (const item of items) {
+          const qty = Number(item.quantity) || 0;
+          if (qty <= 0) continue;
+          
+          updateStock.run(qty, item.productId);
+          
+          const prod = db.prepare("SELECT establishment_id, name FROM products WHERE id = ?").get(item.productId) as any;
+          if (prod) {
+            const totalCost = qty * (Number(item.cost) || 0);
+            const invoiceNum = `AUTO-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            const purchaseItems = [{
+              id: item.productId,
+              name: prod.name,
+              quantity: qty,
+              price: Number(item.cost) || 0,
+              total: totalCost
+            }];
+            
+            db.prepare(`
+              INSERT INTO purchases (establishment_id, supplier_id, total_amount, tax_amount, paid_amount, status, invoice_number, items, due_date, delivery_status, is_direct, is_stock_updated, is_closed)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              prod.establishment_id, 
+              null, 
+              totalCost, 
+              0, 
+              totalCost, 
+              'paga', 
+              invoiceNum, 
+              JSON.stringify(purchaseItems), 
+              new Date().toISOString().split('T')[0], 
+              'entregue', 
+              1, 
+              1, 
+              1
+            );
+          }
+        }
+      });
+      
+      transaction();
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Error in bulk-replenish:", err);
+      res.status(500).json({ error: "Erro ao processar o reabastecimento", details: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   app.get("/api/owner/promotions/:establishmentId", (req, res) => {
@@ -8995,7 +9309,27 @@ function formatDateToIso(dateStr?: string) {
 
     const topProducts = Object.values(productSales)
       .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 10);
+      .slice(0, 10)
+      .map(p => {
+        try {
+          const prodDb = db.prepare("SELECT stock, min_stock, cost, price FROM products WHERE id = ?").get(p.id) as any;
+          return {
+            ...p,
+            stock: prodDb && typeof prodDb.stock === 'number' ? prodDb.stock : 12,
+            min_stock: prodDb && typeof prodDb.min_stock === 'number' ? prodDb.min_stock : 5,
+            cost: prodDb && typeof prodDb.cost === 'number' ? prodDb.cost : Math.round((prodDb?.price || (p.revenue / (p.quantity || 1))) * 0.65),
+            price: prodDb && typeof prodDb.price === 'number' ? prodDb.price : (p.revenue / (p.quantity || 1))
+          };
+        } catch (err) {
+          return {
+            ...p,
+            stock: 12,
+            min_stock: 5,
+            cost: Math.round((p.revenue / (p.quantity || 1)) * 0.65),
+            price: (p.revenue / (p.quantity || 1))
+          };
+        }
+      });
 
     // Payment Methods (Sales by Channel) - Unified
     const paymentMethods = db.prepare(`

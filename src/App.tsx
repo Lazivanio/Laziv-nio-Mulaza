@@ -94,6 +94,8 @@ import {
   RefreshCcw,
   Coins,
   Hand,
+  Factory,
+  Scale,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
@@ -992,6 +994,34 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [clientDetails, setClientDetails] = useState<any>(null);
   const [isClientDetailsOpen, setIsClientDetailsOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [clientPlanType, setClientPlanType] = useState('Básico');
+  const [clientLicenseDuration, setClientLicenseDuration] = useState(12);
+  const [clientEstTypes, setClientEstTypes] = useState<string[]>(['comum']);
+  const [numEmpresarialEsts, setNumEmpresarialEsts] = useState(3);
+
+  const handlePlanTypeChange = (plan: string) => {
+    setClientPlanType(plan);
+    if (plan === 'Básico') {
+      setClientEstTypes(['comum']);
+    } else if (plan === 'Profissional') {
+      setClientEstTypes(['comum', 'comum']);
+    } else if (plan === 'Empresarial') {
+      setClientEstTypes(Array(numEmpresarialEsts).fill('comum'));
+    }
+  };
+
+  const handleNumEmpresarialEstsChange = (num: number) => {
+    setNumEmpresarialEsts(num);
+    if (clientPlanType === 'Empresarial') {
+      setClientEstTypes(Array(num).fill('comum'));
+    }
+  };
+
+  const handleEstTypeAtIdxChange = (idx: number, type: string) => {
+    const updated = [...clientEstTypes];
+    updated[idx] = type;
+    setClientEstTypes(updated);
+  };
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isLicenseModalOpen, setIsLicenseModalOpen] = useState(false);
   const [isLicenseHistoryModalOpen, setIsLicenseHistoryModalOpen] = useState(false);
@@ -1147,11 +1177,21 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       const res = await fetch('/api/admin/clients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(clientFormData)
+        body: JSON.stringify({
+          ...clientFormData,
+          plan_type: clientPlanType,
+          license_duration_months: clientLicenseDuration,
+          establishment_types: clientEstTypes
+        })
       });
       if (!res.ok) throw new Error("Failed to create client");
       setIsCreateModalOpen(false);
       setClientFormData({ name: '', company_name: '', email: '', password: '', phone: '', nif: '', address: '' });
+      // Reset additional fields
+      setClientPlanType('Básico');
+      setClientLicenseDuration(12);
+      setClientEstTypes(['comum']);
+      setNumEmpresarialEsts(3);
       fetchData();
     } catch (e) {
       console.error(e);
@@ -3630,7 +3670,17 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                               <Store size={20} />
                             </div>
                             <div>
-                              <p className="font-bold text-sm">{establishment.name}</p>
+                              <p className="font-bold text-sm flex items-center gap-1.5 flex-wrap">
+                                {establishment.name}
+                                {establishment.type && (
+                                  <span className={cn(
+                                    "text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md",
+                                    establishment.type === 'farmácia' ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-zinc-100 text-zinc-500 border border-zinc-200"
+                                  )}>
+                                    {establishment.type}
+                                  </span>
+                                )}
+                              </p>
                               <p className="text-[10px] text-zinc-400">{establishment.address}</p>
                             </div>
                           </div>
@@ -3771,15 +3821,15 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
             />
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden relative z-10"
+              className="bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden relative z-10 max-h-[90vh] flex flex-col"
             >
-              <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+              <div className="p-6 border-b border-zinc-100 flex items-center justify-between shrink-0">
                 <h3 className="text-xl font-black">Registrar Novo Cliente</h3>
                 <button onClick={() => setIsCreateModalOpen(false)} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
                   <X size={20} />
                 </button>
               </div>
-              <form onSubmit={handleCreateClient} className="p-6 space-y-4">
+              <form onSubmit={handleCreateClient} className="p-6 space-y-4 overflow-y-auto flex-1">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Nome da Empresa</label>
@@ -3842,7 +3892,76 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
                   />
                 </div>
-                <div className="pt-4">
+
+                {/* Plano e Estabelecimentos */}
+                <div className="border-t border-zinc-100 pt-4 space-y-4">
+                  <h4 className="text-xs font-black text-zinc-900 uppercase tracking-wider">Licenciamento & Estabelecimentos</h4>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano de Licença</label>
+                      <select 
+                        value={clientPlanType}
+                        onChange={(e) => handlePlanTypeChange(e.target.value)}
+                        className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold text-xs"
+                      >
+                        <option value="Básico">Básico (1 Estab.)</option>
+                        <option value="Profissional">Profissional (2 Estab.)</option>
+                        <option value="Empresarial">Empresarial (Até 10 Estab.)</option>
+                      </select>
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Duração (Meses)</label>
+                      <select 
+                        value={clientLicenseDuration}
+                        onChange={(e) => setClientLicenseDuration(Number(e.target.value))}
+                        className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold text-xs"
+                      >
+                        <option value={1}>1 Mês</option>
+                        <option value={3}>3 Meses</option>
+                        <option value={6}>6 Meses</option>
+                        <option value={12}>12 Meses (1 Ano)</option>
+                        <option value={24}>24 Meses (2 Anos)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {clientPlanType === 'Empresarial' && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Nº de Estabelecimentos Inicial</label>
+                      <input 
+                        type="number" 
+                        min={1} 
+                        max={10}
+                        value={numEmpresarialEsts}
+                        onChange={(e) => handleNumEmpresarialEstsChange(Math.max(1, Math.min(10, Number(e.target.value))))}
+                        className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold text-xs"
+                      />
+                    </div>
+                  )}
+
+                  <div className="space-y-3 bg-zinc-50 p-4 rounded-2xl border border-zinc-200">
+                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-wider">Configurar Tipos de Estabelecimento</p>
+                    {clientEstTypes.map((type, idx) => (
+                      <div key={`est-type-${idx}`} className="flex items-center justify-between gap-4 p-2 bg-white rounded-xl border border-zinc-100">
+                        <span className="text-xs font-bold text-zinc-700">
+                          {idx === 0 ? "Sede (Principal)" : `Filial ${idx}`}
+                        </span>
+                        <select
+                          value={type}
+                          onChange={(e) => handleEstTypeAtIdxChange(idx, e.target.value)}
+                          className="px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs font-bold outline-none focus:border-black transition-all"
+                        >
+                          <option value="comum">Comum (Default)</option>
+                          <option value="farmácia">Farmácia</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 shrink-0">
                   <button type="submit" className="w-full py-3 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all">
                     Criar Cliente
                   </button>
@@ -4499,6 +4618,20 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
   const [newMessage, setNewMessage] = useState('');
   const [isTicketModalOpen, setIsTicketModalOpen] = useState(false);
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [productsSubTab, setProductsSubTab] = useState<'all' | 'categories' | 'manufacturers' | 'active_substances' | 'forms' | 'units'>('all');
+  const [pharmacyCategories, setPharmacyCategories] = useState<any[]>([]);
+  const [pharmacyManufacturers, setPharmacyManufacturers] = useState<any[]>([]);
+  const [pharmacyActiveSubstances, setPharmacyActiveSubstances] = useState<any[]>([]);
+  const [pharmacyForms, setPharmacyForms] = useState<any[]>([]);
+  const [pharmacyUnits, setPharmacyUnits] = useState<any[]>([]);
+  const [subTabInputName, setSubTabInputName] = useState('');
+  const [subTabSearchQuery, setSubTabSearchQuery] = useState('');
+  const [isSubTabSubmitting, setIsSubTabSubmitting] = useState(false);
+
+  useEffect(() => {
+    setSubTabInputName('');
+    setSubTabSearchQuery('');
+  }, [productsSubTab]);
   const [isWarehouseModalOpen, setIsWarehouseModalOpen] = useState(false);
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<any>(null);
@@ -4603,7 +4736,17 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     image_url: '', 
     min_stock: '5',
     tax_id: '',
-    warehouse_id: ''
+    warehouse_id: '',
+    internal_code: '',
+    laboratory: '',
+    active_substance: '',
+    pharmaceutical_form: '',
+    dosage: '',
+    sale_unit: '',
+    requires_prescription: false,
+    controlled_substance: false,
+    status: 'active',
+    barcode: ''
   });
   const [warehouseForm, setWarehouseForm] = useState({
     name: '',
@@ -4758,9 +4901,74 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     fetch(`/api/owner/currencies/${user.id}`)
       .then(res => res.json())
       .then(setCurrencies).catch(() => {});
+
+    // Pharmacy specific list fetches
+    fetch(`/api/pharmacy/categories/${establishmentId}`)
+      .then(res => res.json())
+      .then(setPharmacyCategories).catch(() => {});
+    fetch(`/api/pharmacy/manufacturers/${establishmentId}`)
+      .then(res => res.json())
+      .then(setPharmacyManufacturers).catch(() => {});
+    fetch(`/api/pharmacy/active_substances/${establishmentId}`)
+      .then(res => res.json())
+      .then(setPharmacyActiveSubstances).catch(() => {});
+    fetch(`/api/pharmacy/forms/${establishmentId}`)
+      .then(res => res.json())
+      .then(setPharmacyForms).catch(() => {});
+    fetch(`/api/pharmacy/units/${establishmentId}`)
+      .then(res => res.json())
+      .then(setPharmacyUnits).catch(() => {});
   };
 
   useEffect(fetchData, [establishmentId]);
+
+  const handleAddPharmacyEntity = async (type: string, name: string) => {
+    if (!name.trim()) return;
+    setIsSubTabSubmitting(true);
+    try {
+      const res = await fetch(`/api/pharmacy/${type}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ establishment_id: Number(establishmentId), name })
+      });
+      if (res.ok) {
+        setSubTabInputName('');
+        // Re-fetch list
+        const listRes = await fetch(`/api/pharmacy/${type}/${establishmentId}`);
+        const listData = await listRes.json();
+        if (type === 'categories') setPharmacyCategories(listData);
+        else if (type === 'manufacturers') setPharmacyManufacturers(listData);
+        else if (type === 'active_substances') setPharmacyActiveSubstances(listData);
+        else if (type === 'forms') setPharmacyForms(listData);
+        else if (type === 'units') setPharmacyUnits(listData);
+      }
+    } catch (err) {
+      console.error("Error adding pharmacy entity:", err);
+    } finally {
+      setIsSubTabSubmitting(false);
+    }
+  };
+
+  const handleDeletePharmacyEntity = async (type: string, id: number) => {
+    if (!confirm("Tem certeza que deseja eliminar este item? Isso pode afetar os produtos associados.")) return;
+    try {
+      const res = await fetch(`/api/pharmacy/${type}/${id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        // Re-fetch list
+        const listRes = await fetch(`/api/pharmacy/${type}/${establishmentId}`);
+        const listData = await listRes.json();
+        if (type === 'categories') setPharmacyCategories(listData);
+        else if (type === 'manufacturers') setPharmacyManufacturers(listData);
+        else if (type === 'active_substances') setPharmacyActiveSubstances(listData);
+        else if (type === 'forms') setPharmacyForms(listData);
+        else if (type === 'units') setPharmacyUnits(listData);
+      }
+    } catch (err) {
+      console.error("Error deleting pharmacy entity:", err);
+    }
+  };
 
   const handleSaveCashRegister = async (e: FormEvent) => {
     e.preventDefault();
@@ -4933,7 +5141,17 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         image_url: '', 
         min_stock: '5',
         tax_id: '',
-        warehouse_id: ''
+        warehouse_id: '',
+        internal_code: '',
+        laboratory: '',
+        active_substance: '',
+        pharmaceutical_form: '',
+        dosage: '',
+        sale_unit: '',
+        requires_prescription: false,
+        controlled_substance: false,
+        status: 'active',
+        barcode: ''
       });
       fetchData();
     } else {
@@ -4953,7 +5171,17 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
       image_url: product.image_url,
       min_stock: (product.min_stock || 5).toString(),
       tax_id: product.tax_id?.toString() || '',
-      warehouse_id: product.warehouse_id?.toString() || ''
+      warehouse_id: product.warehouse_id?.toString() || '',
+      internal_code: product.internal_code || '',
+      laboratory: product.laboratory || '',
+      active_substance: product.active_substance || '',
+      pharmaceutical_form: product.pharmaceutical_form || '',
+      dosage: product.dosage || '',
+      sale_unit: product.sale_unit || '',
+      requires_prescription: !!product.requires_prescription,
+      controlled_substance: !!product.controlled_substance,
+      status: product.status || 'active',
+      barcode: product.barcode || ''
     });
     setIsProductModalOpen(true);
   };
@@ -5445,7 +5673,16 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
 
         <div className="flex items-center gap-3 min-w-0 w-full lg:w-auto">
           <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-xl overflow-x-auto pb-1">
-          {[
+          {(establishment.type === 'farmácia' ? [
+            { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+            { id: 'products', icon: Package, label: 'Produtos', perm: 'stock_view' },
+            { id: 'stock', icon: Barcode, label: 'Stock', perm: 'stock_view' },
+            { id: 'invoices', icon: CreditCard, label: 'Vendas (Faturas)', perm: 'documents_view' },
+            { id: 'cash-registers', icon: Wallet, label: 'Caixas', perm: 'reports_view' },
+            { id: 'reports', icon: BarChart3, label: 'Relatórios', perm: 'reports_view' },
+            { id: 'settings', icon: Settings2, label: 'Configurações', perm: 'settings_manage' },
+            { id: 'support', icon: LifeBuoy, label: 'Suporte' },
+          ] : [
             { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
             { id: 'invoices', icon: CreditCard, label: 'Faturas', perm: 'documents_view' },
             { id: 'products', icon: Package, label: 'Produtos', perm: 'stock_view' },
@@ -5456,7 +5693,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
             { id: 'reports', icon: BarChart3, label: 'Relatórios', perm: 'reports_view' },
             { id: 'settings', icon: Settings2, label: 'Configurações', perm: 'settings_manage' },
             { id: 'support', icon: LifeBuoy, label: 'Suporte' },
-          ].filter(tab => !tab.perm || hasPermission(user, tab.perm)).map(tab => (
+          ]).filter(tab => !tab.perm || hasPermission(user, tab.perm)).map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
@@ -5577,29 +5814,172 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
             </div>
           )}
 
-          {activeTab === 'products' && (
-            <div className="flex-1 flex flex-col min-h-0">
-              <Card className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                <div className="p-6 border-b border-zinc-100 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 shrink-0">
-                <h3 className="font-bold">Gestão de Produtos</h3>
-                <div className="flex flex-wrap gap-2 w-full lg:w-auto">
-                  <button 
-                    onClick={() => setIsPromoModalOpen(true)}
-                    className="flex-1 lg:flex-none bg-amber-100 text-amber-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-amber-200 transition-colors"
-                  >
-                    <Tag size={16} /> Criar Promoção
-                  </button>
+          {activeTab === 'products' && (() => {
+            const getSubTabDetails = () => {
+              switch (productsSubTab) {
+                case 'categories':
+                  return {
+                    singular: 'Categoria',
+                    plural: 'Categorias',
+                    placeholder: 'Ex: Analgésicos, Antibióticos...',
+                    list: pharmacyCategories,
+                    icon: <Tag size={16} />,
+                    apiType: 'categories'
+                  };
+                case 'manufacturers':
+                  return {
+                    singular: 'Fabricante',
+                    plural: 'Fabricantes',
+                    placeholder: 'Ex: Pfizer, Bial, Generis...',
+                    list: pharmacyManufacturers,
+                    icon: <Factory size={16} />,
+                    apiType: 'manufacturers'
+                  };
+                case 'active_substances':
+                  return {
+                    singular: 'Princípio Ativo',
+                    plural: 'Princípios Ativos',
+                    placeholder: 'Ex: Acetaminofeno, Ibuprofeno...',
+                    list: pharmacyActiveSubstances,
+                    icon: <Activity size={16} />,
+                    apiType: 'active_substances'
+                  };
+                case 'forms':
+                  return {
+                    singular: 'Forma Farmacêutica',
+                    plural: 'Formas Farmacêuticas',
+                    placeholder: 'Ex: Comprimido, Xarope, Pomada...',
+                    list: pharmacyForms,
+                    icon: <Layers size={16} />,
+                    apiType: 'forms'
+                  };
+                case 'units':
+                  return {
+                    singular: 'Unidade de Medida',
+                    plural: 'Unidades de Medida',
+                    placeholder: 'Ex: Caixa, Blister, Frasco...',
+                    list: pharmacyUnits,
+                    icon: <Scale size={16} />,
+                    apiType: 'units'
+                  };
+                default:
+                  return null;
+              }
+            };
+            const details = getSubTabDetails();
+            const filteredList = details
+              ? details.list.filter((item: any) => item.name.toLowerCase().includes(subTabSearchQuery.toLowerCase()))
+              : [];
 
-                  <button 
-                    onClick={() => setIsProductModalOpen(true)}
-                    className="flex-1 lg:flex-none bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
-                  >
-                    <Plus size={16} /> Novo Produto
-                  </button>
-                </div>
-              </div>
-              <div className="flex-1 overflow-y-auto">
-                <div className="hidden md:block">
+            return (
+              <div className="flex-1 flex flex-col min-h-0">
+                <Card className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                  <div className="p-6 border-b border-zinc-100 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 shrink-0">
+                    <div>
+                      <h3 className="font-bold text-lg">Gestão de Produtos</h3>
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        {productsSubTab === 'all' && "Gerencie os produtos do seu estabelecimento."}
+                        {productsSubTab === 'categories' && "Gerencie as categorias de produtos da sua farmácia."}
+                        {productsSubTab === 'manufacturers' && "Gerencie os fabricantes / laboratórios cadastrados."}
+                        {productsSubTab === 'active_substances' && "Gerencie os princípios ativos (substâncias) dos medicamentos."}
+                        {productsSubTab === 'forms' && "Gerencie as formas farmacêuticas (comprimidos, xaropes, etc.)."}
+                        {productsSubTab === 'units' && "Gerencie as unidades de medida / venda para o inventário."}
+                      </p>
+                    </div>
+                    {productsSubTab === 'all' && (
+                      <div className="flex flex-wrap gap-2 w-full lg:w-auto">
+                        <button 
+                          onClick={() => setIsPromoModalOpen(true)}
+                          className="flex-1 lg:flex-none bg-amber-100 text-amber-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-amber-200 transition-colors"
+                        >
+                          <Tag size={16} /> Criar Promoção
+                        </button>
+
+                        <button 
+                          onClick={() => setIsProductModalOpen(true)}
+                          className="flex-1 lg:flex-none bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+                        >
+                          <Plus size={16} /> Novo Produto
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {establishment?.type === 'farmácia' && (
+                    <div className="px-6 py-2.5 bg-zinc-50 border-b border-zinc-100 flex items-center gap-1 overflow-x-auto shrink-0 scrollbar-none">
+                      <button
+                        onClick={() => setProductsSubTab('all')}
+                        className={cn(
+                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
+                          productsSubTab === 'all'
+                            ? "bg-black text-white shadow-sm"
+                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                        )}
+                      >
+                        <ShoppingBag size={14} /> Todos os Produtos
+                      </button>
+                      <button
+                        onClick={() => setProductsSubTab('categories')}
+                        className={cn(
+                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
+                          productsSubTab === 'categories'
+                            ? "bg-black text-white shadow-sm"
+                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                        )}
+                      >
+                        <Tag size={14} /> Categorias
+                      </button>
+                      <button
+                        onClick={() => setProductsSubTab('manufacturers')}
+                        className={cn(
+                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
+                          productsSubTab === 'manufacturers'
+                            ? "bg-black text-white shadow-sm"
+                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                        )}
+                      >
+                        <Factory size={14} /> Fabricantes
+                      </button>
+                      <button
+                        onClick={() => setProductsSubTab('active_substances')}
+                        className={cn(
+                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
+                          productsSubTab === 'active_substances'
+                            ? "bg-black text-white shadow-sm"
+                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                        )}
+                      >
+                        <Activity size={14} /> Princípio Ativo
+                      </button>
+                      <button
+                        onClick={() => setProductsSubTab('forms')}
+                        className={cn(
+                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
+                          productsSubTab === 'forms'
+                            ? "bg-black text-white shadow-sm"
+                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                        )}
+                      >
+                        <Layers size={14} /> Formas Farmacêuticas
+                      </button>
+                      <button
+                        onClick={() => setProductsSubTab('units')}
+                        className={cn(
+                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
+                          productsSubTab === 'units'
+                            ? "bg-black text-white shadow-sm"
+                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                        )}
+                      >
+                        <Scale size={14} /> Unidade de Medida
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex-1 overflow-y-auto">
+                    {productsSubTab === 'all' ? (
+                      <>
+                        <div className="hidden md:block">
                     <table className="w-full text-left min-w-[800px]">
                   <thead>
                     <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider">
@@ -5619,9 +5999,40 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                       <tr key={`prod-desktop-${product.id}`} className="hover:bg-zinc-50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <img src={product.image_url || undefined} alt="" className="w-10 h-10 rounded-lg object-cover" referrerPolicy="no-referrer" />
-                            <span className="font-medium text-sm">{product.name}</span>
+                            <img src={product.image_url || undefined} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" referrerPolicy="no-referrer" />
+                            <div>
+                              <span className="font-medium text-sm block text-zinc-900">{product.name}</span>
+                              {establishment?.type === 'farmácia' && (
+                                <span className="text-[10px] text-zinc-400 block max-w-[240px] truncate">
+                                  {product.active_substance || 'P. Ativo N/A'} • {product.laboratory || 'Lab N/A'} • {product.dosage || 'Dosagem N/A'}
+                                </span>
+                              )}
+                            </div>
                           </div>
+                          {establishment?.type === 'farmácia' && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {product.requires_prescription ? (
+                                <span className="bg-rose-50 text-rose-600 text-[8px] font-bold px-1.5 py-0.5 rounded border border-rose-150 uppercase tracking-wider">
+                                  Exige Receita
+                                </span>
+                              ) : null}
+                              {product.controlled_substance ? (
+                                <span className="bg-purple-50 text-purple-600 text-[8px] font-bold px-1.5 py-0.5 rounded border border-purple-150 uppercase tracking-wider">
+                                  Controlado
+                                </span>
+                              ) : null}
+                              {product.internal_code ? (
+                                <span className="bg-zinc-100 text-zinc-600 text-[8px] font-bold px-1.5 py-0.5 rounded border border-zinc-200 font-mono">
+                                  {product.internal_code}
+                                </span>
+                              ) : null}
+                              {product.status === 'inactive' ? (
+                                <span className="bg-zinc-100 text-zinc-400 text-[8px] font-bold px-1.5 py-0.5 rounded border border-zinc-200 uppercase tracking-wider">
+                                  Inativo
+                                </span>
+                              ) : null}
+                            </div>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           <span className="font-mono text-xs bg-zinc-100 px-2 py-1 rounded border border-zinc-200">{product.barcode}</span>
@@ -5688,8 +6099,32 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                       <div className="flex items-center gap-3">
                         <img src={product.image_url || undefined} alt="" className="w-12 h-12 rounded-xl object-cover" referrerPolicy="no-referrer" />
                         <div>
-                          <p className="font-bold text-sm">{product.name}</p>
+                          <p className="font-bold text-sm text-zinc-900">{product.name}</p>
                           <p className="text-[10px] font-mono text-zinc-400">{product.barcode}</p>
+                          {establishment?.type === 'farmácia' && (
+                            <div className="mt-1 space-y-1">
+                              <p className="text-[10px] text-zinc-500">
+                                {product.active_substance || 'P. Ativo N/A'} • {product.laboratory || 'Lab N/A'} • {product.dosage || 'Dosagem N/A'}
+                              </p>
+                              <div className="flex flex-wrap gap-1">
+                                {product.requires_prescription ? (
+                                  <span className="bg-rose-50 text-rose-600 text-[8px] font-bold px-1.5 py-0.5 rounded border border-rose-150 uppercase tracking-wider">
+                                    Exige Receita
+                                  </span>
+                                ) : null}
+                                {product.controlled_substance ? (
+                                  <span className="bg-purple-50 text-purple-600 text-[8px] font-bold px-1.5 py-0.5 rounded border border-purple-150 uppercase tracking-wider">
+                                    Controlado
+                                  </span>
+                                ) : null}
+                                {product.internal_code ? (
+                                  <span className="bg-zinc-100 text-zinc-600 text-[8px] font-bold px-1.5 py-0.5 rounded border border-zinc-200 font-mono">
+                                    {product.internal_code}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <span className={cn(
@@ -5739,10 +6174,107 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                   </div>
                 ))}
               </div>
-            </div>
-          </Card>
-        </div>
-      )}
+            </>
+          ) : (
+            details && (
+              <div className="p-6 max-w-7xl mx-auto w-full">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Left Column: Form to Add */}
+                  <div className="lg:col-span-1 bg-zinc-50 border border-zinc-150 p-5 rounded-2xl space-y-4 h-fit">
+                    <div>
+                      <h4 className="font-bold text-sm text-zinc-900 flex items-center gap-2">
+                        {details.icon} Nova {details.singular}
+                      </h4>
+                      <p className="text-xs text-zinc-500 mt-1">Crie um novo registro que poderá ser selecionado nos cadastros de medicamentos.</p>
+                    </div>
+                    
+                    <form onSubmit={(e) => { e.preventDefault(); handleAddPharmacyEntity(details.apiType, subTabInputName); }} className="space-y-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">
+                          Nome da {details.singular}
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder={details.placeholder}
+                          value={subTabInputName}
+                          onChange={e => setSubTabInputName(e.target.value)}
+                          className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black"
+                        />
+                      </div>
+                      
+                      <button
+                        type="submit"
+                        disabled={isSubTabSubmitting || !subTabInputName.trim()}
+                        className="w-full bg-black text-white text-xs font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all disabled:opacity-50"
+                      >
+                        {isSubTabSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                        Adicionar {details.singular}
+                      </button>
+                    </form>
+                  </div>
+
+                  {/* Right Column: List & Search */}
+                  <div className="lg:col-span-2 space-y-4">
+                    <div className="flex items-center gap-3 bg-zinc-50 px-4 py-2 rounded-xl border border-zinc-150 max-w-md">
+                      <Search size={16} className="text-zinc-400" />
+                      <input
+                        type="text"
+                        placeholder={`Pesquisar por ${details.plural.toLowerCase()}...`}
+                        value={subTabSearchQuery}
+                        onChange={e => setSubTabSearchQuery(e.target.value)}
+                        className="bg-transparent border-none outline-none text-xs w-full placeholder-zinc-400"
+                      />
+                    </div>
+
+                    <div className="bg-white border border-zinc-150 rounded-2xl overflow-hidden">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="bg-zinc-50 text-zinc-500 text-[10px] uppercase tracking-wider border-b border-zinc-150">
+                            <th className="px-6 py-3 font-bold">Nome</th>
+                            <th className="px-6 py-3 font-bold">Data de Criação</th>
+                            <th className="px-6 py-3 font-bold text-right">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100 text-xs">
+                          {filteredList.length > 0 ? (
+                            filteredList.map((item: any) => (
+                              <tr key={`entity-${item.id}`} className="hover:bg-zinc-50 transition-colors">
+                                <td className="px-6 py-4 font-bold text-zinc-800">{item.name}</td>
+                                <td className="px-6 py-4 text-zinc-500">
+                                  {item.created_at ? new Date(item.created_at).toLocaleDateString('pt-PT') : 'N/A'}
+                                </td>
+                                <td className="px-6 py-4 text-right">
+                                  <button
+                                    onClick={() => handleDeletePharmacyEntity(details.apiType, item.id)}
+                                    className="p-1.5 bg-rose-50 hover:bg-rose-100 rounded-lg text-rose-600 transition-all"
+                                    title="Excluir"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={3} className="px-6 py-12 text-center text-zinc-400">
+                                Nenhuma {details.singular.toLowerCase()} encontrada.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          )}
+                  </div>
+                </Card>
+              </div>
+            );
+          })()}
 
       {activeTab === 'services' && (
             <div className="flex-1 flex flex-col min-h-0">
@@ -8203,117 +8735,392 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         </div>
       </Modal>
 
-      <Modal isOpen={isProductModalOpen} onClose={() => { setIsProductModalOpen(false); setEditingProduct(null); }} title={editingProduct ? "Editar Produto" : "Novo Produto"} maxWidth="max-w-2xl">
+      <Modal 
+        isOpen={isProductModalOpen} 
+        onClose={() => { setIsProductModalOpen(false); setEditingProduct(null); }} 
+        title={editingProduct ? "Editar Produto" : "Novo Produto"} 
+        maxWidth={establishment?.type === 'farmácia' ? "max-w-4xl" : "max-w-2xl"}
+      >
         <form onSubmit={handleAddProduct} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Produto</label>
-              <input 
-                type="text" required
-                value={productForm.name}
-                onChange={e => setProductForm({...productForm, name: e.target.value})}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Categoria</label>
-              <input 
-                type="text" required
-                list="categories-list"
-                value={productForm.category}
-                onChange={e => setProductForm({...productForm, category: e.target.value})}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-                placeholder="Ex: Bebidas..."
-              />
-              <datalist id="categories-list">
-                {Array.from(new Set(products.map(p => p.category))).map(cat => (
-                  <option key={cat} value={cat} />
-                ))}
-              </datalist>
-            </div>
-          </div>
+          {establishment?.type === 'farmácia' ? (
+            <div className="space-y-6">
+              {/* Seção 1: Identificação Básica */}
+              <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100 space-y-4">
+                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Identificação Básica</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome Comercial</label>
+                    <input 
+                      type="text" required
+                      value={productForm.name}
+                      onChange={e => setProductForm({...productForm, name: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                      placeholder="Ex: Paracetamol..."
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Categoria</label>
+                    <input 
+                      type="text" required
+                      list="pharmacy-categories-list"
+                      value={productForm.category}
+                      onChange={e => setProductForm({...productForm, category: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                      placeholder="Ex: Analgésicos..."
+                    />
+                    <datalist id="pharmacy-categories-list">
+                      {pharmacyCategories.map(item => (
+                        <option key={item.id} value={item.name} />
+                      ))}
+                    </datalist>
+                  </div>
+                </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Código de Barra</label>
-              <input 
-                type="text"
-                readOnly
-                value={editingProduct ? editingProduct.barcode : "Gerado automaticamente"}
-                className="w-full px-4 py-2 bg-zinc-100 border border-zinc-200 rounded-xl outline-none text-zinc-500 font-mono" 
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Armazém</label>
-              <select 
-                required
-                value={productForm.warehouse_id}
-                onChange={e => setProductForm({...productForm, warehouse_id: e.target.value})}
-                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-              >
-                <option value="">Selecione um armazém</option>
-                {warehouses.filter(w => w.establishment_id === Number(establishmentId)).map(w => (
-                  <option key={w.id} value={w.id}>{w.name} ({w.type})</option>
-                ))}
-              </select>
-            </div>
-          </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Código Interno</label>
+                    <input 
+                      type="text" required
+                      value={productForm.internal_code}
+                      onChange={e => setProductForm({...productForm, internal_code: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none font-mono" 
+                      placeholder="Ex: FAR-001..."
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Código de Barras</label>
+                    <input 
+                      type="text"
+                      value={productForm.barcode}
+                      onChange={e => setProductForm({...productForm, barcode: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none font-mono" 
+                      placeholder="Opcional (Deixe em branco para gerar autom.)"
+                    />
+                  </div>
+                </div>
+              </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <div className="col-span-1">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Custo (Kz)</label>
-              <input 
-                type="number" required
-                value={isNaN(Number(productForm.cost)) ? '' : productForm.cost}
-                onChange={e => setProductForm({...productForm, cost: e.target.value})}
-                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-              />
+              {/* Seção 2: Especificações Farmacêuticas */}
+              <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100 space-y-4">
+                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Especificações Farmacêuticas</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Princípio Ativo</label>
+                    <input 
+                      type="text" required
+                      list="pharmacy-substances-list"
+                      value={productForm.active_substance}
+                      onChange={e => setProductForm({...productForm, active_substance: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                      placeholder="Ex: Acetaminofeno..."
+                    />
+                    <datalist id="pharmacy-substances-list">
+                      {pharmacyActiveSubstances.map(item => (
+                        <option key={item.id} value={item.name} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Laboratório</label>
+                    <input 
+                      type="text" required
+                      list="pharmacy-laboratories-list"
+                      value={productForm.laboratory}
+                      onChange={e => setProductForm({...productForm, laboratory: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                      placeholder="Ex: Pfizer, Bial, Generis..."
+                    />
+                    <datalist id="pharmacy-laboratories-list">
+                      {pharmacyManufacturers.map(item => (
+                        <option key={item.id} value={item.name} />
+                      ))}
+                    </datalist>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Forma Farmacêutica</label>
+                    <input 
+                      type="text" required
+                      list="pharmacy-forms-list"
+                      value={productForm.pharmaceutical_form}
+                      onChange={e => setProductForm({...productForm, pharmaceutical_form: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                      placeholder="Ex: Comprimido, Xarope, Pomada..."
+                    />
+                    <datalist id="pharmacy-forms-list">
+                      {pharmacyForms.map(item => (
+                        <option key={item.id} value={item.name} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Dosagem</label>
+                    <input 
+                      type="text" required
+                      value={productForm.dosage}
+                      onChange={e => setProductForm({...productForm, dosage: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                      placeholder="Ex: 500 mg, 10 mg/ml..."
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Unidade de Venda</label>
+                    <input 
+                      type="text" required
+                      list="pharmacy-units-list"
+                      value={productForm.sale_unit}
+                      onChange={e => setProductForm({...productForm, sale_unit: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                      placeholder="Ex: Caixa, Blister, Frasco..."
+                    />
+                    <datalist id="pharmacy-units-list">
+                      {pharmacyUnits.map(item => (
+                        <option key={item.id} value={item.name} />
+                      ))}
+                    </datalist>
+                  </div>
+                </div>
+              </div>
+
+              {/* Seção 3: Financeiro & Stock */}
+              <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100 space-y-4">
+                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Valores, Armazém & Stock</h3>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <div className="col-span-1">
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Preço Compra (Kz)</label>
+                    <input 
+                      type="number" required
+                      value={isNaN(Number(productForm.cost)) ? '' : productForm.cost}
+                      onChange={e => setProductForm({...productForm, cost: e.target.value})}
+                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                    />
+                  </div>
+                  <div className="col-span-1">
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Preço Venda (Kz)</label>
+                    <input 
+                      type="number" required
+                      value={isNaN(Number(productForm.price)) ? '' : productForm.price}
+                      onChange={e => setProductForm({...productForm, price: e.target.value})}
+                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl outline-none text-emerald-600 font-bold" 
+                    />
+                  </div>
+                  <div className="col-span-1">
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Stock</label>
+                    <input 
+                      type="number" required
+                      value={isNaN(Number(productForm.stock)) ? '' : productForm.stock}
+                      onChange={e => setProductForm({...productForm, stock: e.target.value})}
+                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                    />
+                  </div>
+                  <div className="col-span-1">
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Mín. Stock</label>
+                    <input 
+                      type="number" required
+                      value={isNaN(Number(productForm.min_stock)) ? '' : productForm.min_stock}
+                      onChange={e => setProductForm({...productForm, min_stock: e.target.value})}
+                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                    />
+                  </div>
+                  <div className="col-span-1">
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">IVA</label>
+                    <select 
+                      value={productForm.tax_id}
+                      onChange={e => setProductForm({...productForm, tax_id: e.target.value})}
+                      disabled={user?.fiscal_regime === 'exclusao'}
+                      className={cn(
+                        "w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl outline-none",
+                        user?.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      <option value="">Padrão</option>
+                      {taxes.filter(t => t.status === 'active').map(tax => (
+                        <option key={tax.id} value={tax.id}>{tax.percentage}%</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Armazém</label>
+                    <select 
+                      required
+                      value={productForm.warehouse_id}
+                      onChange={e => setProductForm({...productForm, warehouse_id: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                    >
+                      <option value="">Selecione um armazém</option>
+                      {warehouses.filter(w => w.establishment_id === Number(establishmentId)).map(w => (
+                        <option key={w.id} value={w.id}>{w.name} ({w.type})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Estado</label>
+                    <select 
+                      value={productForm.status}
+                      onChange={e => setProductForm({...productForm, status: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none" 
+                    >
+                      <option value="active">Ativo</option>
+                      <option value="inactive">Inativo</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Seção 4: Controles */}
+              <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100 space-y-4">
+                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Controles & Exigências</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex items-center justify-between p-3 bg-white rounded-xl border border-zinc-150">
+                    <div>
+                      <span className="block text-xs font-bold text-zinc-800">Exige receita médica?</span>
+                      <span className="block text-[10px] text-zinc-400">Só pode ser vendido com receita</span>
+                    </div>
+                    <select 
+                      value={productForm.requires_prescription ? "Sim" : "Não"}
+                      onChange={e => setProductForm({...productForm, requires_prescription: e.target.value === "Sim"})}
+                      className="px-3 py-1 bg-zinc-50 border border-zinc-200 rounded-lg outline-none font-bold text-xs"
+                    >
+                      <option value="Não">Não</option>
+                      <option value="Sim">Sim</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 bg-white rounded-xl border border-zinc-150">
+                    <div>
+                      <span className="block text-xs font-bold text-zinc-800">Produto controlado?</span>
+                      <span className="block text-[10px] text-zinc-400">Substância de controle especial</span>
+                    </div>
+                    <select 
+                      value={productForm.controlled_substance ? "Sim" : "Não"}
+                      onChange={e => setProductForm({...productForm, controlled_substance: e.target.value === "Sim"})}
+                      className="px-3 py-1 bg-zinc-50 border border-zinc-200 rounded-lg outline-none font-bold text-xs"
+                    >
+                      <option value="Não">Não</option>
+                      <option value="Sim">Sim</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="col-span-1">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Preço (Kz)</label>
-              <input 
-                type="number" required
-                value={isNaN(Number(productForm.price)) ? '' : productForm.price}
-                onChange={e => setProductForm({...productForm, price: e.target.value})}
-                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none text-emerald-600 font-bold" 
-              />
-            </div>
-            <div className="col-span-1">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Stock</label>
-              <input 
-                type="number" required
-                value={isNaN(Number(productForm.stock)) ? '' : productForm.stock}
-                onChange={e => setProductForm({...productForm, stock: e.target.value})}
-                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-              />
-            </div>
-            <div className="col-span-1">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Mín. Stock</label>
-              <input 
-                type="number" required
-                value={isNaN(Number(productForm.min_stock)) ? '' : productForm.min_stock}
-                onChange={e => setProductForm({...productForm, min_stock: e.target.value})}
-                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
-              />
-            </div>
-            <div className="col-span-1">
-              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">IVA</label>
-              <select 
-                value={productForm.tax_id}
-                onChange={e => setProductForm({...productForm, tax_id: e.target.value})}
-                disabled={user?.fiscal_regime === 'exclusao'}
-                className={cn(
-                  "w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none",
-                  user?.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
-                )}
-              >
-                <option value="">Padrão</option>
-                {taxes.filter(t => t.status === 'active').map(tax => (
-                  <option key={tax.id} value={tax.id}>{tax.percentage}%</option>
-                ))}
-              </select>
-            </div>
-          </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Produto</label>
+                  <input 
+                    type="text" required
+                    value={productForm.name}
+                    onChange={e => setProductForm({...productForm, name: e.target.value})}
+                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Categoria</label>
+                  <input 
+                    type="text" required
+                    list="categories-list"
+                    value={productForm.category}
+                    onChange={e => setProductForm({...productForm, category: e.target.value})}
+                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+                    placeholder="Ex: Bebidas..."
+                  />
+                  <datalist id="categories-list">
+                    {Array.from(new Set(products.map(p => p.category))).map(cat => (
+                      <option key={cat} value={cat} />
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Código de Barra</label>
+                  <input 
+                    type="text"
+                    readOnly
+                    value={editingProduct ? editingProduct.barcode : "Gerado automaticamente"}
+                    className="w-full px-4 py-2 bg-zinc-100 border border-zinc-200 rounded-xl outline-none text-zinc-500 font-mono" 
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Armazém</label>
+                  <select 
+                    required
+                    value={productForm.warehouse_id}
+                    onChange={e => setProductForm({...productForm, warehouse_id: e.target.value})}
+                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+                  >
+                    <option value="">Selecione um armazém</option>
+                    {warehouses.filter(w => w.establishment_id === Number(establishmentId)).map(w => (
+                      <option key={w.id} value={w.id}>{w.name} ({w.type})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Custo (Kz)</label>
+                  <input 
+                    type="number" required
+                    value={isNaN(Number(productForm.cost)) ? '' : productForm.cost}
+                    onChange={e => setProductForm({...productForm, cost: e.target.value})}
+                    className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+                  />
+                </div>
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Preço (Kz)</label>
+                  <input 
+                    type="number" required
+                    value={isNaN(Number(productForm.price)) ? '' : productForm.price}
+                    onChange={e => setProductForm({...productForm, price: e.target.value})}
+                    className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none text-emerald-600 font-bold" 
+                  />
+                </div>
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Stock</label>
+                  <input 
+                    type="number" required
+                    value={isNaN(Number(productForm.stock)) ? '' : productForm.stock}
+                    onChange={e => setProductForm({...productForm, stock: e.target.value})}
+                    className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+                  />
+                </div>
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Mín. Stock</label>
+                  <input 
+                    type="number" required
+                    value={isNaN(Number(productForm.min_stock)) ? '' : productForm.min_stock}
+                    onChange={e => setProductForm({...productForm, min_stock: e.target.value})}
+                    className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none" 
+                  />
+                </div>
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">IVA</label>
+                  <select 
+                    value={productForm.tax_id}
+                    onChange={e => setProductForm({...productForm, tax_id: e.target.value})}
+                    disabled={user?.fiscal_regime === 'exclusao'}
+                    className={cn(
+                      "w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none",
+                      user?.fiscal_regime === 'exclusao' && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    <option value="">Padrão</option>
+                    {taxes.filter(t => t.status === 'active').map(tax => (
+                      <option key={tax.id} value={tax.id}>{tax.percentage}%</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </>
+          )}
 
           <div>
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Imagem do Produto</label>
@@ -11363,6 +12170,22 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     }))
   ];
 
+  const isPharmacy = establishmentInfo?.type === 'farmácia';
+  const themeBg = isPharmacy ? "bg-emerald-600" : "bg-orange-500";
+  const themeBgHover = isPharmacy ? "hover:bg-emerald-700" : "hover:bg-orange-600";
+  const themeBgLight = isPharmacy ? "bg-emerald-50" : "bg-orange-100";
+  const themeBgLightest = isPharmacy ? "bg-emerald-50/50" : "bg-orange-50/50";
+  const themeText = isPharmacy ? "text-emerald-600" : "text-orange-600";
+  const themeTextHover = isPharmacy ? "hover:text-emerald-700" : "hover:text-orange-700";
+  const themeTextLight = isPharmacy ? "text-emerald-100" : "text-orange-100";
+  const themeBorder = isPharmacy ? "border-emerald-200" : "border-orange-200";
+  const themeBorderHover = isPharmacy ? "hover:border-emerald-500" : "hover:border-orange-500";
+  const themeBorderSelected = isPharmacy ? "border-emerald-500" : "border-orange-500";
+  const themeRing = isPharmacy ? "focus:ring-emerald-500" : "focus:ring-orange-500";
+  const themeBorderFocus = isPharmacy ? "focus:border-emerald-500" : "focus:border-orange-500";
+  const themePill = isPharmacy ? "bg-emerald-100 text-emerald-800" : "bg-orange-100 text-orange-800";
+  const themeShadow = isPharmacy ? "shadow-emerald-500/20" : "shadow-orange-500/20";
+
   return (
     <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-0 p-4 md:p-6 pb-24 lg:pb-6 relative">
       {/* Product Selection */}
@@ -11371,43 +12194,43 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         showCartMobile ? "hidden lg:flex" : "flex"
       )}>
         <div className="mb-6 space-y-6">
-          <div className="bg-orange-500 -mx-6 -mt-6 p-6 text-white rounded-b-[2rem] shadow-lg">
+          <div className={cn("-mx-6 -mt-6 p-6 text-white rounded-b-[2rem] shadow-lg transition-colors duration-350", themeBg)}>
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-2xl font-bold tracking-tight">PDV - Estabelecimento</h2>
                 <div className="flex items-center gap-2">
-                  <p className="text-orange-100 text-sm opacity-80">Terminal: {user.cash_register_name || 'Caixa'}</p>
+                  <p className={cn("text-sm opacity-85", isPharmacy ? "text-emerald-100" : "text-orange-100")}>Terminal: {user.cash_register_name || 'Caixa'}</p>
                   <button 
                     onClick={() => setIsTerminalSettingsOpen(true)}
-                    className="p-1 hover:bg-orange-400/30 rounded-lg text-orange-100 transition-colors"
+                    className={cn("p-1 rounded-lg transition-colors", isPharmacy ? "hover:bg-emerald-500/30 text-emerald-100" : "hover:bg-orange-400/30 text-orange-100")}
                     title="Configurações do Terminal"
                   >
                     <Settings size={14} />
                   </button>
                   <button 
                     onClick={() => triggerCashDrawerOpen(true)}
-                    className="ml-2.5 p-1 px-2 py-1 bg-orange-650/40 hover:bg-orange-600/80 rounded-lg text-orange-100 transition-all flex items-center gap-1.5 shadow-sm border border-orange-400/20 cursor-pointer"
+                    className={cn("ml-2.5 p-1 px-2 py-1 rounded-lg transition-all flex items-center gap-1.5 shadow-sm border cursor-pointer", isPharmacy ? "bg-emerald-700/40 hover:bg-emerald-700/85 text-emerald-100 border-emerald-500/20" : "bg-orange-650/40 hover:bg-orange-600/80 text-orange-100 border-orange-400/20")}
                     title="Comandar Abertura da Gaveta de Dinheiro 🔓"
                   >
-                    <Coins size={12} className="text-orange-200 animate-pulse" />
+                    <Coins size={12} className={cn("animate-pulse", isPharmacy ? "text-emerald-200" : "text-orange-200")} />
                     <span className="text-[10px] font-black uppercase tracking-widest leading-none">Abrir Gaveta</span>
                   </button>
                 </div>
               </div>
-              <div className="flex items-center gap-2 bg-orange-400/30 px-3 py-1 rounded-full text-xs font-bold">
+              <div className={cn("flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold", isPharmacy ? "bg-emerald-500/30" : "bg-orange-400/30")}>
                 <div className="w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
                 OFF
               </div>
             </div>
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-inner">
-                <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center text-orange-600">
+                <div className={cn("w-12 h-12 rounded-full flex items-center justify-center transition-colors duration-350", themeBgLight, themeText)}>
                   <ShoppingCart size={24} />
                 </div>
               </div>
               <div>
                 <p className="font-bold text-lg">{user.name}</p>
-                <p className="text-orange-100 text-sm opacity-80">Perfil: {user.role}</p>
+                <p className={cn("text-sm opacity-85", isPharmacy ? "text-emerald-100" : "text-orange-100")}>Perfil: {user.role}</p>
               </div>
             </div>
           </div>
@@ -11446,7 +12269,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   placeholder="Pesquisar por nome ou código de barra..." 
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-12 pr-4 py-4 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 shadow-sm text-lg"
+                  className={cn("w-full pl-12 pr-4 py-4 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 shadow-sm text-lg", themeRing)}
                 />
               </div>
             </div>
@@ -11459,8 +12282,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   className={cn(
                     "flex items-center gap-2 px-6 py-3 rounded-2xl text-sm font-bold whitespace-nowrap transition-all shadow-sm border-2",
                     category === cat.name 
-                      ? "bg-orange-500 border-orange-500 text-white" 
-                      : "bg-white border-zinc-100 text-zinc-500 hover:border-orange-200"
+                      ? (isPharmacy ? "bg-emerald-600 border-emerald-600 text-white" : "bg-orange-500 border-orange-500 text-white")
+                      : (isPharmacy ? "bg-white border-zinc-100 text-zinc-500 hover:border-emerald-200" : "bg-white border-zinc-100 text-zinc-500 hover:border-orange-200")
                   )}
                 >
                   <cat.icon size={18} />
@@ -11488,7 +12311,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               onClick={() => addToCart(product)}
               className="group cursor-pointer"
             >
-              <Card className="h-full hover:border-orange-500 transition-all border-zinc-100 shadow-sm rounded-xl flex flex-col overflow-hidden">
+              <Card className={cn("h-full transition-all border-zinc-100 shadow-sm rounded-xl flex flex-col overflow-hidden", isPharmacy ? "hover:border-emerald-500" : "hover:border-orange-500")}>
                 <div className="aspect-[4/3] relative p-2 bg-zinc-50/50">
                   <img 
                     src={product.image_url || undefined} 
@@ -11509,7 +12332,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                       {product.discount_percent && (
                         <span className="text-[7px] text-zinc-400 line-through">Kz {(product.price || 0).toLocaleString()}</span>
                       )}
-                      <p className="font-black text-orange-600 text-[10px]">
+                      <p className={cn("font-black text-[10px]", themeText)}>
                         Kz {(product.discount_percent 
                           ? (product.price || 0) * (1 - product.discount_percent / 100) 
                           : (product.price || 0)).toLocaleString()}
@@ -11537,7 +12360,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         <Card className="flex-1 flex flex-col shadow-2xl border-zinc-200 rounded-[2rem] overflow-hidden">
           <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
             <h3 className="font-bold text-lg flex items-center gap-2">
-              <ShoppingCart size={20} className="text-orange-500" /> Carrinho
+              <ShoppingCart size={20} className={themeText} /> Carrinho
             </h3>
 
             {/* Hand icon (pedir para esperar) between Carrinho and ITENS */}
@@ -11583,7 +12406,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             </div>
 
             <div className="flex items-center gap-3">
-              <span className="bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full text-[10px] font-black">
+              <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-black transition-colors duration-350", themeBgLight, themeText)}>
                 {cart.reduce((acc, item) => acc + item.quantity, 0)} ITENS
               </span>
               <button 
@@ -11619,7 +12442,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                           {i.type === 'product' ? (
                             <img src={(i.item as Product).image_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                           ) : (
-                            <Tag size={16} className="text-orange-500" />
+                            <Tag size={16} className={themeText} />
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -11659,7 +12482,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                       {i.selectedFees && i.selectedFees.length > 0 && (
                         <div className="pl-13 flex flex-wrap gap-1">
                           {i.selectedFees.map((fee, fIdx) => (
-                            <span key={fIdx} className="text-[8px] font-black bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded uppercase tracking-widest border border-orange-100">
+                            <span key={fIdx} className={cn("text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest border", isPharmacy ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-orange-50 text-orange-600 border-orange-100")}>
                               {fee.name} (+{selectedCurrencyCode} {(fee.amount / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                             </span>
                           ))}
@@ -11674,13 +12497,13 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                     <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</label>
                     <button 
                       onClick={() => setIsClientModalOpen(true)}
-                      className="w-full flex items-center justify-between px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl hover:border-orange-500 transition-all group"
+                      className={cn("w-full flex items-center justify-between px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl transition-all group", isPharmacy ? "hover:border-emerald-500" : "hover:border-orange-500")}
                     >
                       <div className="text-left">
                         <p className="text-[10px] font-black text-zinc-800">{client.name}</p>
                         <p className="text-[8px] text-zinc-400">NIF: {client.nif}</p>
                       </div>
-                      <UserPlus size={16} className="text-zinc-400 group-hover:text-orange-500" />
+                      <UserPlus size={16} className={cn("text-zinc-400 transition-colors", isPharmacy ? "group-hover:text-emerald-500" : "group-hover:text-orange-500")} />
                     </button>
                   </div>
 
@@ -11694,7 +12517,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                         value={isNaN(Number(discount)) ? '' : discount}
                         onChange={e => setDiscount(Number(e.target.value))}
                         className={cn(
-                          "w-full pl-8 pr-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-orange-500 text-xs font-bold",
+                          "w-full pl-8 pr-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none text-xs font-bold transition-all",
+                          themeBorderFocus,
                           !hasPermission(user, 'pos_discount') && "opacity-50 cursor-not-allowed"
                         )}
                         placeholder="0.00"
@@ -11725,7 +12549,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               </div>
               <div className="flex justify-between text-xl font-black pt-3 border-t border-zinc-200 text-zinc-900">
                 <span>Total</span>
-                <span className="text-orange-600">{selectedCurrencyCode} {totalInSelectedCurrency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className={cn("transition-colors duration-350", themeText)}>{selectedCurrencyCode} {totalInSelectedCurrency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
             <div className="flex gap-2">
@@ -11757,7 +12581,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               <button 
                 onClick={handleCheckout}
                 disabled={cart.length === 0 || isProcessing || hasActiveSession === false || !hasPermission(user, 'pos_sell')}
-                className="flex-[2] bg-orange-500 text-white py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 hover:bg-orange-600 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed transition-all shadow-lg shadow-orange-500/20 active:scale-[0.98]"
+                className={cn("flex-[2] text-white py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed transition-all shadow-lg active:scale-[0.98]", themeBg, themeBgHover, themeShadow)}
               >
                 {isProcessing ? 'Processando...' : 'Vender agora'}
                 <ChevronRight size={20} />
@@ -12058,7 +12882,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 <select 
                   value={selectedCurrencyCode}
                   onChange={(e) => setSelectedCurrencyCode(e.target.value)}
-                  className="bg-white border border-zinc-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:ring-2 focus:ring-orange-500"
+                  className={cn("bg-white border border-zinc-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:ring-2", themeRing)}
                 >
                   {availableCurrencies.map(c => (
                     <option key={c.id} value={c.code}>{c.code}</option>
@@ -12091,8 +12915,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   className={cn(
                     "flex flex-col items-center gap-2 p-3 rounded-2xl border-2 transition-all",
                     paymentMethod === m.id 
-                      ? "border-orange-500 bg-orange-50 text-orange-600" 
-                      : "border-zinc-100 bg-white text-zinc-500 hover:border-orange-200"
+                      ? cn("text-white", themeBg, isPharmacy ? "border-emerald-600" : "border-orange-500")
+                      : cn("border-zinc-100 bg-white text-zinc-500", isPharmacy ? "hover:border-emerald-200 hover:text-emerald-600" : "hover:border-orange-200 hover:text-orange-600")
                   )}
                 >
                   <m.icon size={20} />
@@ -12113,7 +12937,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   <label className="text-xs font-bold text-zinc-500 uppercase">Quantia Recebida ({selectedCurrencyCode})</label>
                   <button 
                     onClick={() => setCashReceived(totalInSelectedCurrency.toFixed(2))}
-                    className="text-[10px] font-black text-orange-600 uppercase hover:underline"
+                    className={cn("text-[10px] font-black uppercase hover:underline", themeText)}
                   >
                     Valor Exacto
                   </button>
@@ -12124,7 +12948,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   value={isNaN(Number(cashReceived)) ? '' : cashReceived}
                   onChange={e => setCashReceived(e.target.value)}
                   placeholder="0.00"
-                  className="w-full px-6 py-4 bg-zinc-50 border border-zinc-100 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 font-black text-2xl"
+                  className={cn("w-full px-6 py-4 bg-zinc-50 border border-zinc-100 rounded-2xl outline-none focus:ring-2 font-black text-2xl", themeRing)}
                 />
               </div>
 
@@ -12160,7 +12984,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                     value={isNaN(Number(splitAmounts.cash)) ? '' : splitAmounts.cash}
                     onChange={e => setSplitAmounts({...splitAmounts, cash: e.target.value})}
                     placeholder="0.00"
-                    className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-lg"
+                    className={cn("w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 font-bold text-lg", themeRing)}
                   />
                 </div>
                 <div className="space-y-1">
@@ -12172,7 +12996,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                     value={isNaN(Number(splitAmounts.card)) ? '' : splitAmounts.card}
                     onChange={e => setSplitAmounts({...splitAmounts, card: e.target.value})}
                     placeholder="0.00"
-                    className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-lg"
+                    className={cn("w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 font-bold text-lg", themeRing)}
                   />
                 </div>
               </div>
@@ -12195,7 +13019,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             <button
               onClick={finalizeSale}
               disabled={isProcessing || (paymentMethod === 'cash' && (isNaN(parseFloat(cashReceived)) || parseFloat(cashReceived) < totalInSelectedCurrency)) || (paymentMethod === 'split' && Math.abs((parseFloat(splitAmounts.cash || '0') + parseFloat(splitAmounts.card || '0')) - totalInSelectedCurrency) > 0.05)}
-              className="w-full bg-orange-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed"
+              className={cn("w-full text-white py-5 rounded-2xl font-black text-lg shadow-lg transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed", themeBg, themeBgHover, themeShadow)}
             >
               {isProcessing ? 'Processando...' : 'Confirmar Pagamento'}
             </button>
@@ -12220,7 +13044,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               placeholder="Pesquisar cliente por nome ou NIF..." 
               value={clientSearch}
               onChange={(e) => setClientSearch(e.target.value)}
-              className="w-full pl-12 pr-4 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 shadow-sm"
+              className={cn("w-full pl-12 pr-4 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 shadow-sm", themeRing)}
             />
           </div>
 
@@ -12232,14 +13056,14 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               }}
               className={cn(
                 "w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all text-left",
-                client.name === 'Consumidor Final' ? "border-orange-500 bg-orange-50" : "border-zinc-100 hover:border-orange-200"
+                client.name === 'Consumidor Final' ? cn(themeBorderSelected, themeBgLight) : cn("border-zinc-100", isPharmacy ? "hover:border-emerald-200" : "hover:border-orange-200")
               )}
             >
               <div>
                 <p className="font-black text-zinc-800">Consumidor Final</p>
                 <p className="text-xs text-zinc-400">NIF: 999999999</p>
               </div>
-              {client.name === 'Consumidor Final' && <Check size={20} className="text-orange-500" />}
+              {client.name === 'Consumidor Final' && <Check size={20} className={themeText} />}
             </button>
 
             {clients.filter(c => 
@@ -12254,14 +13078,14 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 }}
                 className={cn(
                   "w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all text-left",
-                  client.name === c.name ? "border-orange-500 bg-orange-50" : "border-zinc-100 hover:border-orange-200"
+                  client.name === c.name ? cn(themeBorderSelected, themeBgLight) : cn("border-zinc-100", isPharmacy ? "hover:border-emerald-200" : "hover:border-orange-200")
                 )}
               >
                 <div>
                   <p className="font-black text-zinc-800">{c.name}</p>
                   <p className="text-xs text-zinc-400">NIF: {c.nif} | Tel: {c.phone}</p>
                 </div>
-                {client.name === c.name && <Check size={20} className="text-orange-500" />}
+                {client.name === c.name && <Check size={20} className={themeText} />}
               </button>
             ))}
           </div>
@@ -12274,14 +13098,14 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 placeholder="Nome do Cliente"
                 value={client.name === 'Consumidor Final' ? '' : client.name}
                 onChange={e => setClient({...client, name: e.target.value})}
-                className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 text-sm font-bold"
+                className={cn("px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 text-sm font-bold", themeRing)}
               />
               <input 
                 type="text"
                 placeholder="NIF"
                 value={client.nif === '999999999' ? '' : client.nif}
                 onChange={e => setClient({...client, nif: e.target.value})}
-                className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 text-sm font-bold"
+                className={cn("px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 text-sm font-bold", themeRing)}
               />
             </div>
             <button 
@@ -12477,13 +13301,13 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                     "flex flex-col p-4 rounded-2xl border-2 transition-all text-left group relative overflow-hidden",
                     isDisabled 
                       ? "border-zinc-100 bg-zinc-50 opacity-60 cursor-not-allowed" 
-                      : "border-zinc-100 bg-white hover:border-orange-500 hover:bg-orange-50"
+                      : (isPharmacy ? "border-zinc-100 bg-white hover:border-emerald-500 hover:bg-emerald-50" : "border-zinc-100 bg-white hover:border-orange-500 hover:bg-orange-50")
                   )}
                 >
                   <div className="flex justify-between items-start mb-2">
                     <div className={cn(
                       "p-2 rounded-lg transition-colors",
-                      isDisabled ? "bg-zinc-200 text-zinc-400" : "bg-orange-100 text-orange-600 group-hover:bg-orange-500 group-hover:text-white"
+                      isDisabled ? "bg-zinc-200 text-zinc-400" : (isPharmacy ? "bg-emerald-100 text-emerald-600 group-hover:bg-emerald-500 group-hover:text-white" : "bg-orange-100 text-orange-600 group-hover:bg-orange-500 group-hover:text-white")
                     )}>
                       <Tag size={18} />
                     </div>
@@ -12492,7 +13316,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   <h4 className="font-bold text-zinc-800 leading-tight mb-1">{service.name}</h4>
                   <p className="text-[10px] text-zinc-500 line-clamp-2 mb-3">{service.description}</p>
                   <div className="mt-auto flex items-center justify-between">
-                    <p className="font-black text-orange-600">Kz {service.price.toLocaleString()}</p>
+                    <p className={cn("font-black", themeText)}>Kz {service.price.toLocaleString()}</p>
                     {needsProduct && (
                       <div className="flex items-center gap-1 text-[8px] font-bold text-rose-500 uppercase">
                         <AlertCircle size={10} /> Requer Produto

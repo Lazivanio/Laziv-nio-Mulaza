@@ -142,6 +142,7 @@ export interface Establishment {
   staff_count?: number;
   today_sales?: number;
   bank_accounts?: BankAccount[];
+  type?: 'comum' | 'farmácia';
 }
 
 export type Store = Establishment;
