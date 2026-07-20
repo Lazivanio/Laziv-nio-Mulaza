@@ -23,9 +23,34 @@ import {
   ShieldAlert,
   Monitor,
   FileDown,
+  Building,
+  Heart,
+  FileText,
+  AlertTriangle,
+  Network,
+  LayoutDashboard,
+  TrendingUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, HRRole, HRSalary, HRSalaryPayment, HRAttendance, HRVacation, Establishment as EstablishmentType } from '../types';
+
+// HR Sub-tab modules imports
+import { Department, Contract, Leave, Evaluation, Vacancy, Candidate, Interview, Benefit, Advance, Loan, Warning, Resignation } from './rh/types';
+import { DashboardTab } from './rh/DashboardTab';
+import { DepartmentsTab } from './rh/DepartmentsTab';
+import { ContractsTab } from './rh/ContractsTab';
+import { LeavesTab } from './rh/LeavesTab';
+import { EvaluationsTab } from './rh/EvaluationsTab';
+import { RecruitmentTab } from './rh/RecruitmentTab';
+import { ResumesTab } from './rh/ResumesTab';
+import { PayrollTab } from './rh/PayrollTab';
+import { BenefitsTab } from './rh/BenefitsTab';
+import { AdvancesTab } from './rh/AdvancesTab';
+import { LoansTab } from './rh/LoansTab';
+import { WarningsTab } from './rh/WarningsTab';
+import { ResignationsTab } from './rh/ResignationsTab';
+import { ReportsTab } from './rh/ReportsTab';
+import { OrganogramTab } from './rh/OrganogramTab';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -91,7 +116,7 @@ const AVAILABLE_PERMISSIONS = [
 ];
 
 export const OwnerRH = ({ user }: { user: User }) => {
-  const [activeTab, setActiveTab] = useState<'employees' | 'roles' | 'salaries' | 'attendance' | 'vacations'>('employees');
+  const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [employees, setEmployees] = useState<User[]>([]);
   const [roles, setRoles] = useState<HRRole[]>([]);
   const [salaries, setSalaries] = useState<HRSalary[]>([]);
@@ -101,6 +126,89 @@ export const OwnerRH = ({ user }: { user: User }) => {
   const [establishments, setEstablishments] = useState<EstablishmentType[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  // Modular HR State Variables
+  const [departments, setDepartments] = useState<Department[]>(() => {
+    const saved = localStorage.getItem('rh_departments');
+    return saved ? JSON.parse(saved) : [
+      { id: '1', name: 'Administração', description: 'Gestão executiva e administrativa da empresa.', budget: 500000 },
+      { id: '2', name: 'Vendas & PDV', description: 'Equipa de atendimento ao público e caixa.', budget: 300000 },
+      { id: '3', name: 'Logística', description: 'Gestão de stock, armazéns e entregas.', budget: 200000 }
+    ];
+  });
+  useEffect(() => { localStorage.setItem('rh_departments', JSON.stringify(departments)); }, [departments]);
+
+  const [contracts, setContracts] = useState<Contract[]>(() => {
+    const saved = localStorage.getItem('rh_contracts');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('rh_contracts', JSON.stringify(contracts)); }, [contracts]);
+
+  const [leaves, setLeaves] = useState<Leave[]>(() => {
+    const saved = localStorage.getItem('rh_leaves');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('rh_leaves', JSON.stringify(leaves)); }, [leaves]);
+
+  const [evaluations, setEvaluations] = useState<Evaluation[]>(() => {
+    const saved = localStorage.getItem('rh_evaluations');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('rh_evaluations', JSON.stringify(evaluations)); }, [evaluations]);
+
+  const [vacancies, setVacancies] = useState<Vacancy[]>(() => {
+    const saved = localStorage.getItem('rh_vacancies');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('rh_vacancies', JSON.stringify(vacancies)); }, [vacancies]);
+
+  const [candidates, setCandidates] = useState<Candidate[]>(() => {
+    const saved = localStorage.getItem('rh_candidates');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('rh_candidates', JSON.stringify(candidates)); }, [candidates]);
+
+  const [interviews, setInterviews] = useState<Interview[]>(() => {
+    const saved = localStorage.getItem('rh_interviews');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('rh_interviews', JSON.stringify(interviews)); }, [interviews]);
+
+  const [benefits, setBenefits] = useState<Benefit[]>(() => {
+    const saved = localStorage.getItem('rh_benefits');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('rh_benefits', JSON.stringify(benefits)); }, [benefits]);
+
+  const [advances, setAdvances] = useState<Advance[]>(() => {
+    const saved = localStorage.getItem('rh_advances');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('rh_advances', JSON.stringify(advances)); }, [advances]);
+
+  const [loans, setLoans] = useState<Loan[]>(() => {
+    const saved = localStorage.getItem('rh_loans');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('rh_loans', JSON.stringify(loans)); }, [loans]);
+
+  const [warnings, setWarnings] = useState<Warning[]>(() => {
+    const saved = localStorage.getItem('rh_warnings');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('rh_warnings', JSON.stringify(warnings)); }, [warnings]);
+
+  const [resignations, setResignations] = useState<Resignation[]>(() => {
+    const saved = localStorage.getItem('rh_resignations');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('rh_resignations', JSON.stringify(resignations)); }, [resignations]);
+
+  const [employeeDepartments, setEmployeeDepartments] = useState<{ [employeeId: string]: string }>(() => {
+    const saved = localStorage.getItem('rh_employee_departments');
+    return saved ? JSON.parse(saved) : {};
+  });
+  useEffect(() => { localStorage.setItem('rh_employee_departments', JSON.stringify(employeeDepartments)); }, [employeeDepartments]);
 
   // Modals
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
@@ -122,7 +230,8 @@ export const OwnerRH = ({ user }: { user: User }) => {
     bi_number: '',
     address: '',
     nif: '',
-    social_security_number: ''
+    social_security_number: '',
+    department_id: ''
   });
   const [roleForm, setRoleForm] = useState({ 
     name: '', 
@@ -229,6 +338,13 @@ export const OwnerRH = ({ user }: { user: User }) => {
       
       if (res.ok) {
         setIsEmployeeModalOpen(false);
+        const empId = editingEmployee ? editingEmployee.id.toString() : (data.id || data.employee?.id || Date.now().toString()).toString();
+        if (employeeForm.department_id) {
+          setEmployeeDepartments(prev => ({
+            ...prev,
+            [empId]: employeeForm.department_id
+          }));
+        }
         setEditingEmployee(null);
         await fetchData();
       } else {
@@ -441,48 +557,162 @@ export const OwnerRH = ({ user }: { user: User }) => {
     }
   };
 
+  const categories = [
+    {
+      id: 'dashboard',
+      name: 'Dashboard',
+      icon: LayoutDashboard,
+      tabs: []
+    },
+    {
+      id: 'pessoal',
+      name: 'Pessoal',
+      icon: Users,
+      tabs: [
+        { id: 'employees', label: 'Funcionários', icon: Users },
+        { id: 'roles', label: 'Cargos', icon: ShieldCheck },
+        { id: 'organogram', label: 'Organograma', icon: Network },
+      ]
+    },
+    {
+      id: 'financeiro',
+      name: 'Financeiro',
+      icon: DollarSign,
+      tabs: [
+        { id: 'salaries', label: 'Histórico Salarial', icon: DollarSign },
+        { id: 'payroll', label: 'Folha Salarial', icon: FileText },
+        { id: 'benefits', label: 'Benefícios', icon: Heart },
+        { id: 'advances', label: 'Adiantamentos', icon: DollarSign },
+        { id: 'loans', label: 'Empréstimos', icon: DollarSign },
+      ]
+    },
+    {
+      id: 'gestao',
+      name: 'Gestão',
+      icon: Building,
+      tabs: [
+        { id: 'departments', label: 'Departamentos', icon: Building },
+        { id: 'contracts', label: 'Contratos', icon: Briefcase },
+        { id: 'attendance', label: 'Presenças', icon: Clock },
+        { id: 'leaves', label: 'Férias & Licenças', icon: Calendar },
+        { id: 'evaluations', label: 'Avaliações', icon: UserCheck },
+        { id: 'warnings', label: 'Advertências', icon: AlertTriangle },
+        { id: 'resignations', label: 'Demissões', icon: UserX },
+      ]
+    },
+    {
+      id: 'atracao',
+      name: 'Atração & Análise',
+      icon: TrendingUp,
+      tabs: [
+        { id: 'recruitment', label: 'Recrutamento', icon: Briefcase },
+        { id: 'resumes', label: 'Banco de Currículos', icon: FileText },
+        { id: 'reports', label: 'Relatórios de Gestão', icon: FileDown },
+      ]
+    }
+  ];
+
+  const currentCategory = categories.find(cat => 
+    cat.id === activeTab || cat.tabs.some(t => t.id === activeTab)
+  ) || categories[0];
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black">Recursos Humanos</h1>
-          <p className="text-zinc-500">Gestão de funcionários, cargos, salários e presenças</p>
-        </div>
-        <div className="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0">
-          {[
-            { id: 'employees', label: 'Funcionários', icon: Users },
-            { id: 'roles', label: 'Cargos', icon: ShieldCheck },
-            { id: 'salaries', label: 'Salários', icon: DollarSign },
-            { id: 'attendance', label: 'Presenças', icon: Clock },
-            { id: 'vacations', label: 'Férias', icon: Calendar },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap",
-                activeTab === tab.id 
-                  ? "bg-black text-white shadow-lg shadow-black/20" 
-                  : "bg-white text-zinc-500 hover:bg-zinc-100"
-              )}
-            >
-              <tab.icon size={18} />
-              {tab.label}
-            </button>
-          ))}
+          <p className="text-zinc-500">Gestão completa de pessoal, financeiro, administrativo e contratações</p>
         </div>
       </div>
 
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={activeTab}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          className="space-y-6"
-        >
-          {/* Employees Tab */}
-          {activeTab === 'employees' && (
+      {/* Top Navigation */}
+      <div className="flex flex-col gap-3">
+        {/* Main Categories Row */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-none">
+          {categories.map((category) => {
+            const isSelected = currentCategory.id === category.id;
+            return (
+              <button
+                key={category.id}
+                onClick={() => {
+                  if (category.id === 'dashboard') {
+                    setActiveTab('dashboard');
+                  } else if (category.tabs.length > 0) {
+                    setActiveTab(category.tabs[0].id);
+                  }
+                }}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap border",
+                  isSelected 
+                    ? "bg-black text-white border-black shadow-md shadow-black/10" 
+                    : "bg-white text-zinc-600 border-zinc-200/60 hover:bg-zinc-50"
+                )}
+              >
+                <category.icon size={15} />
+                <span>{category.name}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Sub-tabs Row for the selected category */}
+        {currentCategory.tabs.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto py-1.5 px-2 bg-zinc-50 border border-zinc-200/60 rounded-xl scrollbar-none">
+            {currentCategory.tabs.map((tab) => {
+              const isTabSelected = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap",
+                    isTabSelected 
+                      ? "bg-white text-zinc-950 shadow-sm border border-zinc-200/60" 
+                      : "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/60"
+                  )}
+                >
+                  <tab.icon size={14} />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Content Area */}
+      <div className="w-full">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-6"
+          >
+            {/* Dashboard Tab */}
+            {activeTab === 'dashboard' && (
+              <DashboardTab 
+                employees={employees}
+                departments={departments}
+                contracts={contracts}
+                leaves={leaves}
+                vacations={vacations}
+                vacancies={vacancies}
+                candidates={candidates}
+                interviews={interviews}
+                warnings={warnings}
+                advances={advances}
+                loans={loans}
+                resignations={resignations}
+                employeeDepartments={employeeDepartments}
+                setActiveTab={setActiveTab}
+                setIsEmployeeModalOpen={setIsEmployeeModalOpen}
+              />
+            )}
+
+            {/* Employees Tab */}
+            {activeTab === 'employees' && (
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <div className="relative flex-1 max-w-md">
@@ -504,7 +734,8 @@ export const OwnerRH = ({ user }: { user: User }) => {
                       bi_number: '',
                       address: '',
                       nif: '',
-                      social_security_number: ''
+                      social_security_number: '',
+                      department_id: ''
                     });
                     setIsEmployeeModalOpen(true);
                   }}
@@ -598,7 +829,8 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                     bi_number: (emp as any).bi_number || '',
                                     address: (emp as any).address || '',
                                     nif: emp.nif || '',
-                                    social_security_number: emp.social_security_number || ''
+                                    social_security_number: emp.social_security_number || '',
+                                    department_id: employeeDepartments[emp.id.toString()] || ''
                                   });
                                   setIsEmployeeModalOpen(true);
                                 }}
@@ -952,69 +1184,147 @@ export const OwnerRH = ({ user }: { user: User }) => {
             </div>
           )}
 
-          {/* Vacations Tab */}
-          {activeTab === 'vacations' && (
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="font-bold text-lg">Gestão de Férias</h3>
-                <button 
-                  onClick={() => {
-                    setVacationForm({ user_id: '', start_date: '', end_date: '', notes: '' });
-                    setIsVacationModalOpen(true);
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
-                >
-                  <Plus size={18} />
-                  Marcar Férias
-                </button>
-              </div>
+          {/* Departments Tab */}
+          {activeTab === 'departments' && (
+            <DepartmentsTab 
+              departments={departments} 
+              setDepartments={setDepartments} 
+              employees={employees} 
+              employeeDepartments={employeeDepartments} 
+            />
+          )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {vacations.map(vac => (
-                  <Card key={vac.id} className="p-6">
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="p-3 bg-zinc-100 rounded-xl text-zinc-600">
-                        <Calendar size={24} />
-                      </div>
-                      <span className={cn(
-                        "px-2 py-1 rounded-lg text-[10px] font-bold uppercase",
-                        vac.status === 'approved' ? "bg-emerald-100 text-emerald-700" :
-                        vac.status === 'pending' ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"
-                      )}>
-                        {vac.status === 'approved' ? 'Aprovado' :
-                         vac.status === 'pending' ? 'Pendente' : 'Rejeitado'}
-                      </span>
-                    </div>
-                    <h4 className="font-bold text-lg mb-1">{vac.employee_name}</h4>
-                    <p className="text-xs text-zinc-500 mb-4">{vac.days_count} dias planeados</p>
-                    <div className="flex items-center gap-2 text-xs font-bold text-zinc-700 mb-6">
-                      <span>{new Date(vac.start_date).toLocaleDateString()}</span>
-                      <ChevronRight size={14} className="text-zinc-400" />
-                      <span>{new Date(vac.end_date).toLocaleDateString()}</span>
-                    </div>
-                    {vac.status === 'pending' && (
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={() => handleUpdateVacationStatus(vac.id, 'approved')}
-                          className="flex-1 py-2 bg-emerald-500 text-white text-xs font-bold rounded-xl hover:bg-emerald-600 transition-all"
-                        >
-                          Aprovar
-                        </button>
-                        <button 
-                          onClick={() => handleUpdateVacationStatus(vac.id, 'rejected')}
-                          className="flex-1 py-2 bg-rose-50 text-rose-600 text-xs font-bold rounded-xl hover:bg-rose-100 transition-all"
-                        >
-                          Rejeitar
-                        </button>
-                      </div>
-                    )}
-                  </Card>
-                ))}
-              </div>
-            </div>
+          {/* Contracts Tab */}
+          {activeTab === 'contracts' && (
+            <ContractsTab 
+              contracts={contracts} 
+              setContracts={setContracts} 
+              employees={employees} 
+            />
+          )}
+
+          {/* Férias & Licenças (Leaves) Tab */}
+          {activeTab === 'leaves' && (
+            <LeavesTab 
+              leaves={leaves} 
+              setLeaves={setLeaves} 
+              employees={employees} 
+            />
+          )}
+
+          {/* Evaluations Tab */}
+          {activeTab === 'evaluations' && (
+            <EvaluationsTab 
+              evaluations={evaluations} 
+              setEvaluations={setEvaluations} 
+              employees={employees} 
+            />
+          )}
+
+          {/* Recruitment Tab */}
+          {activeTab === 'recruitment' && (
+            <RecruitmentTab 
+              vacancies={vacancies} 
+              setVacancies={setVacancies} 
+              candidates={candidates} 
+              setCandidates={setCandidates} 
+              interviews={interviews} 
+              setInterviews={setInterviews} 
+            />
+          )}
+
+          {/* Resumes Tab */}
+          {activeTab === 'resumes' && (
+            <ResumesTab 
+              candidates={candidates} 
+              setCandidates={setCandidates} 
+            />
+          )}
+
+          {/* Payroll Tab */}
+          {activeTab === 'payroll' && (
+            <PayrollTab 
+              employees={employees} 
+              advances={advances}
+              setAdvances={setAdvances}
+              loans={loans}
+              setLoans={setLoans}
+              salaries={salaries}
+              salaryPayments={salaryPayments}
+              onPaymentSuccess={fetchData}
+            />
+          )}
+
+          {/* Benefits Tab */}
+          {activeTab === 'benefits' && (
+            <BenefitsTab 
+              benefits={benefits} 
+              setBenefits={setBenefits} 
+              employees={employees} 
+            />
+          )}
+
+          {/* Advances Tab */}
+          {activeTab === 'advances' && (
+            <AdvancesTab 
+              advances={advances} 
+              setAdvances={setAdvances} 
+              employees={employees} 
+            />
+          )}
+
+          {/* Loans Tab */}
+          {activeTab === 'loans' && (
+            <LoansTab 
+              loans={loans} 
+              setLoans={setLoans} 
+              employees={employees} 
+            />
+          )}
+
+          {/* Warnings Tab */}
+          {activeTab === 'warnings' && (
+            <WarningsTab 
+              warnings={warnings} 
+              setWarnings={setWarnings} 
+              employees={employees} 
+            />
+          )}
+
+          {/* Resignations Tab */}
+          {activeTab === 'resignations' && (
+            <ResignationsTab 
+              resignations={resignations} 
+              setResignations={setResignations} 
+              employees={employees} 
+              onRemoveEmployee={handleDeleteEmployee}
+            />
+          )}
+
+          {/* Reports Tab */}
+          {activeTab === 'reports' && (
+            <ReportsTab 
+              employees={employees} 
+              departments={departments}
+              contracts={contracts}
+              leaves={leaves}
+              evaluations={evaluations}
+              resignations={resignations}
+              attendance={attendance}
+            />
+          )}
+
+          {/* Organogram Tab */}
+          {activeTab === 'organogram' && (
+            <OrganogramTab 
+              employees={employees} 
+              departments={departments} 
+              employeeDepartments={employeeDepartments} 
+            />
           )}
         </motion.div>
       </AnimatePresence>
+    </div>
 
       {/* Confirmation Modal */}
       <Modal 
@@ -1188,6 +1498,18 @@ export const OwnerRH = ({ user }: { user: User }) => {
               >
                 <option value="">Selecionar Cargo</option>
                 {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-500 uppercase">Departamento</label>
+              <select 
+                required
+                value={employeeForm.department_id}
+                onChange={e => setEmployeeForm({...employeeForm, department_id: e.target.value})}
+                className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
+              >
+                <option value="">Selecionar Departamento</option>
+                {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </div>
             <div className="space-y-2">

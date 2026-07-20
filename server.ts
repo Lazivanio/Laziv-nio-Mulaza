@@ -1973,7 +1973,7 @@ function initializeDatabase() {
         db.prepare(`
           INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, features)
           VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(ownerUser.id, firstEst.id, 'Empresarial', new Date().toISOString(), '2026-12-31', 'active', '{"reports": true, "multi_establishment": true, "api_access": true}');
+        `).run(ownerUser.id, firstEst.id, 'Empresarial', new Date().toISOString(), '2026-12-31', 'active', '{"reports": true, "multi_establishment": true, "api_access": true, "rh": true}');
       }
     }
 
@@ -2011,6 +2011,11 @@ function initializeDatabase() {
       db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Básico", 5000, 1, 100, '{"reports": false, "multi_establishment": false}');
       db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Profissional", 15000, 2, 1000, '{"reports": true, "multi_establishment": true}');
       db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Empresarial", 35000, 10, 5000, '{"reports": true, "multi_establishment": true, "api_access": true}');
+    }
+
+    const hasRHPlan = db.prepare("SELECT COUNT(*) as count FROM system_plans WHERE name = ?").get("Apenas RH") as any;
+    if (hasRHPlan.count === 0) {
+      db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Apenas RH", 15000, 1, 100, '{"reports": true, "multi_establishment": false, "rh": true, "only_rh": true}');
     }
 
     const settingsCount = db.prepare("SELECT COUNT(*) as count FROM system_settings").get() as any;
@@ -3170,6 +3175,9 @@ async function startServer() {
         }
       }
 
+      const limits = resolveUserPlanAndLimits(ownerId);
+      const userFeatures = limits?.features || { reports: false, multi_establishment: false, api_access: false, rh: false };
+
       res.json({ 
         id: user.id, 
         email: user.email, 
@@ -3183,7 +3191,8 @@ async function startServer() {
         permissions: effectivePermissions,
         status: user.status,
         fiscal_regime: fiscalRegime || 'geral',
-        billing_mode: billingMode || 'tradicional'
+        billing_mode: billingMode || 'tradicional',
+        features: userFeatures
       });
     } else {
       res.status(401).json({ error: "Credenciais inválidas" });
@@ -3642,7 +3651,7 @@ async function startServer() {
   });
 
   app.post("/api/admin/clients", (req, res) => {
-    const { name, company_name, email, password, phone, nif, address, plan_type, establishment_types, license_duration_months } = req.body;
+    const { name, company_name, email, password, phone, nif, address, plan_type, establishment_types, license_duration_months, rh_module } = req.body;
     try {
       // 1. Create the owner user
       const result = db.prepare("INSERT INTO users (name, company_name, email, password, role, phone, nif, address) VALUES (?, ?, ?, ?, 'owner', ?, ?, ?)").run(name, company_name, email, password, phone, nif, address);
@@ -3714,6 +3723,10 @@ async function startServer() {
         max_establishments = 10;
         max_products = 5000;
         features = { reports: true, multi_establishment: true, api_access: true } as any;
+      } else if (resolvedPlan === "Apenas RH") {
+        max_establishments = 1;
+        max_products = 100;
+        features = { reports: true, multi_establishment: false, rh: true, only_rh: true } as any;
       }
       
       db.prepare(`
@@ -3725,7 +3738,7 @@ async function startServer() {
         resolvedPlan, 
         startDateStr, 
         expiryDateStr, 
-        JSON.stringify({ max_establishments, max_products, ...features })
+        JSON.stringify({ max_establishments, max_products, ...features, rh: (rh_module === true || resolvedPlan === "Apenas RH") })
       );
 
       res.json({ success: true });
@@ -4386,7 +4399,18 @@ async function startServer() {
       for (const lic of activeLicenses) {
         // Resolve price from plans table (or system_plans if that's where they are)
         const plan = db.prepare("SELECT price FROM system_plans WHERE name = ?").get(lic.plan_type) as any;
-        const price = plan?.price || 0;
+        let basePrice = plan?.price || 0;
+        let price = basePrice;
+        
+        let licFeatures: any = {};
+        try {
+          licFeatures = typeof lic.features === 'string' ? JSON.parse(lic.features) : (lic.features || {});
+        } catch (e) {}
+
+        const hasRH = licFeatures && licFeatures.rh === true;
+        if (hasRH) {
+          price += 3000;
+        }
 
         const existing = db.prepare(`
           SELECT id FROM system_invoices 
@@ -4407,8 +4431,15 @@ async function startServer() {
         const invoice_number = `FT ${series}/${year}/${sequence}`;
         const items = [{
           description: `Subscrição Mensal - Plano ${lic.plan_type} (${currentMonthYear})`,
-          amount: price
+          amount: basePrice
         }];
+        
+        if (hasRH) {
+          items.push({
+            description: `Módulo Extra - Recursos Humanos (RH) (${currentMonthYear})`,
+            amount: 3000
+          });
+        }
 
         db.prepare(`
           INSERT INTO system_invoices (doc_type, series, invoice_number, invoice_date, owner_id, owner_name, owner_nif, total_amount, tax_amount, items, status, payment_method)
@@ -5116,24 +5147,25 @@ async function startServer() {
     }
 
     try {
-      const user = db.prepare("SELECT is_test_account, created_at FROM users WHERE id = ?").get(ownerId) as any;
+      const user = db.prepare("SELECT email, is_test_account, created_at FROM users WHERE id = ?").get(ownerId) as any;
       if (!user) {
         return { plan_type: "Básico", max_establishments: 1, max_products: 100, features: { reports: false, multi_establishment: false, api_access: false } };
       }
 
+      const isTestOwner = user.email === 'owner@factu.com';
       const isTest = user.is_test_account === 1;
       const createdAtStr = user.created_at;
       const createdAtTime = new Date(createdAtStr + (createdAtStr.includes('Z') || createdAtStr.includes('UTC') ? '' : ' UTC')).getTime();
       const diffMs = Date.now() - createdAtTime;
       const diffDays = diffMs / (24 * 60 * 60 * 1000);
 
-      // If test account and over 30 days, fallback to basic package limits
-      if (isTest && diffDays > 30) {
+      // If test account and over 30 days, fallback to basic package limits (except owner@factu.com)
+      if (isTest && diffDays > 30 && !isTestOwner) {
         return {
           plan_type: "Básico",
           max_establishments: 1,
           max_products: 100,
-          features: { reports: false, multi_establishment: false, api_access: false }
+          features: { reports: false, multi_establishment: false, api_access: false, rh: false }
         };
       }
 
@@ -5165,11 +5197,24 @@ async function startServer() {
           features.reports = true;
           features.multi_establishment = true;
           features.api_access = true;
+          features.rh = true;
         } else if (planName.includes('prof') || planName.includes('pro')) {
           max_establishments = 2;
           max_products = 1000;
           features.reports = true;
           features.multi_establishment = true;
+          features.rh = true;
+        } else if (planName.includes('rh') || planName.includes('recursos')) {
+          max_establishments = 1;
+          max_products = 100;
+          features.reports = true;
+          features.multi_establishment = false;
+          features.rh = true;
+          features.only_rh = true;
+        }
+
+        if (isTestOwner || isTest) {
+          features.rh = true;
         }
 
         return {
@@ -5182,10 +5227,10 @@ async function startServer() {
 
       // Default fallback (within trial period, has default license or no active license yet)
       return {
-        plan_type: "Premium (Teste)",
+        plan_type: isTestOwner ? "Empresarial (Teste)" : "Premium (Teste)",
         max_establishments: 10,
         max_products: 5000,
-        features: { reports: true, multi_establishment: true, api_access: true }
+        features: { reports: true, multi_establishment: true, api_access: true, rh: true }
       };
     } catch (e) {
       console.error("[resolveUserPlanAndLimits] Error resolving user plan:", e);
@@ -8061,12 +8106,12 @@ function formatDateToIso(dateStr?: string) {
     const { salary_id, amount, bonus, absence_discount, ss_discount, irt_tax, type, description, month } = req.body;
     
     try {
-      db.transaction(() => {
+      const paymentId = db.transaction(() => {
         const result = db.prepare(`
           INSERT INTO hr_salary_payments (salary_id, amount, bonus, absence_discount, ss_discount, irt_tax, type, description, month) 
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(salary_id, amount, bonus || 0, absence_discount || 0, ss_discount || 0, irt_tax || 0, type, description, month);
-        const paymentId = result.lastInsertRowid;
+        const pId = result.lastInsertRowid;
 
         // Record in financial_transactions
         const salaryInfo = db.prepare(`
@@ -8086,7 +8131,7 @@ function formatDateToIso(dateStr?: string) {
             `).run(
               salaryInfo.establishment_id, establishment.owner_id, Number(amount),
               `Pagamento Salário - ${salaryInfo.employee_name} (${month})`,
-              new Date().toISOString(), paymentId
+              new Date().toISOString(), pId
             );
           }
         }
@@ -8094,8 +8139,9 @@ function formatDateToIso(dateStr?: string) {
         if (type === 'full_payment') {
           db.prepare("UPDATE hr_salaries SET last_payment_date = CURRENT_TIMESTAMP WHERE id = ?").run(salary_id);
         }
+        return pId;
       })();
-      res.json({ success: true });
+      res.json({ success: true, id: paymentId });
     } catch (error: any) {
       console.error("Salary payment error:", error);
       res.status(400).json({ error: error.message });

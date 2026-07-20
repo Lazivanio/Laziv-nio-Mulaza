@@ -123,10 +123,17 @@ function cn(...inputs: ClassValue[]) {
 
 function hasPermission(user: User | null, permissionId: string): boolean {
   if (!user) return false;
+  if (user.features?.only_rh && permissionId.startsWith('pos_')) return false;
   if (user.role === 'admin' || user.role === 'owner') return true;
   const perms = user.permissions;
   if (!perms || !Array.isArray(perms)) return false;
   return perms.includes(permissionId);
+}
+
+function hasRHModule(user: User | null): boolean {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return !!user.features?.rh;
 }
 
 // --- Components ---
@@ -730,15 +737,19 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             {user.role === 'owner' && (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Visão Geral" to="/owner" onClick={closeSidebar} />
-                <SidebarItem icon={Store} label="Meus Estabelecimentos" to="/owner/establishments" onClick={closeSidebar} />
-                <SidebarItem icon={Briefcase} label="RH" to="/owner/rh" onClick={closeSidebar} />
-                <SidebarItem icon={Users} label="Parceiros" to="/owner/partners" onClick={closeSidebar} />
-                <SidebarItem icon={ShoppingCart} label="Compras" to="/owner/purchases" onClick={closeSidebar} />
-                <SidebarItem icon={Sparkles} label="Serviços" to="/owner/services" onClick={closeSidebar} />
-                <SidebarItem icon={FileText} label="Documentos" to="/owner/documents" onClick={closeSidebar} />
-                <SidebarItem icon={Warehouse} label="Armazéns" to="/owner/warehouses" onClick={closeSidebar} />
-                <SidebarItem icon={DollarSign} label="Financeiro" to="/owner/finance" onClick={closeSidebar} />
-                <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
+                {!user.features?.only_rh && <SidebarItem icon={Store} label="Meus Estabelecimentos" to="/owner/establishments" onClick={closeSidebar} />}
+                {hasRHModule(user) && <SidebarItem icon={Briefcase} label="RH" to="/owner/rh" onClick={closeSidebar} />}
+                {!user.features?.only_rh && (
+                  <>
+                    <SidebarItem icon={Users} label="Parceiros" to="/owner/partners" onClick={closeSidebar} />
+                    <SidebarItem icon={ShoppingCart} label="Compras" to="/owner/purchases" onClick={closeSidebar} />
+                    <SidebarItem icon={Sparkles} label="Serviços" to="/owner/services" onClick={closeSidebar} />
+                    <SidebarItem icon={FileText} label="Documentos" to="/owner/documents" onClick={closeSidebar} />
+                    <SidebarItem icon={Warehouse} label="Armazéns" to="/owner/warehouses" onClick={closeSidebar} />
+                    <SidebarItem icon={DollarSign} label="Financeiro" to="/owner/finance" onClick={closeSidebar} />
+                    <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
+                  </>
+                )}
                 <SidebarItem icon={Settings} label="Configurações" to="/owner/settings" onClick={closeSidebar} />
               </>
             )}
@@ -746,7 +757,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Painel e Insights" to="/seller/dashboard" onClick={closeSidebar} />
                 {hasPermission(user, 'pos_access') && <SidebarItem icon={ShoppingCart} label="Vendas (PDV)" to="/seller" onClick={closeSidebar} />}
-                {hasPermission(user, 'hr_manage') && <SidebarItem icon={Briefcase} label="RH" to="/seller/rh" onClick={closeSidebar} />}
+                {hasRHModule(user) && hasPermission(user, 'hr_manage') && <SidebarItem icon={Briefcase} label="RH" to="/seller/rh" onClick={closeSidebar} />}
                 {hasPermission(user, 'pos_withdraw') && <SidebarItem icon={Wallet} label="Movimentos" to="/seller/movements" onClick={closeSidebar} />}
                 {hasPermission(user, 'pos_close_cashier') && <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />}
                 <SidebarItem icon={History} label="Histórico" to="/seller/history" onClick={closeSidebar} />
@@ -764,7 +775,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
                 {hasPermission(user, 'pos_access') && <SidebarItem icon={ShoppingCart} label="Vendas (PDV)" to="/seller" onClick={closeSidebar} />}
                 {hasPermission(user, 'pos_close_cashier') && <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />}
                 {hasPermission(user, 'suppliers_manage') && <SidebarItem icon={ShoppingBag} label="Compras" to="/manager/purchases" onClick={closeSidebar} />}
-                {hasPermission(user, 'hr_manage') && <SidebarItem icon={Briefcase} label="RH" to="/manager/rh" onClick={closeSidebar} />}
+                {hasRHModule(user) && hasPermission(user, 'hr_manage') && <SidebarItem icon={Briefcase} label="RH" to="/manager/rh" onClick={closeSidebar} />}
                 {(hasPermission(user, 'clients_manage') || hasPermission(user, 'suppliers_manage')) && <SidebarItem icon={Users} label="Parceiros" to="/manager/partners" onClick={closeSidebar} />}
                 {hasPermission(user, 'services_manage') && <SidebarItem icon={Sparkles} label="Serviços" to="/manager/services" onClick={closeSidebar} />}
                 {hasPermission(user, 'documents_view') && <SidebarItem icon={FileText} label="Documentos" to="/manager/documents" onClick={closeSidebar} />}
@@ -998,6 +1009,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [clientLicenseDuration, setClientLicenseDuration] = useState(12);
   const [clientEstTypes, setClientEstTypes] = useState<string[]>(['comum']);
   const [numEmpresarialEsts, setNumEmpresarialEsts] = useState(3);
+  const [includeRHModule, setIncludeRHModule] = useState(false);
 
   const handlePlanTypeChange = (plan: string) => {
     setClientPlanType(plan);
@@ -1007,6 +1019,9 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       setClientEstTypes(['comum', 'comum']);
     } else if (plan === 'Empresarial') {
       setClientEstTypes(Array(numEmpresarialEsts).fill('comum'));
+    } else if (plan === 'Apenas RH') {
+      setClientEstTypes(['comum']);
+      setIncludeRHModule(true);
     }
   };
 
@@ -1062,7 +1077,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
     plan_type: '',
     duration_months: 1,
     establishment_id: '',
-    user_id: ''
+    user_id: '',
+    rh_module: false
   });
 
   // Settings States
@@ -1181,7 +1197,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
           ...clientFormData,
           plan_type: clientPlanType,
           license_duration_months: clientLicenseDuration,
-          establishment_types: clientEstTypes
+          establishment_types: clientEstTypes,
+          rh_module: includeRHModule
         })
       });
       if (!res.ok) throw new Error("Failed to create client");
@@ -1192,6 +1209,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       setClientLicenseDuration(12);
       setClientEstTypes(['comum']);
       setNumEmpresarialEsts(3);
+      setIncludeRHModule(false);
       fetchData();
     } catch (e) {
       console.error(e);
@@ -1262,13 +1280,14 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
           expiry_date: expiry.toISOString().split('T')[0],
           features: { 
             max_establishments: selectedPlan?.max_establishments || 1, 
-            max_products: selectedPlan?.max_products || 100 
+            max_products: selectedPlan?.max_products || 100,
+            rh: !!licenseFormData.rh_module
           }
         })
       });
       if (!res.ok) throw new Error("Failed to manage license");
       setIsLicenseModalOpen(false);
-      setLicenseFormData({ plan_type: '', duration_months: 1, establishment_id: '', user_id: '' });
+      setLicenseFormData({ plan_type: '', duration_months: 1, establishment_id: '', user_id: '', rh_module: false });
       fetchData();
       if (isClientDetailsOpen && userId === selectedClient?.id) fetchClientDetails(userId);
     } catch (e) {
@@ -3784,6 +3803,21 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       <button 
                         onClick={() => {
                           setSelectedClient(clientDetails.client);
+                          const activeLic = clientDetails.licenses?.[0];
+                          let hasRH = false;
+                          if (activeLic) {
+                            try {
+                              const parsedFeatures = typeof activeLic.features === 'string' ? JSON.parse(activeLic.features) : activeLic.features;
+                              hasRH = parsedFeatures?.rh === true;
+                            } catch (e) {}
+                          }
+                          setLicenseFormData({
+                            plan_type: activeLic?.plan_type || '',
+                            duration_months: 12,
+                            establishment_id: '',
+                            user_id: clientDetails.client.id,
+                            rh_module: hasRH
+                          });
                           setIsLicenseModalOpen(true);
                         }}
                         className="w-full py-3 border border-zinc-200 rounded-xl font-bold text-sm hover:bg-zinc-50 transition-all flex items-center justify-center gap-2"
@@ -3908,6 +3942,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                         <option value="Básico">Básico (1 Estab.)</option>
                         <option value="Profissional">Profissional (2 Estab.)</option>
                         <option value="Empresarial">Empresarial (Até 10 Estab.)</option>
+                        <option value="Apenas RH">Apenas RH (15.000 Kz/mês)</option>
                       </select>
                     </div>
                     
@@ -3958,6 +3993,58 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                         </select>
                       </div>
                     ))}
+                  </div>
+
+                  {/* Toggle RH Module */}
+                  {clientPlanType !== 'Apenas RH' && (
+                    <div className="pt-2">
+                      <label className="flex items-center gap-3 cursor-pointer group p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
+                        <input 
+                          type="checkbox" 
+                          checked={includeRHModule}
+                          onChange={(e) => setIncludeRHModule(e.target.checked)}
+                          className="w-5 h-5 rounded-lg border-zinc-300 text-black focus:ring-black"
+                        />
+                        <div>
+                          <p className="text-xs font-bold text-zinc-800">Incluir Módulo de Recursos Humanos (RH)</p>
+                          <p className="text-[10px] text-zinc-500 font-medium mt-0.5">Adiciona o módulo de RH por mais Kz 3.000/mês ao preço do plano</p>
+                        </div>
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Price Summary Panel */}
+                  <div className="bg-zinc-900 text-zinc-100 p-4 rounded-2xl space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-zinc-400 font-bold">Plano {clientPlanType}:</span>
+                      <span className="text-xs font-black">
+                        Kz {clientPlanType === 'Básico' ? '5.000' : clientPlanType === 'Profissional' ? '15.000' : clientPlanType === 'Apenas RH' ? '15.000' : '35.000'}/mês
+                      </span>
+                    </div>
+                    {includeRHModule && clientPlanType !== 'Apenas RH' && (
+                      <div className="flex justify-between items-center text-emerald-400">
+                        <span className="text-xs font-bold">Módulo Recursos Humanos (RH):</span>
+                        <span className="text-xs font-black">+ Kz 3.000/mês</span>
+                      </div>
+                    )}
+                    <div className="border-t border-zinc-800 my-1 pt-1 flex justify-between items-center text-white">
+                      <span className="text-xs font-black uppercase tracking-wider">Preço Total Mensal:</span>
+                      <span className="text-sm font-black">
+                        Kz {(
+                          (clientPlanType === 'Básico' ? 5000 : clientPlanType === 'Profissional' ? 15000 : clientPlanType === 'Apenas RH' ? 15000 : 35000) + 
+                          (includeRHModule && clientPlanType !== 'Apenas RH' ? 3000 : 0)
+                        ).toLocaleString()}/mês
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-zinc-400 text-[10px] font-bold">
+                      <span>Total Contrato ({clientLicenseDuration} Meses):</span>
+                      <span>
+                        Kz {(
+                          ((clientPlanType === 'Básico' ? 5000 : clientPlanType === 'Profissional' ? 15000 : clientPlanType === 'Apenas RH' ? 15000 : 35000) + 
+                          (includeRHModule && clientPlanType !== 'Apenas RH' ? 3000 : 0)) * clientLicenseDuration
+                        ).toLocaleString()}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -4115,6 +4202,21 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       </option>
                     ))}
                   </select>
+                </div>
+
+                <div className="pt-2">
+                  <label className="flex items-center gap-3 cursor-pointer group p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
+                    <input 
+                      type="checkbox" 
+                      checked={!!licenseFormData.rh_module}
+                      onChange={(e) => setLicenseFormData({...licenseFormData, rh_module: e.target.checked})}
+                      className="w-5 h-5 rounded-lg border-zinc-300 text-black focus:ring-black"
+                    />
+                    <div>
+                      <p className="text-xs font-bold text-zinc-800">Incluir Módulo de Recursos Humanos (RH)</p>
+                      <p className="text-[10px] text-zinc-500 font-medium mt-0.5">Adiciona o módulo de RH por mais Kz 3.000/mês ao preço do plano</p>
+                    </div>
+                  </label>
                 </div>
 
                 <div className="pt-4">
@@ -15866,7 +15968,7 @@ export default function App() {
                 <Route path="/owner/warehouses" element={<OwnerWarehouses user={user} />} />
                 <Route path="/owner/finance" element={<OwnerFinance user={user} />} />
                 <Route path="/owner/finance/billing" element={<OwnerFinance user={user} defaultTab="billing" />} />
-                <Route path="/owner/rh" element={<OwnerRH user={user} />} />
+                {hasRHModule(user) && <Route path="/owner/rh" element={<OwnerRH user={user} />} />}
                 <Route path="/owner/reports" element={<OwnerReports user = {user} />} />
                 <Route path="/owner/currencies" element={<OwnerCurrencies user={user} />} />
                 <Route path="/owner/settings" element={<OwnerSettings user={user} onUpdateUser={handleUpdateUser} />} />
@@ -15880,7 +15982,7 @@ export default function App() {
               <>
                 <Route path="/seller" element={<SellerPOS user={user} onUpdate={setUser} />} />
                 <Route path="/seller/dashboard" element={<SellerDashboard user={user} />} />
-                <Route path="/seller/rh" element={<OwnerRH user={user} />} />
+                {hasRHModule(user) && <Route path="/seller/rh" element={<OwnerRH user={user} />} />}
                 <Route path="/seller/movements" element={<SellerCashMovements user={user} />} />
                 <Route path="/seller/history" element={<SellerHistory user={user} />} />
                 <Route path="/seller/settings" element={<SellerSettings user={user} onUpdate={handleLogin} onLogout={handleLogout} />} />
@@ -15896,7 +15998,7 @@ export default function App() {
                   <MyEstablishments user={user} />
                 } />
                 <Route path="/manager/establishments/:establishmentId" element={<EstablishmentAdmin user={user} />} />
-                <Route path="/manager/rh" element={<OwnerRH user={user} />} />
+                {hasRHModule(user) && <Route path="/manager/rh" element={<OwnerRH user={user} />} />}
                 <Route path="/manager/purchases" element={<OwnerPurchases user={user} />} />
                 <Route path="/manager/partners" element={<OwnerPartners user={user} />} />
                 <Route path="/manager/services" element={<OwnerServices user={user} />} />

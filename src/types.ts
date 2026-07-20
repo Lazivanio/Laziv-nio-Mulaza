@@ -54,6 +54,13 @@ export interface User {
   bi_number?: string;
   social_security_number?: string;
   address?: string;
+  features?: {
+    reports?: boolean;
+    multi_establishment?: boolean;
+    api_access?: boolean;
+    rh?: boolean;
+    [key: string]: any;
+  };
 }
 
 export interface HRRole {

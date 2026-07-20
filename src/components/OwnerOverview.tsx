@@ -19,7 +19,11 @@ import {
   PieChart as PieChartIcon,
   ShieldAlert,
   Calendar,
-  CheckCircle2
+  CheckCircle2,
+  ShieldCheck,
+  Briefcase,
+  Settings,
+  ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../lib/utils';
@@ -151,6 +155,84 @@ export const OwnerOverview = ({ user }: { user: User }) => {
 
   const profit = stats.monthlySales - stats.totalExpenses;
   const profitMargin = stats.monthlySales > 0 ? (profit / stats.monthlySales) * 100 : 0;
+
+  if (user.features?.only_rh) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight">Portal de Recursos Humanos</h2>
+            <p className="text-zinc-500">
+              Controlo de pessoal, assiduidade, férias e processamento salarial.
+            </p>
+          </div>
+          <div className="text-left md:text-right">
+            <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Módulo SaaS</p>
+            <div className="flex items-center gap-2 text-emerald-600 font-bold">
+              <Activity size={16} />
+              <span>Controlo de RH Ativo</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+          <StatCard 
+            label="Total Colaboradores" 
+            value={stats.staffCount || 0} 
+            icon={Users} 
+            color="indigo"
+            subtitle="Funcionários registados"
+          />
+          <StatCard 
+            label="Despesa Salarial Mensal" 
+            value={`Kz ${(stats.financialHealth?.totalSalaries || 0).toLocaleString()}`} 
+            icon={DollarSign} 
+            color="emerald" 
+            subtitle="Estimativa total de folha salarial"
+          />
+          <StatCard 
+            label="Estado do Sistema" 
+            value="Disponível" 
+            icon={ShieldCheck} 
+            color="blue" 
+            subtitle="Serviços RH operacionais"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Card className="p-6 space-y-4">
+            <h3 className="font-bold text-lg flex items-center gap-2">
+              <Briefcase size={20} className="text-indigo-600" />
+              <span>Acesso Rápido</span>
+            </h3>
+            <p className="text-zinc-500 text-sm">
+              Use o módulo completo para gerir férias, aprovar faltas, registar salários e visualizar relatórios de desempenho da sua equipa.
+            </p>
+            <div className="pt-2">
+              <Link to="/owner/rh" className="inline-flex items-center gap-2 bg-zinc-900 text-white font-bold px-4 py-2.5 rounded-xl text-sm hover:bg-zinc-800 transition-all shadow-md">
+                Gerir Recursos Humanos <ArrowRight size={16} />
+              </Link>
+            </div>
+          </Card>
+
+          <Card className="p-6 space-y-4">
+            <h3 className="font-bold text-lg flex items-center gap-2">
+              <Settings size={20} className="text-zinc-600" />
+              <span>Definições do Perfil</span>
+            </h3>
+            <p className="text-zinc-500 text-sm">
+              Configure os seus dados fiscais, altere as credenciais administrativas da conta ou configure as notificações automáticas.
+            </p>
+            <div className="pt-2">
+              <Link to="/owner/settings" className="inline-flex items-center gap-2 bg-zinc-100 text-zinc-800 font-bold px-4 py-2.5 rounded-xl text-sm hover:bg-zinc-200 transition-all">
+                Configurações <ChevronRight size={16} />
+              </Link>
+            </div>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
