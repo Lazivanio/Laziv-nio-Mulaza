@@ -328,7 +328,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 
-// Migration: Ensure purchase_returns has establishment_id and supplier_id
+// Migration: Ensure purchase_returns has establishment_id, supplier_id, total_amount, reason
 function runStartupMigrations() {
   try {
     const purchaseReturnsCols = db.prepare("PRAGMA table_info(purchase_returns)").all() as any[];
@@ -338,6 +338,12 @@ function runStartupMigrations() {
       }
       if (!purchaseReturnsCols.some(col => col.name === 'supplier_id')) {
         db.exec("ALTER TABLE purchase_returns ADD COLUMN supplier_id INTEGER");
+      }
+      if (!purchaseReturnsCols.some(col => col.name === 'total_amount')) {
+        db.exec("ALTER TABLE purchase_returns ADD COLUMN total_amount REAL");
+      }
+      if (!purchaseReturnsCols.some(col => col.name === 'reason')) {
+        db.exec("ALTER TABLE purchase_returns ADD COLUMN reason TEXT");
       }
     }
 
@@ -402,12 +408,28 @@ function runStartupMigrations() {
       console.error("Migration error (system_logs):", e);
     }
 
-    // HR: Add social_security_number to users and discount to hr_salary_payments
+    // HR: Add social_security_number, cv_url, bank_name, bank_account, iban to users and discount to hr_salary_payments
     try {
       const userCols = db.prepare("PRAGMA table_info(users)").all() as any[];
       if (!userCols.some(col => col.name === 'social_security_number')) {
         db.exec("ALTER TABLE users ADD COLUMN social_security_number TEXT");
         console.log("[DB] Added social_security_number to users");
+      }
+      if (!userCols.some(col => col.name === 'cv_url')) {
+        db.exec("ALTER TABLE users ADD COLUMN cv_url TEXT");
+        console.log("[DB] Added cv_url to users");
+      }
+      if (!userCols.some(col => col.name === 'bank_name')) {
+        db.exec("ALTER TABLE users ADD COLUMN bank_name TEXT");
+        console.log("[DB] Added bank_name to users");
+      }
+      if (!userCols.some(col => col.name === 'bank_account')) {
+        db.exec("ALTER TABLE users ADD COLUMN bank_account TEXT");
+        console.log("[DB] Added bank_account to users");
+      }
+      if (!userCols.some(col => col.name === 'iban')) {
+        db.exec("ALTER TABLE users ADD COLUMN iban TEXT");
+        console.log("[DB] Added iban to users");
       }
       
       const salaryPaymentsCols = db.prepare("PRAGMA table_info(hr_salary_payments)").all() as any[];
@@ -1221,6 +1243,8 @@ function initializeDatabase() {
         sale_unit TEXT,
         requires_prescription INTEGER DEFAULT 0,
         controlled_substance INTEGER DEFAULT 0,
+        has_warranty INTEGER DEFAULT 0,
+        warranty_days INTEGER DEFAULT 0,
         status TEXT DEFAULT 'active',
         FOREIGN KEY(establishment_id) REFERENCES establishments(id),
         FOREIGN KEY(tax_id) REFERENCES taxes(id)
@@ -1694,7 +1718,9 @@ function initializeDatabase() {
         purchase_id INTEGER,
         items TEXT,
         amount REAL,
+        total_amount REAL,
         tax_amount REAL DEFAULT 0,
+        reason TEXT,
         type TEXT DEFAULT 'credit',
         note_category TEXT DEFAULT 'return',
         adjustment_amount REAL DEFAULT 0,
@@ -1741,6 +1767,122 @@ function initializeDatabase() {
         FOREIGN KEY(establishment_id) REFERENCES establishments(id),
         FOREIGN KEY(product_id) REFERENCES products(id),
         FOREIGN KEY(user_id) REFERENCES users(id)
+      );
+
+      -- SCHOOL MODULE TABLES
+      CREATE TABLE IF NOT EXISTS school_guardians (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        phone TEXT,
+        email TEXT,
+        address TEXT,
+        document_number TEXT,
+        relationship TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS school_classes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        school_year TEXT,
+        grade_level TEXT,
+        name TEXT,
+        room TEXT,
+        schedule TEXT,
+        teacher_name TEXT,
+        monthly_fee REAL DEFAULT 0,
+        due_day INTEGER DEFAULT 5,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS school_students (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        guardian_id INTEGER,
+        class_id INTEGER,
+        name TEXT,
+        birth_date TEXT,
+        gender TEXT,
+        photo_url TEXT,
+        document_number TEXT,
+        nationality TEXT,
+        phone TEXT,
+        email TEXT,
+        enrollment_code TEXT,
+        school_year TEXT,
+        grade_level TEXT,
+        entry_date TEXT,
+        status TEXT DEFAULT 'active',
+        monthly_fee REAL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(guardian_id) REFERENCES school_guardians(id),
+        FOREIGN KEY(class_id) REFERENCES school_classes(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS school_services (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        price REAL,
+        periodicity TEXT DEFAULT 'monthly',
+        tax_percentage REAL DEFAULT 0,
+        account_code TEXT,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS school_tuitions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        student_id INTEGER,
+        guardian_id INTEGER,
+        service_id INTEGER,
+        reference_month TEXT,
+        due_date TEXT,
+        amount REAL,
+        paid_amount REAL DEFAULT 0,
+        status TEXT DEFAULT 'pending',
+        invoice_number TEXT,
+        transaction_id INTEGER,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(student_id) REFERENCES school_students(id),
+        FOREIGN KEY(guardian_id) REFERENCES school_guardians(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS school_teachers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        name TEXT,
+        email TEXT,
+        phone TEXT,
+        document_number TEXT,
+        subjects TEXT,
+        contract_type TEXT DEFAULT 'full_time',
+        salary REAL DEFAULT 0,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS school_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        establishment_id INTEGER,
+        guardian_id INTEGER,
+        student_id INTEGER,
+        title TEXT,
+        message TEXT,
+        type TEXT DEFAULT 'due_warning',
+        channel TEXT DEFAULT 'app',
+        sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        status TEXT DEFAULT 'sent',
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id)
       );
 
       CREATE TABLE IF NOT EXISTS hr_salaries (
@@ -1923,6 +2065,8 @@ function initializeDatabase() {
       { name: 'sale_unit', def: 'TEXT' },
       { name: 'requires_prescription', def: 'INTEGER DEFAULT 0' },
       { name: 'controlled_substance', def: 'INTEGER DEFAULT 0' },
+      { name: 'has_warranty', def: 'INTEGER DEFAULT 0' },
+      { name: 'warranty_days', def: 'INTEGER DEFAULT 0' },
       { name: 'status', def: 'TEXT DEFAULT "active"' }
     ];
     pharmacyCols.forEach(col => {
@@ -1977,7 +2121,7 @@ function initializeDatabase() {
       }
     }
 
-    // Ensure default seller exists and is correctly configured
+    // Ensure default seller user exists, but without auto-assigned roles or permissions
     let sellerUser = db.prepare("SELECT id FROM users WHERE email = ?").get("seller@factu.com") as any;
     if (!sellerUser && ownerUser) {
        console.log("[DB] Creating default seller...");
@@ -1987,16 +2131,18 @@ function initializeDatabase() {
        sellerUser = { id: result.lastInsertRowid };
     }
 
-    const sellerPerms = '["hr_manage", "pos_access", "pos_sell", "pos_open_cashier", "pos_close_cashier"]';
-    
+    // Clean up any old auto-seeded 'Operador de Caixa' role if unassigned
+    try {
+      db.prepare("DELETE FROM hr_roles WHERE name = 'Operador de Caixa' AND (SELECT COUNT(*) FROM users WHERE role_id = hr_roles.id) = 0").run();
+    } catch (e) {}
+
     if (sellerUser && ownerUser) {
-      console.log("[DB] Updating/Verifying default seller staff records...");
       const firstEst = db.prepare("SELECT id FROM establishments ORDER BY id ASC LIMIT 1").get() as any;
       if (firstEst) {
-        db.prepare("UPDATE users SET owner_id = ?, establishment_id = ?, custom_permissions = ?, status = 'active', role = 'seller' WHERE id = ?").run(
+        // Clear auto-assigned role_id and custom_permissions from sellerUser so that owner MUST explicitly create/assign a role in RH
+        db.prepare("UPDATE users SET owner_id = ?, establishment_id = ?, role_id = NULL, custom_permissions = '[]', status = 'active', role = 'seller' WHERE id = ?").run(
           ownerUser.id,
           firstEst.id,
-          sellerPerms,
           sellerUser.id
         );
         db.prepare("INSERT OR IGNORE INTO staff (establishment_id, user_id, salary, shift_info) VALUES (?, ?, ?, ?)").run(firstEst.id, sellerUser.id, 75000, "Integral");
@@ -2494,12 +2640,19 @@ async function startServer() {
 
       console.log(`[Checkout] Signature generated for ${invoice_number}`);
 
-      // ENHANCEMENT: Enrich POS items with current cost
+      // ENHANCEMENT: Enrich POS items with current cost and warranty info
       const enrichedItems = (items || []).map((item: any) => {
-        if ((item.product_id || item.id) && !item.unit_cost) {
-          const prodId = item.product_id || item.id;
-          const prod = db.prepare("SELECT cost FROM products WHERE id = ?").get(prodId) as { cost: number } | undefined;
-          return { ...item, unit_cost: prod?.cost || 0 };
+        const prodId = item.product_id || item.id;
+        if (prodId) {
+          const prod = db.prepare("SELECT cost, has_warranty, warranty_days FROM products WHERE id = ?").get(prodId) as { cost: number; has_warranty: number; warranty_days: number } | undefined;
+          if (prod) {
+            return {
+              ...item,
+              unit_cost: item.unit_cost !== undefined ? item.unit_cost : (prod.cost || 0),
+              has_warranty: item.has_warranty !== undefined ? (item.has_warranty ? 1 : 0) : (prod.has_warranty ? 1 : 0),
+              warranty_days: item.warranty_days !== undefined ? Number(item.warranty_days) : (prod.warranty_days || 0)
+            };
+          }
         }
         return item;
       });
@@ -3045,6 +3198,37 @@ async function startServer() {
       let ownerId = user.id;
 
       if (user.role === 'seller' || user.role === 'manager') {
+        // 1. Validate that employee has a valid Cargo (role_id) registered in hr_roles
+        if (!user.role_id) {
+          logAction({
+            userId: user.id,
+            module: 'AUTH',
+            actionType: 'LOGIN_FAILURE',
+            description: `Acesso negado ao PDV: Funcionário sem cargo atribuído (${user.email || user.username})`,
+            status: 'failure',
+            req
+          });
+          return res.status(403).json({ 
+            error: "Acesso negado: O funcionário não possui um cargo atribuído. O proprietário deve criar um cargo e cadastrar o funcionário nos Recursos Humanos (RH) antes do login no PDV." 
+          });
+        }
+
+        const hrRole = db.prepare("SELECT id FROM hr_roles WHERE id = ?").get(user.role_id) as any;
+        if (!hrRole) {
+          logAction({
+            userId: user.id,
+            module: 'AUTH',
+            actionType: 'LOGIN_FAILURE',
+            description: `Acesso negado ao PDV: Cargo não existe ou foi eliminado (${user.email || user.username})`,
+            status: 'failure',
+            req
+          });
+          return res.status(403).json({ 
+            error: "Acesso negado: O cargo associado a este funcionário não existe ou foi removido do sistema. O proprietário deve atribuir um cargo válido nos Recursos Humanos (RH)." 
+          });
+        }
+
+        // 2. Validate establishment linkage
         if (!establishmentId) {
           const staff = db.prepare("SELECT establishment_id FROM staff WHERE user_id = ?").get(user.id) as any;
           if (staff) establishmentId = staff.establishment_id;
@@ -3053,16 +3237,18 @@ async function startServer() {
         if (establishmentId) {
           const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishmentId) as any;
           if (establishment) ownerId = establishment.owner_id;
-        } else if (user.role === 'seller') {
+        } else {
           logAction({
             userId: user.id,
             module: 'AUTH',
             actionType: 'LOGIN_FAILURE',
-            description: `Vendedor sem estabelecimento vinculado: ${user.email}`,
+            description: `Vendedor sem estabelecimento vinculado: ${user.email || user.username}`,
             status: 'failure',
             req
           });
-          return res.status(403).json({ error: "Esta conta de vendedor foi desativada ou não está vinculada a nenhum estabelecimento." });
+          return res.status(403).json({ 
+            error: "Acesso negado: O funcionário não está devidamente cadastrado ou vinculado a nenhum estabelecimento nos Recursos Humanos (RH)." 
+          });
         }
       }
 
@@ -5177,10 +5363,12 @@ async function startServer() {
       `).get(ownerId) as any;
 
       if (activeLicense) {
-        let features: any = { reports: true, multi_establishment: true };
+        let storedFeatures: any = {};
         try {
-          features = typeof activeLicense.features === 'string' ? JSON.parse(activeLicense.features) : (activeLicense.features || {});
+          storedFeatures = typeof activeLicense.features === 'string' ? JSON.parse(activeLicense.features) : (activeLicense.features || {});
         } catch (e) {}
+
+        let features: any = { reports: true, multi_establishment: true, ...storedFeatures };
 
         let max_establishments = 2;
         let max_products = 1000;
@@ -5197,13 +5385,11 @@ async function startServer() {
           features.reports = true;
           features.multi_establishment = true;
           features.api_access = true;
-          features.rh = true;
         } else if (planName.includes('prof') || planName.includes('pro')) {
           max_establishments = 2;
           max_products = 1000;
           features.reports = true;
           features.multi_establishment = true;
-          features.rh = true;
         } else if (planName.includes('rh') || planName.includes('recursos')) {
           max_establishments = 1;
           max_products = 100;
@@ -5213,8 +5399,11 @@ async function startServer() {
           features.only_rh = true;
         }
 
-        if (isTestOwner || isTest) {
-          features.rh = true;
+        // Keep rh feature as true ONLY if explicitly stored as true in license, if plan is Apenas RH, or for test owner (owner@factu.com)
+        if (typeof storedFeatures.rh === 'boolean') {
+          features.rh = storedFeatures.rh;
+        } else {
+          features.rh = isTestOwner || planName.includes('rh');
         }
 
         return {
@@ -5230,7 +5419,7 @@ async function startServer() {
         plan_type: isTestOwner ? "Empresarial (Teste)" : "Premium (Teste)",
         max_establishments: 10,
         max_products: 5000,
-        features: { reports: true, multi_establishment: true, api_access: true, rh: true }
+        features: { reports: true, multi_establishment: true, api_access: true, rh: isTestOwner }
       };
     } catch (e) {
       console.error("[resolveUserPlanAndLimits] Error resolving user plan:", e);
@@ -7751,7 +7940,7 @@ function formatDateToIso(dateStr?: string) {
   });
 
   app.post("/api/owner/hr/employees", (req, res) => {
-    let { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, cash_register_id, bi_number, address, nif, social_security_number, owner_id: bodyOwnerId } = req.body;
+    let { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, cash_register_id, bi_number, address, nif, social_security_number, cv_url, bank_name, bank_account, iban, owner_id: bodyOwnerId } = req.body;
     
     // Normalize empty strings to null and lowercase for comparison
     const normEmail = (email && email.trim() !== '') ? email.trim().toLowerCase() : null;
@@ -7782,8 +7971,8 @@ function formatDateToIso(dateStr?: string) {
           if (hrRole) finalRole = hrRole.base_role;
         }
 
-        const result = db.prepare("INSERT INTO users (name, email, username, password, role, establishment_id, role_id, custom_permissions, status, cash_register_id, bi_number, address, nif, social_security_number, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-          name, normEmail, normUsername, password, finalRole, normEstId, normRoleId, JSON.stringify(custom_permissions || []), 'active', normRegId, bi_number || null, address || null, nif || null, social_security_number || null, resolvedOwnerId
+        const result = db.prepare("INSERT INTO users (name, email, username, password, role, establishment_id, role_id, custom_permissions, status, cash_register_id, bi_number, address, nif, social_security_number, owner_id, cv_url, bank_name, bank_account, iban) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+          name, normEmail, normUsername, password, finalRole, normEstId, normRoleId, JSON.stringify(custom_permissions || []), 'active', normRegId, bi_number || null, address || null, nif || null, social_security_number || null, resolvedOwnerId, cv_url || null, bank_name || null, bank_account || null, iban || null
         );
         const userId = result.lastInsertRowid;
         const salary = Number(base_salary) || 0;
@@ -7809,7 +7998,7 @@ function formatDateToIso(dateStr?: string) {
   });
 
   app.put("/api/owner/hr/employees/:id", (req, res) => {
-    const { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, status, cash_register_id, bi_number, address, nif, social_security_number } = req.body;
+    const { name, email, username, password, role: bodyRole, establishment_id, role_id, custom_permissions, base_salary, status, cash_register_id, bi_number, address, nif, social_security_number, cv_url, bank_name, bank_account, iban } = req.body;
     
     // Normalize empty strings to null and lowercase for comparison
     const normEmail = (email && email.trim() !== '') ? email.trim().toLowerCase() : null;
@@ -7836,8 +8025,8 @@ function formatDateToIso(dateStr?: string) {
           if (hrRole) finalRole = hrRole.base_role;
         }
 
-        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, establishment_id = ?, role_id = ?, custom_permissions = ?, status = ?, cash_register_id = ?, bi_number = ?, address = ?, nif = ?, social_security_number = ? WHERE id = ?").run(
-          name, normEmail, normUsername, finalRole, estId, rId, JSON.stringify(custom_permissions || []), status || 'active', crId, bi_number || null, address || null, nif || null, social_security_number || null, req.params.id
+        db.prepare("UPDATE users SET name = ?, email = ?, username = ?, role = ?, establishment_id = ?, role_id = ?, custom_permissions = ?, status = ?, cash_register_id = ?, bi_number = ?, address = ?, nif = ?, social_security_number = ?, cv_url = ?, bank_name = ?, bank_account = ?, iban = ? WHERE id = ?").run(
+          name, normEmail, normUsername, finalRole, estId, rId, JSON.stringify(custom_permissions || []), status || 'active', crId, bi_number || null, address || null, nif || null, social_security_number || null, cv_url || null, bank_name || null, bank_account || null, iban || null, req.params.id
         );
 
         if (password && password.trim() !== '') {
@@ -8602,7 +8791,8 @@ function formatDateToIso(dateStr?: string) {
     const { 
       establishment_id, warehouse_id, name, price, cost, stock, category, image_url, min_stock, tax_id,
       internal_code, laboratory, active_substance, pharmaceutical_form, dosage, sale_unit, 
-      requires_prescription, controlled_substance, status, barcode: customBarcode
+      requires_prescription, controlled_substance, status, barcode: customBarcode,
+      has_warranty, warranty_days
     } = req.body;
     
     // Check product count limits across all establishments of this owner
@@ -8649,12 +8839,12 @@ function formatDateToIso(dateStr?: string) {
       INSERT INTO products (
         establishment_id, warehouse_id, name, price, cost, stock, category, image_url, min_stock, barcode, tax_id,
         internal_code, laboratory, active_substance, pharmaceutical_form, dosage, sale_unit, 
-        requires_prescription, controlled_substance, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        requires_prescription, controlled_substance, has_warranty, warranty_days, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       establishment_id, warehouse_id || null, name, price, cost || 0, stock, category, image_url, min_stock || 5, barcode, finalTaxId || null,
       internal_code || null, laboratory || null, active_substance || null, pharmaceutical_form || null, dosage || null, sale_unit || null,
-      requires_prescription ? 1 : 0, controlled_substance ? 1 : 0, status || 'active'
+      requires_prescription ? 1 : 0, controlled_substance ? 1 : 0, has_warranty ? 1 : 0, has_warranty ? (Number(warranty_days) || 0) : 0, status || 'active'
     );
     res.json({ success: true });
   });
@@ -8732,7 +8922,8 @@ function formatDateToIso(dateStr?: string) {
     const { 
       warehouse_id, name, price, cost, stock, category, image_url, min_stock, tax_id,
       internal_code, laboratory, active_substance, pharmaceutical_form, dosage, sale_unit, 
-      requires_prescription, controlled_substance, status, barcode
+      requires_prescription, controlled_substance, status, barcode,
+      has_warranty, warranty_days
     } = req.body;
     
     // Get establishment_id for this product
@@ -8758,12 +8949,12 @@ function formatDateToIso(dateStr?: string) {
       UPDATE products 
       SET name = ?, price = ?, cost = ?, stock = ?, category = ?, image_url = ?, min_stock = ?, tax_id = ?, warehouse_id = ?,
           internal_code = ?, laboratory = ?, active_substance = ?, pharmaceutical_form = ?, dosage = ?, sale_unit = ?,
-          requires_prescription = ?, controlled_substance = ?, status = ?, barcode = ?
+          requires_prescription = ?, controlled_substance = ?, has_warranty = ?, warranty_days = ?, status = ?, barcode = ?
       WHERE id = ?
     `).run(
       name, price, cost || 0, stock, category, image_url, min_stock, finalTaxId || null, warehouse_id || null,
       internal_code || null, laboratory || null, active_substance || null, pharmaceutical_form || null, dosage || null, sale_unit || null,
-      requires_prescription ? 1 : 0, controlled_substance ? 1 : 0, status || 'active', barcode || null,
+      requires_prescription ? 1 : 0, controlled_substance ? 1 : 0, has_warranty ? 1 : 0, has_warranty ? (Number(warranty_days) || 0) : 0, status || 'active', barcode || null,
       req.params.id
     );
     res.json({ success: true });
@@ -9660,13 +9851,24 @@ function formatDateToIso(dateStr?: string) {
 
   // Purchase Routes
   app.get("/api/owner/purchases/:establishmentId", (req, res) => {
-    const purchases = db.prepare(`
-      SELECT p.*, s.name as supplier_name 
-      FROM purchases p
-      JOIN suppliers s ON p.supplier_id = s.id
-      WHERE p.establishment_id = ?
-      ORDER BY p.timestamp DESC
-    `).all(req.params.establishmentId);
+    const { establishmentId } = req.params;
+    let purchases;
+    if (establishmentId === 'all') {
+      purchases = db.prepare(`
+        SELECT p.*, s.name as supplier_name 
+        FROM purchases p
+        LEFT JOIN suppliers s ON p.supplier_id = s.id
+        ORDER BY p.timestamp DESC
+      `).all();
+    } else {
+      purchases = db.prepare(`
+        SELECT p.*, s.name as supplier_name 
+        FROM purchases p
+        LEFT JOIN suppliers s ON p.supplier_id = s.id
+        WHERE p.establishment_id = ?
+        ORDER BY p.timestamp DESC
+      `).all(establishmentId);
+    }
     res.json(purchases.map((p: any) => ({ ...p, items: typeof p.items === 'string' ? JSON.parse(p.items) : (p.items || []) })));
   });
 
@@ -9930,15 +10132,27 @@ function formatDateToIso(dateStr?: string) {
   });
 
   app.get("/api/owner/purchase-returns/:establishmentId", (req, res) => {
+    const { establishmentId } = req.params;
     try {
-      const returns = db.prepare(`
-        SELECT r.*, s.name as supplier_name, p.invoice_number as purchase_invoice_number
-        FROM purchase_returns r
-        JOIN suppliers s ON r.supplier_id = s.id
-        LEFT JOIN purchases p ON r.purchase_id = p.id
-        WHERE r.establishment_id = ?
-        ORDER BY r.timestamp DESC
-      `).all(req.params.establishmentId);
+      let returns;
+      if (establishmentId === 'all') {
+        returns = db.prepare(`
+          SELECT r.*, s.name as supplier_name, p.invoice_number as purchase_invoice_number
+          FROM purchase_returns r
+          LEFT JOIN suppliers s ON r.supplier_id = s.id
+          LEFT JOIN purchases p ON r.purchase_id = p.id
+          ORDER BY r.timestamp DESC
+        `).all();
+      } else {
+        returns = db.prepare(`
+          SELECT r.*, s.name as supplier_name, p.invoice_number as purchase_invoice_number
+          FROM purchase_returns r
+          LEFT JOIN suppliers s ON r.supplier_id = s.id
+          LEFT JOIN purchases p ON r.purchase_id = p.id
+          WHERE r.establishment_id = ?
+          ORDER BY r.timestamp DESC
+        `).all(establishmentId);
+      }
       res.json(returns.map((r: any) => ({ ...r, items: typeof r.items === 'string' ? JSON.parse(r.items || '[]') : (r.items || []) })));
     } catch (e: any) {
       console.error(e);
@@ -9995,6 +10209,310 @@ function formatDateToIso(dateStr?: string) {
       res.json({ success: true });
     } catch (e: any) {
       console.error(e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ==========================================
+  // MÓDULO ESCOLAR / ERP ESCOLAR API ENDPOINTS
+  // ==========================================
+
+  app.get("/api/owner/school/data/:establishmentId", (req, res) => {
+    try {
+      const { establishmentId } = req.params;
+      const guardians = db.prepare("SELECT * FROM school_guardians WHERE establishment_id = ? ORDER BY name ASC").all(establishmentId);
+      const classes = db.prepare("SELECT * FROM school_classes WHERE establishment_id = ? ORDER BY grade_level ASC, name ASC").all(establishmentId);
+      const students = db.prepare(`
+        SELECT st.*, g.name as guardian_name, g.phone as guardian_phone, g.email as guardian_email, c.name as class_name, c.grade_level
+        FROM school_students st
+        LEFT JOIN school_guardians g ON st.guardian_id = g.id
+        LEFT JOIN school_classes c ON st.class_id = c.id
+        WHERE st.establishment_id = ?
+        ORDER BY st.name ASC
+      `).all(establishmentId);
+      const services = db.prepare("SELECT * FROM school_services WHERE establishment_id = ? ORDER BY name ASC").all(establishmentId);
+      const tuitions = db.prepare(`
+        SELECT t.*, st.name as student_name, st.enrollment_code, g.name as guardian_name, s.name as service_name
+        FROM school_tuitions t
+        LEFT JOIN school_students st ON t.student_id = st.id
+        LEFT JOIN school_guardians g ON t.guardian_id = g.id
+        LEFT JOIN school_services s ON t.service_id = s.id
+        WHERE t.establishment_id = ?
+        ORDER BY t.due_date DESC, t.id DESC
+      `).all(establishmentId);
+      const teachers = db.prepare("SELECT * FROM school_teachers WHERE establishment_id = ? ORDER BY name ASC").all(establishmentId);
+      const notifications = db.prepare(`
+        SELECT n.*, g.name as guardian_name, st.name as student_name
+        FROM school_notifications n
+        LEFT JOIN school_guardians g ON n.guardian_id = g.id
+        LEFT JOIN school_students st ON n.student_id = st.id
+        WHERE n.establishment_id = ?
+        ORDER BY n.sent_at DESC
+      `).all(establishmentId);
+
+      res.json({
+        guardians,
+        classes,
+        students,
+        services,
+        tuitions,
+        teachers,
+        notifications
+      });
+    } catch (e: any) {
+      console.error("Error fetching school data:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Guardians
+  app.post("/api/owner/school/guardians", (req, res) => {
+    try {
+      const { id, establishment_id, name, phone, email, address, document_number, relationship } = req.body;
+      if (id) {
+        db.prepare(`
+          UPDATE school_guardians SET name = ?, phone = ?, email = ?, address = ?, document_number = ?, relationship = ?
+          WHERE id = ? AND establishment_id = ?
+        `).run(name, phone, email, address, document_number, relationship, id, establishment_id);
+        res.json({ success: true, id });
+      } else {
+        const info = db.prepare(`
+          INSERT INTO school_guardians (establishment_id, name, phone, email, address, document_number, relationship)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(establishment_id, name, phone, email, address, document_number, relationship);
+        res.json({ success: true, id: info.lastInsertRowid });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/owner/school/guardians/:id", (req, res) => {
+    try {
+      db.prepare("DELETE FROM school_guardians WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Classes
+  app.post("/api/owner/school/classes", (req, res) => {
+    try {
+      const { id, establishment_id, school_year, grade_level, name, room, schedule, teacher_name, monthly_fee, due_day } = req.body;
+      if (id) {
+        db.prepare(`
+          UPDATE school_classes SET school_year = ?, grade_level = ?, name = ?, room = ?, schedule = ?, teacher_name = ?, monthly_fee = ?, due_day = ?
+          WHERE id = ? AND establishment_id = ?
+        `).run(school_year, grade_level, name, room, schedule, teacher_name, monthly_fee || 0, due_day || 5, id, establishment_id);
+        res.json({ success: true, id });
+      } else {
+        const info = db.prepare(`
+          INSERT INTO school_classes (establishment_id, school_year, grade_level, name, room, schedule, teacher_name, monthly_fee, due_day)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(establishment_id, school_year, grade_level, name, room, schedule, teacher_name, monthly_fee || 0, due_day || 5);
+        res.json({ success: true, id: info.lastInsertRowid });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/owner/school/classes/:id", (req, res) => {
+    try {
+      db.prepare("DELETE FROM school_classes WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Students
+  app.post("/api/owner/school/students", (req, res) => {
+    try {
+      let { id, establishment_id, guardian_id, class_id, name, birth_date, gender, photo_url, document_number, nationality, phone, email, enrollment_code, school_year, grade_level, entry_date, status, monthly_fee } = req.body;
+      
+      if (!enrollment_code || enrollment_code.trim() === '') {
+        const year = new Date().getFullYear();
+        const count = db.prepare("SELECT COUNT(*) as c FROM school_students WHERE establishment_id = ?").get(establishment_id) as { c: number };
+        const seq = (count?.c || 0) + 1;
+        enrollment_code = `AL-${year}-${seq.toString().padStart(4, '0')}`;
+      }
+
+      if (id) {
+        db.prepare(`
+          UPDATE school_students SET guardian_id = ?, class_id = ?, name = ?, birth_date = ?, gender = ?, photo_url = ?, document_number = ?, nationality = ?, phone = ?, email = ?, enrollment_code = ?, school_year = ?, grade_level = ?, entry_date = ?, status = ?, monthly_fee = ?
+          WHERE id = ? AND establishment_id = ?
+        `).run(guardian_id, class_id, name, birth_date, gender, photo_url, document_number, nationality, phone, email, enrollment_code, school_year, grade_level, entry_date, status || 'active', monthly_fee || 0, id, establishment_id);
+        res.json({ success: true, id, enrollment_code });
+      } else {
+        const info = db.prepare(`
+          INSERT INTO school_students (establishment_id, guardian_id, class_id, name, birth_date, gender, photo_url, document_number, nationality, phone, email, enrollment_code, school_year, grade_level, entry_date, status, monthly_fee)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(establishment_id, guardian_id, class_id, name, birth_date, gender, photo_url, document_number, nationality, phone, email, enrollment_code, school_year, grade_level, entry_date || new Date().toISOString().slice(0, 10), status || 'active', monthly_fee || 0);
+        res.json({ success: true, id: info.lastInsertRowid, enrollment_code });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/owner/school/students/:id", (req, res) => {
+    try {
+      db.prepare("DELETE FROM school_students WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Services
+  app.post("/api/owner/school/services", (req, res) => {
+    try {
+      const { id, establishment_id, name, price, periodicity, tax_percentage, account_code, status } = req.body;
+      if (id) {
+        db.prepare(`
+          UPDATE school_services SET name = ?, price = ?, periodicity = ?, tax_percentage = ?, account_code = ?, status = ?
+          WHERE id = ? AND establishment_id = ?
+        `).run(name, price, periodicity || 'monthly', tax_percentage || 0, account_code, status || 'active', id, establishment_id);
+        res.json({ success: true, id });
+      } else {
+        const info = db.prepare(`
+          INSERT INTO school_services (establishment_id, name, price, periodicity, tax_percentage, account_code, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(establishment_id, name, price, periodicity || 'monthly', tax_percentage || 0, account_code, status || 'active');
+        res.json({ success: true, id: info.lastInsertRowid });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/owner/school/services/:id", (req, res) => {
+    try {
+      db.prepare("DELETE FROM school_services WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Teachers
+  app.post("/api/owner/school/teachers", (req, res) => {
+    try {
+      const { id, establishment_id, name, email, phone, document_number, subjects, contract_type, salary, status } = req.body;
+      if (id) {
+        db.prepare(`
+          UPDATE school_teachers SET name = ?, email = ?, phone = ?, document_number = ?, subjects = ?, contract_type = ?, salary = ?, status = ?
+          WHERE id = ? AND establishment_id = ?
+        `).run(name, email, phone, document_number, subjects, contract_type || 'full_time', salary || 0, status || 'active', id, establishment_id);
+        res.json({ success: true, id });
+      } else {
+        const info = db.prepare(`
+          INSERT INTO school_teachers (establishment_id, name, email, phone, document_number, subjects, contract_type, salary, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(establishment_id, name, email, phone, document_number, subjects, contract_type || 'full_time', salary || 0, status || 'active');
+        res.json({ success: true, id: info.lastInsertRowid });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/owner/school/teachers/:id", (req, res) => {
+    try {
+      db.prepare("DELETE FROM school_teachers WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Generate Batch Tuitions
+  app.post("/api/owner/school/tuitions/generate-batch", (req, res) => {
+    try {
+      const { establishment_id, reference_month, due_date, class_id } = req.body;
+      
+      let query = "SELECT * FROM school_students WHERE establishment_id = ? AND status = 'active'";
+      const params: any[] = [establishment_id];
+      if (class_id) {
+        query += " AND class_id = ?";
+        params.push(class_id);
+      }
+      
+      const activeStudents = db.prepare(query).all(...params) as any[];
+      const year = new Date().getFullYear();
+      let generatedCount = 0;
+
+      const transaction = db.transaction(() => {
+        for (const student of activeStudents) {
+          // Check if tuition already exists for this reference month
+          const existing = db.prepare(`
+            SELECT id FROM school_tuitions
+            WHERE establishment_id = ? AND student_id = ? AND reference_month = ?
+          `).get(establishment_id, student.id, reference_month);
+
+          if (!existing) {
+            // Generate invoice number e.g. FT ESC-2026-xxxx
+            const lastSeq = db.prepare("SELECT COUNT(*) as c FROM school_tuitions WHERE establishment_id = ?").get(establishment_id) as { c: number };
+            const seqNum = (lastSeq?.c || 0) + generatedCount + 1;
+            const invNum = `FT ESC-${year}-${seqNum.toString().padStart(4, '0')}`;
+            const amount = student.monthly_fee || 100000;
+
+            db.prepare(`
+              INSERT INTO school_tuitions (establishment_id, student_id, guardian_id, reference_month, due_date, amount, paid_amount, status, invoice_number, notes)
+              VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?)
+            `).run(establishment_id, student.id, student.guardian_id, reference_month, due_date, amount, invNum, `Mensalidade ${reference_month}`);
+            generatedCount++;
+          }
+        }
+      });
+
+      transaction();
+      res.json({ success: true, generated_count: generatedCount, total_students: activeStudents.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Pay Tuition Invoice (generates Recibo RC or FR)
+  app.post("/api/owner/school/tuitions/pay", (req, res) => {
+    try {
+      const { tuition_id, payment_method, amount_paid } = req.body;
+      const tuition = db.prepare("SELECT * FROM school_tuitions WHERE id = ?").get(tuition_id) as any;
+      if (!tuition) return res.status(404).json({ error: "Mensalidade não encontrada" });
+
+      const newPaid = (tuition.paid_amount || 0) + (amount_paid || tuition.amount);
+      let newStatus = 'pending';
+      if (newPaid >= tuition.amount) {
+        newStatus = 'paid';
+      } else if (newPaid > 0) {
+        newStatus = 'partial';
+      }
+
+      const receiptNumber = `RC ESC-${new Date().getFullYear()}-${tuition_id.toString().padStart(4, '0')}`;
+
+      db.prepare(`
+        UPDATE school_tuitions SET paid_amount = ?, status = ?, notes = COALESCE(notes, '') || ' | Pago Kz ' || ? || ' (' || ? || ') - ' || ?
+        WHERE id = ?
+      `).run(newPaid, newStatus, amount_paid || tuition.amount, payment_method || 'Multicaixa', receiptNumber, tuition_id);
+
+      res.json({ success: true, status: newStatus, receipt_number: receiptNumber });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Notifications
+  app.post("/api/owner/school/notifications", (req, res) => {
+    try {
+      const { establishment_id, guardian_id, student_id, title, message, type, channel } = req.body;
+      const info = db.prepare(`
+        INSERT INTO school_notifications (establishment_id, guardian_id, student_id, title, message, type, channel, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'sent')
+      `).run(establishment_id, guardian_id, student_id, title, message, type || 'due_warning', channel || 'app');
+      res.json({ success: true, id: info.lastInsertRowid });
+    } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
@@ -10518,6 +11036,23 @@ function formatDateToIso(dateStr?: string) {
       // Update series
       db.prepare("UPDATE invoice_series SET current_number = ? WHERE id = ?").run(nextNum, series.id);
 
+      // Enrich items with warranty and cost info
+      const enrichedItems = (items || []).map((item: any) => {
+        const prodId = item.product_id || item.id;
+        if (prodId) {
+          const prod = db.prepare("SELECT cost, has_warranty, warranty_days FROM products WHERE id = ?").get(prodId) as { cost: number; has_warranty: number; warranty_days: number } | undefined;
+          if (prod) {
+            return {
+              ...item,
+              unit_cost: item.unit_cost !== undefined ? item.unit_cost : (prod.cost || 0),
+              has_warranty: item.has_warranty !== undefined ? (item.has_warranty ? 1 : 0) : (prod.has_warranty ? 1 : 0),
+              warranty_days: item.warranty_days !== undefined ? Number(item.warranty_days) : (prod.warranty_days || 0)
+            };
+          }
+        }
+        return item;
+      });
+
       // Digital Signature
       const signatureData = DigitalSignatureService.signDocument(establishmentData.owner_id, establishment_id, {
         invoice_number,
@@ -10525,7 +11060,7 @@ function formatDateToIso(dateStr?: string) {
         client_name,
         total_amount,
         date: new Date().toISOString(),
-        items: JSON.stringify(items)
+        items: JSON.stringify(enrichedItems)
       });
 
       const result = db.prepare(`
@@ -10534,7 +11069,7 @@ function formatDateToIso(dateStr?: string) {
           hash, signature, prev_signature, key_version_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        establishment_id, owner_id, cash_register_id || null, client_name, client_nif, client_address, total_amount, JSON.stringify(items), bank_accounts, invoice_number,
+        establishment_id, owner_id, cash_register_id || null, client_name, client_nif, client_address, total_amount, JSON.stringify(enrichedItems), bank_accounts, invoice_number,
         signatureData.hash, signatureData.signature, signatureData.prev_signature, signatureData.keyVersionId
       );
       
@@ -10621,6 +11156,23 @@ function formatDateToIso(dateStr?: string) {
         // Update active series
         db.prepare("UPDATE invoice_series SET current_number = ? WHERE id = ?").run(nextNum, activeSeries.id);
 
+        // Enrich items with warranty and cost info
+        const enrichedItems = (items || []).map((item: any) => {
+          const prodId = item.product_id || item.id;
+          if (prodId) {
+            const prod = db.prepare("SELECT cost, has_warranty, warranty_days FROM products WHERE id = ?").get(prodId) as { cost: number; has_warranty: number; warranty_days: number } | undefined;
+            if (prod) {
+              return {
+                ...item,
+                unit_cost: item.unit_cost !== undefined ? item.unit_cost : (prod.cost || 0),
+                has_warranty: item.has_warranty !== undefined ? (item.has_warranty ? 1 : 0) : (prod.has_warranty ? 1 : 0),
+                warranty_days: item.warranty_days !== undefined ? Number(item.warranty_days) : (prod.warranty_days || 0)
+              };
+            }
+          }
+          return item;
+        });
+
         // Digital Signature
         const establishment = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
         const signatureData = DigitalSignatureService.signDocument(establishment.owner_id, establishment_id, {
@@ -10629,7 +11181,7 @@ function formatDateToIso(dateStr?: string) {
           client_name: client_name || 'Consumidor Final',
           total_amount,
           date: invoice_date || new Date().toISOString(),
-          items: JSON.stringify(items)
+          items: JSON.stringify(enrichedItems)
         });
 
         const result = db.prepare(`
@@ -10645,7 +11197,7 @@ function formatDateToIso(dateStr?: string) {
         `).run(
           establishment_id, establishment.owner_id, client_nif, client_name, address, country, 
           doc_type, finalSeries, finalNumber, invoice_date, 
-          currency, total_amount, tax_amount, JSON.stringify(items), seller_id || null, cash_register_id || null,
+          currency, total_amount, tax_amount, JSON.stringify(enrichedItems), seller_id || null, cash_register_id || null,
           payment_method || 'cash', parent_invoice_id || null, reason || null, 
           note_category || null, adjustment_amount || 0, observations || null, req.body.due_date || null, req.body.service_designation || null,
           rateToSave, base_amount,

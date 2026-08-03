@@ -38,8 +38,13 @@ import {
   Menu,
   X,
   User as UserIcon,
+  UserCheck,
+  BookOpen,
+  Smartphone,
+  Bell,
   Briefcase,
   Calendar,
+  GraduationCap,
   DollarSign,
   ArrowUpCircle,
   ArrowDownCircle,
@@ -113,6 +118,7 @@ import { OwnerSettings } from './components/OwnerSettings';
 import { OwnerCurrencies } from './components/OwnerCurrencies';
 import { OwnerWarehouses } from './components/OwnerWarehouses';
 import { OwnerFinance } from './components/OwnerFinance';
+import { OwnerSchool } from './components/OwnerSchool';
 import AdminAuditLogs from './components/AdminAuditLogs';
 import { LandingPage } from './components/LandingPage';
 
@@ -132,7 +138,7 @@ function hasPermission(user: User | null, permissionId: string): boolean {
 
 function hasRHModule(user: User | null): boolean {
   if (!user) return false;
-  if (user.role === 'admin') return true;
+  if (user.role === 'admin' || user.role === 'owner') return true;
   return !!user.features?.rh;
 }
 
@@ -641,6 +647,8 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
   const [currentTime, setCurrentTime] = useState(new Date());
   const navigate = useNavigate();
   const location = useLocation();
+
+
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -4847,6 +4855,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     sale_unit: '',
     requires_prescription: false,
     controlled_substance: false,
+    has_warranty: false,
+    warranty_days: '0',
     status: 'active',
     barcode: ''
   });
@@ -5256,7 +5266,9 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         price: parseInputNumber(productForm.price), 
         cost: parseInputNumber(productForm.cost),
         stock: parseInputNumber(productForm.stock),
-        min_stock: parseInputNumber(productForm.min_stock)
+        min_stock: parseInputNumber(productForm.min_stock),
+        has_warranty: productForm.has_warranty,
+        warranty_days: productForm.has_warranty ? parseInputNumber(productForm.warranty_days) : 0
       })
     });
     if (res.ok) {
@@ -5280,6 +5292,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         sale_unit: '',
         requires_prescription: false,
         controlled_substance: false,
+        has_warranty: false,
+        warranty_days: '0',
         status: 'active',
         barcode: ''
       });
@@ -5310,6 +5324,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
       sale_unit: product.sale_unit || '',
       requires_prescription: !!product.requires_prescription,
       controlled_substance: !!product.controlled_substance,
+      has_warranty: !!product.has_warranty,
+      warranty_days: (product.warranty_days || 0).toString(),
       status: product.status || 'active',
       barcode: product.barcode || ''
     });
@@ -5600,6 +5616,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
           tax: product.tax_percentage !== undefined && product.tax_percentage !== null 
             ? product.tax_percentage 
             : (taxes.find(t => t.is_default === 1)?.percentage ?? (user?.fiscal_regime === 'simplificado' ? 7 : (user?.fiscal_regime === 'exclusao' ? 0 : 14))),
+          has_warranty: Boolean(product.has_warranty),
+          warranty_days: Number(product.warranty_days) || 0,
           type: 'product'
         }]
       });
@@ -5779,6 +5797,8 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
       daysUntilMonthEnd: 0
     }
   } } = establishmentData;
+
+
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6 space-y-6">
@@ -6146,6 +6166,12 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                                   {product.active_substance || 'P. Ativo N/A'} • {product.laboratory || 'Lab N/A'} • {product.dosage || 'Dosagem N/A'}
                                 </span>
                               )}
+                              {product.has_warranty ? (
+                                <span className="bg-emerald-50 text-emerald-700 text-[9px] font-bold px-1.5 py-0.5 rounded border border-emerald-200 inline-flex items-center gap-1 mt-1">
+                                  <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                                  Garantia: {product.warranty_days} dias
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                           {establishment?.type === 'farmácia' && (
@@ -6240,6 +6266,12 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                         <div>
                           <p className="font-bold text-sm text-zinc-900">{product.name}</p>
                           <p className="text-[10px] font-mono text-zinc-400">{product.barcode}</p>
+                          {product.has_warranty ? (
+                            <span className="bg-emerald-50 text-emerald-700 text-[9px] font-bold px-1.5 py-0.5 rounded border border-emerald-200 inline-flex items-center gap-1 mt-1">
+                              <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                              Garantia: {product.warranty_days} dias
+                            </span>
+                          ) : null}
                           {establishment?.type === 'farmácia' && (
                             <div className="mt-1 space-y-1">
                               <p className="text-[10px] text-zinc-500">
@@ -9261,6 +9293,79 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
             </>
           )}
 
+          {/* Seção Garantia */}
+          <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-150 space-y-3">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <h3 className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Garantia do Produto</h3>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">
+                  Possui Garantia?
+                </label>
+                <select 
+                  value={productForm.has_warranty ? "Sim" : "Não"}
+                  onChange={e => {
+                    const isYes = e.target.value === "Sim";
+                    setProductForm({
+                      ...productForm,
+                      has_warranty: isYes,
+                      warranty_days: isYes ? (productForm.warranty_days && productForm.warranty_days !== '0' ? productForm.warranty_days : '30') : '0'
+                    });
+                  }}
+                  className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none font-semibold text-xs text-zinc-800"
+                >
+                  <option value="Não">Não (Sem garantia)</option>
+                  <option value="Sim">Sim (Com garantia)</option>
+                </select>
+                <span className="text-[10px] text-zinc-400 mt-1 block">
+                  {productForm.has_warranty 
+                    ? "Permite troca ou assistência em caso de avaria ou defeito dentro do prazo."
+                    : "O produto não terá garantia de troca em caso de avaria."}
+                </span>
+              </div>
+
+              {productForm.has_warranty && (
+                <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="space-y-1.5">
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">
+                    Prazo de Garantia (Dias)
+                  </label>
+                  <div className="relative">
+                    <input 
+                      type="number"
+                      min="1"
+                      required={productForm.has_warranty}
+                      value={productForm.warranty_days}
+                      onChange={e => setProductForm({...productForm, warranty_days: e.target.value})}
+                      className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl outline-none font-bold text-xs text-emerald-700 pr-12"
+                      placeholder="Ex: 30, 90, 365"
+                    />
+                    <span className="absolute right-3 top-2.5 text-xs font-bold text-zinc-400">dias</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {['15', '30', '60', '90', '180', '365'].map(days => (
+                      <button
+                        key={days}
+                        type="button"
+                        onClick={() => setProductForm({...productForm, warranty_days: days})}
+                        className={cn(
+                          "px-2 py-0.5 text-[10px] rounded-lg font-bold border transition-colors",
+                          productForm.warranty_days === days 
+                            ? "bg-emerald-600 text-white border-emerald-600" 
+                            : "bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-100"
+                        )}
+                      >
+                        {days}d
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Imagem do Produto</label>
             <div className="flex items-center gap-4">
@@ -9940,6 +10045,12 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
                   </td>
                   <td className="py-4">
                     <p className="font-bold">{(item.name || item.description || 'ITEM').toUpperCase()}</p>
+                    {(Boolean(item.has_warranty) || Number(item.warranty_days) > 0) && Number(item.warranty_days) > 0 && (
+                      <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded border border-emerald-200">
+                        <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                        Garantia: {item.warranty_days} dias
+                      </span>
+                    )}
                   </td>
                   <td className="py-4 text-center">{item.quantity}</td>
                   <td className="py-4 text-right">Kz {Number(item.price || 0).toLocaleString()}</td>
@@ -10517,6 +10628,12 @@ const Invoice = ({ sale, establishment, user, ticketSize = '80mm' }: { sale: any
                   <td className="py-1 leading-tight overflow-hidden text-ellipsis">
                     <p className="font-black truncate max-w-[150px]">{(item.name || item.description || 'ITEM').toUpperCase()}</p>
                     <p className={cn("text-zinc-500 italic", is58 ? "text-[6px]" : "text-[7px]")}>{item.price.toLocaleString()} x {item.quantity}</p>
+                    {(Boolean(item.has_warranty) || Number(item.warranty_days) > 0) && Number(item.warranty_days) > 0 && (
+                      <p className={cn("font-bold text-emerald-700 leading-none mt-0.5 flex items-center gap-0.5", is58 ? "text-[6px]" : "text-[7px]")}>
+                        <ShieldCheck className={cn("shrink-0", is58 ? "w-2 h-2" : "w-2.5 h-2.5")} />
+                        Garantia: {item.warranty_days} dias
+                      </p>
+                    )}
                   </td>
                   <td className="py-1 text-center align-top">{item.quantity}</td>
                   <td className="py-1 text-right align-top font-black">{(item.price * item.quantity).toLocaleString()}</td>
@@ -11988,6 +12105,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               quantity: i.quantity,
               tax_percentage: taxPercentage,
               tax_code: taxCode,
+              has_warranty: i.type === 'product' ? Boolean((i.item as Product).has_warranty) : false,
+              warranty_days: i.type === 'product' ? (Number((i.item as Product).warranty_days) || 0) : 0,
               fees: i.selectedFees
             };
           })
@@ -12090,6 +12209,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               unit_cost: i.type === 'product' ? (i.item as Product).cost : 0,
               tax_percentage: taxPercentage,
               tax_code: taxCode,
+              has_warranty: i.type === 'product' ? Boolean((i.item as Product).has_warranty) : false,
+              warranty_days: i.type === 'product' ? (Number((i.item as Product).warranty_days) || 0) : 0,
               fees: i.selectedFees // Optional: backend records fees in JSON
             };
           })
@@ -15712,7 +15833,9 @@ const generateProformaPDF = async (proforma: any, establishment: any, user: any)
   // Table
   const tableData = items.map((item: any, index: number) => [
     index + 1,
-    item.name,
+    (Boolean(item.has_warranty) || Number(item.warranty_days) > 0) && Number(item.warranty_days) > 0
+      ? `${item.name}\n[Garantia: ${item.warranty_days} dias]`
+      : item.name,
     item.quantity,
     `Kz ${item.price.toLocaleString()}`,
     `Kz ${(item.price * item.quantity).toLocaleString()}`

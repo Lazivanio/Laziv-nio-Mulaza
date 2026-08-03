@@ -116,7 +116,15 @@ const AVAILABLE_PERMISSIONS = [
 ];
 
 export const OwnerRH = ({ user }: { user: User }) => {
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const hasFullRH = user.role === 'admin' || !!user.features?.rh;
+  const [activeTab, setActiveTab] = useState<string>(hasFullRH ? 'dashboard' : 'employees');
+
+  useEffect(() => {
+    if (!hasFullRH && activeTab !== 'employees' && activeTab !== 'roles') {
+      setActiveTab('employees');
+    }
+  }, [hasFullRH, activeTab]);
+
   const [employees, setEmployees] = useState<User[]>([]);
   const [roles, setRoles] = useState<HRRole[]>([]);
   const [salaries, setSalaries] = useState<HRSalary[]>([]);
@@ -231,8 +239,31 @@ export const OwnerRH = ({ user }: { user: User }) => {
     address: '',
     nif: '',
     social_security_number: '',
-    department_id: ''
+    department_id: '',
+    cv_url: '',
+    bank_name: '',
+    bank_account: '',
+    iban: ''
   });
+
+  const handleCvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+      alert("O currículo deve estar em formato PDF.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert("O ficheiro é demasiado grande. Limite máximo: 5MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const base64 = evt.target?.result as string;
+      setEmployeeForm(prev => ({ ...prev, cv_url: base64 }));
+    };
+    reader.readAsDataURL(file);
+  };
   const [roleForm, setRoleForm] = useState({ 
     name: '', 
     base_role: 'seller' as 'seller' | 'manager' | 'none', 
@@ -325,6 +356,10 @@ export const OwnerRH = ({ user }: { user: User }) => {
         address: employeeForm.address?.trim() || null,
         nif: employeeForm.nif?.trim() || null,
         social_security_number: employeeForm.social_security_number?.trim() || null,
+        cv_url: employeeForm.cv_url || null,
+        bank_name: employeeForm.bank_name?.trim() || null,
+        bank_account: employeeForm.bank_account?.trim() || null,
+        iban: employeeForm.iban?.trim() || null,
         owner_id: user.id
       };
 
@@ -557,7 +592,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
     }
   };
 
-  const categories = [
+  const categories = hasFullRH ? [
     {
       id: 'dashboard',
       name: 'Dashboard',
@@ -610,6 +645,16 @@ export const OwnerRH = ({ user }: { user: User }) => {
         { id: 'reports', label: 'Relatórios de Gestão', icon: FileDown },
       ]
     }
+  ] : [
+    {
+      id: 'pessoal',
+      name: 'Gestão de Pessoal (Básico)',
+      icon: Users,
+      tabs: [
+        { id: 'employees', label: 'Funcionários', icon: Users },
+        { id: 'roles', label: 'Cargos', icon: ShieldCheck },
+      ]
+    }
   ];
 
   const currentCategory = categories.find(cat => 
@@ -621,9 +666,29 @@ export const OwnerRH = ({ user }: { user: User }) => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black">Recursos Humanos</h1>
-          <p className="text-zinc-500">Gestão completa de pessoal, financeiro, administrativo e contratações</p>
+          <p className="text-zinc-500">
+            {hasFullRH 
+              ? 'Gestão completa de pessoal, financeiro, administrativo e contratações' 
+              : 'Gestão de funcionários e cargos para os seus estabelecimentos'}
+          </p>
         </div>
       </div>
+
+      {!hasFullRH && (
+        <div className="p-4 bg-amber-50 border border-amber-200/80 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-amber-100 rounded-xl text-amber-700 shrink-0">
+              <ShieldAlert size={20} />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-amber-900">Acesso Básico de RH (Incluso no Proprietário)</p>
+              <p className="text-xs text-amber-700">
+                Pode criar e gerir Funcionários e Cargos livremente. Para desbloquear Folha de Pagamento, Contratos, Férias e Avaliações, adquira o Módulo RH Completo.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Top Navigation */}
       <div className="flex flex-col gap-3">
@@ -735,7 +800,11 @@ export const OwnerRH = ({ user }: { user: User }) => {
                       address: '',
                       nif: '',
                       social_security_number: '',
-                      department_id: ''
+                      department_id: '',
+                      cv_url: '',
+                      bank_name: '',
+                      bank_account: '',
+                      iban: ''
                     });
                     setIsEmployeeModalOpen(true);
                   }}
@@ -774,6 +843,16 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                   )}
                                 </div>
                                 <p className="text-xs text-zinc-500">{emp.email || 'Sem acesso ao sistema'}</p>
+                                {emp.cv_url && (
+                                  <button
+                                    type="button"
+                                    onClick={() => window.open(emp.cv_url, '_blank')}
+                                    className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded text-[10px] font-bold hover:bg-red-100 transition-colors"
+                                  >
+                                    <FileText size={11} />
+                                    Ver Currículo (PDF)
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -785,6 +864,12 @@ export const OwnerRH = ({ user }: { user: User }) => {
                           </td>
                           <td className="px-6 py-4">
                             <p className="text-sm font-bold text-zinc-900">Kz {((emp as any).base_salary || 0).toLocaleString()}</p>
+                            {(emp.bank_name || emp.iban) && (
+                              <p className="text-[10px] text-zinc-500 mt-0.5">
+                                {emp.bank_name && <span className="font-semibold text-zinc-700">{emp.bank_name} </span>}
+                                {emp.iban && <span>IBAN: {emp.iban}</span>}
+                              </p>
+                            )}
                           </td>
                           <td className="px-6 py-4">
                             <span className={cn(
@@ -830,7 +915,11 @@ export const OwnerRH = ({ user }: { user: User }) => {
                                     address: (emp as any).address || '',
                                     nif: emp.nif || '',
                                     social_security_number: emp.social_security_number || '',
-                                    department_id: employeeDepartments[emp.id.toString()] || ''
+                                    department_id: employeeDepartments[emp.id.toString()] || '',
+                                    cv_url: emp.cv_url || '',
+                                    bank_name: emp.bank_name || '',
+                                    bank_account: emp.bank_account || '',
+                                    iban: emp.iban || ''
                                   });
                                   setIsEmployeeModalOpen(true);
                                 }}
@@ -1521,6 +1610,88 @@ export const OwnerRH = ({ user }: { user: User }) => {
                 onChange={e => setEmployeeForm({...employeeForm, base_salary: e.target.value})}
                 className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5"
               />
+            </div>
+          </div>
+
+          {/* Dados Bancários & Currículo */}
+          <div className="p-4 bg-zinc-50 border border-zinc-200/80 rounded-2xl space-y-4">
+            <h4 className="text-xs font-black text-zinc-700 uppercase tracking-wider flex items-center gap-2">
+              <Building size={16} className="text-zinc-500" />
+              <span>Dados Bancários & Currículo (PDF)</span>
+            </h4>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-zinc-500 uppercase">Banco</label>
+                <input 
+                  type="text" 
+                  value={employeeForm.bank_name}
+                  onChange={e => setEmployeeForm({...employeeForm, bank_name: e.target.value})}
+                  placeholder="Ex: BAI, BFA, BIC"
+                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-zinc-500 uppercase">Nº da Conta</label>
+                <input 
+                  type="text" 
+                  value={employeeForm.bank_account}
+                  onChange={e => setEmployeeForm({...employeeForm, bank_account: e.target.value})}
+                  placeholder="Ex: 123456789"
+                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-zinc-500 uppercase">IBAN</label>
+                <input 
+                  type="text" 
+                  value={employeeForm.iban}
+                  onChange={e => setEmployeeForm({...employeeForm, iban: e.target.value})}
+                  placeholder="AO06.0000.0000.0000..."
+                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t border-zinc-200/60">
+              <label className="text-[11px] font-bold text-zinc-500 uppercase flex items-center justify-between">
+                <span>Anexo do Currículo (Apenas PDF)</span>
+                {employeeForm.cv_url && (
+                  <span className="text-emerald-600 font-bold text-[10px]">✓ PDF Anexado</span>
+                )}
+              </label>
+
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                <input 
+                  type="file" 
+                  accept="application/pdf"
+                  onChange={handleCvUpload}
+                  className="block w-full text-xs text-zinc-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-zinc-900 file:text-white hover:file:bg-zinc-800 transition-all cursor-pointer"
+                />
+
+                {employeeForm.cv_url && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => window.open(employeeForm.cv_url, '_blank')}
+                      className="px-3 py-1.5 bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-red-200 transition-colors"
+                    >
+                      <FileText size={14} />
+                      Ver PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEmployeeForm({ ...employeeForm, cv_url: '' })}
+                      className="p-1.5 text-zinc-400 hover:text-red-600 rounded-lg hover:bg-zinc-200 transition-colors"
+                      title="Remover Currículo"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 

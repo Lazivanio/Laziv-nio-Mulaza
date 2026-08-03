@@ -85,6 +85,25 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
 
+  const filteredHistory = combinedHistory.filter(item => {
+    const isNote = !!item.type;
+    const supplierName = item.supplier_name || '';
+    const invoiceNum = item.invoice_number || (isNote ? `#${item.id}` : '');
+    const searchLower = search.toLowerCase();
+    return supplierName.toLowerCase().includes(searchLower) ||
+           invoiceNum.toLowerCase().includes(searchLower) ||
+           (item.reason && item.reason.toLowerCase().includes(searchLower));
+  });
+
+  const filteredNotes = notes.filter(n => {
+    const supplierName = n.supplier_name || '';
+    const reason = n.reason || '';
+    const searchLower = search.toLowerCase();
+    return supplierName.toLowerCase().includes(searchLower) ||
+           reason.toLowerCase().includes(searchLower) ||
+           `#${n.id}`.includes(searchLower);
+  });
+
   // Modals
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
   const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
@@ -234,6 +253,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
         bulk_quantity: 1,
         units_per_bulk: 1,
         bulk_price: product.cost || 0,
+        price_mode: 'per_unit',
         quantity: 1,
         price: product.cost || 0,
         tax_id: finalTax.id,
@@ -248,14 +268,30 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
     const item = { ...newItems[index], [field]: value };
     
     // Recalculate based on bulk fields
-    if (field === 'purchase_unit' || field === 'bulk_quantity' || field === 'units_per_bulk' || field === 'bulk_price') {
+    if (field === 'purchase_unit' || field === 'bulk_quantity' || field === 'units_per_bulk' || field === 'bulk_price' || field === 'price_mode') {
       if (item.purchase_unit === 'unid') {
         item.units_per_bulk = 1;
-        item.quantity = item.bulk_quantity;
-        item.price = item.bulk_price;
+        const bQty = Math.max(1, Number(item.bulk_quantity) || 1);
+        const bPrice = Math.max(0, Number(item.bulk_price) || 0);
+        item.bulk_quantity = bQty;
+        item.quantity = bQty;
+        item.price = bPrice;
       } else {
-        item.quantity = (Number(item.bulk_quantity) || 0) * (Number(item.units_per_bulk) || 1);
-        item.price = (Number(item.bulk_price) || 0) / (Math.max(1, Number(item.units_per_bulk) || 1));
+        const unitsPerBulk = Math.max(1, Number(item.units_per_bulk) || 1);
+        const bulkQty = Math.max(1, Number(item.bulk_quantity) || 1);
+        const rawPrice = Math.max(0, Number(item.bulk_price) || 0);
+
+        item.units_per_bulk = unitsPerBulk;
+        item.bulk_quantity = bulkQty;
+        item.quantity = bulkQty * unitsPerBulk;
+
+        if (item.price_mode === 'per_pack') {
+          // Input price is for the full pack/unit (e.g. Kz 6000 per Caixa of 12)
+          item.price = rawPrice / unitsPerBulk;
+        } else {
+          // Input price is per individual product unit (e.g. Kz 500 per product)
+          item.price = rawPrice;
+        }
       }
     }
     
@@ -526,6 +562,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
           onChange={e => setSelectedEstablishmentId(e.target.value)}
           className="px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all font-bold min-w-[200px]"
         >
+          <option value="all">Todas as Instalações</option>
           {establishments.map(s => (
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}
@@ -540,32 +577,34 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
             className="w-full pl-12 pr-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black/5 transition-all"
           />
         </div>
-        <button 
-          onClick={() => {
-            if (activeTab === 'notes') {
-              setReturnForm({
-                supplier_id: '',
-                purchase_id: '',
-                reason: '',
-                items: [],
-                total_amount: 0,
-                type: 'credit',
-                note_category: 'return',
-                adjustment_amount: 0,
-                observations: ''
-              });
-              setIsReturnModalOpen(true);
-              return;
-            }
-            setPurchaseForm({ establishment_id: selectedEstablishmentId, supplier_id: '', invoice_number: '', due_date: '', items: [], paid_amount: 0 });
-            setIsDirectPurchase(activeTab === 'direct');
-            setIsPurchaseModalOpen(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200"
-        >
-          <Plus size={18} />
-          {activeTab === 'direct' ? 'Comprar' : activeTab === 'notes' ? 'Nova Nota' : 'Nova Encomenda'}
-        </button>
+        {activeTab !== 'history' && (
+          <button 
+            onClick={() => {
+              if (activeTab === 'notes') {
+                setReturnForm({
+                  supplier_id: '',
+                  purchase_id: '',
+                  reason: '',
+                  items: [],
+                  total_amount: 0,
+                  type: 'credit',
+                  note_category: 'return',
+                  adjustment_amount: 0,
+                  observations: ''
+                });
+                setIsReturnModalOpen(true);
+                return;
+              }
+              setPurchaseForm({ establishment_id: selectedEstablishmentId, supplier_id: '', invoice_number: '', due_date: '', items: [], paid_amount: 0 });
+              setIsDirectPurchase(activeTab === 'direct');
+              setIsPurchaseModalOpen(true);
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200"
+          >
+            <Plus size={18} />
+            {activeTab === 'direct' ? 'Comprar' : activeTab === 'notes' ? 'Nova Nota' : 'Nova Encomenda'}
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -574,7 +613,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6">
-          {activeTab !== 'notes' ? (
+          {(activeTab === 'direct' || activeTab === 'orders' || activeTab === 'receipts') ? (
             <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -588,7 +627,14 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {filteredPurchases.map((p) => (
+                  {filteredPurchases.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center text-zinc-400 font-medium">
+                        Nenhum registo de compra ou encomenda encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredPurchases.map((p) => (
                     <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">
                       <td className="px-6 py-4">
                         <p className="font-bold text-zinc-900">{p.supplier_name}</p>
@@ -708,7 +754,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  )))}
                 </tbody>
               </table>
             </div>
@@ -727,7 +773,14 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {notes.map((r) => (
+                  {filteredNotes.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-12 text-center text-zinc-400 font-medium">
+                        Nenhuma nota de crédito ou débito encontrada.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredNotes.map((r) => (
                     <tr key={r.id} className="hover:bg-zinc-50/50 transition-colors">
                       <td className="px-6 py-4">
                         <p className="font-bold text-zinc-900">{r.supplier_name}</p>
@@ -788,7 +841,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  )))}
                 </tbody>
               </table>
             </div>
@@ -807,22 +860,47 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {combinedHistory.map((item) => {
+                  {filteredHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-12 text-center text-zinc-400 font-medium">
+                        Nenhum registo no histórico.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredHistory.map((item) => {
                     const isNote = !!item.type;
+                    const isDirect = Number(item.is_direct) === 1;
+                    const isClosed = Number(item.is_closed) === 1;
+                    const isReceived = item.delivery_status === 'received';
+                    
+                    let docTypeLabel = '';
+                    if (isNote) {
+                      docTypeLabel = item.type === 'credit' ? 'Nota de Crédito' : 'Nota de Débito';
+                    } else if (isDirect) {
+                      docTypeLabel = 'Compra Direta';
+                    } else if (isClosed) {
+                      docTypeLabel = 'Encomenda (Concluída)';
+                    } else if (isReceived) {
+                      docTypeLabel = 'Encomenda (Recebida)';
+                    } else {
+                      docTypeLabel = 'Encomenda (Pendente)';
+                    }
+
                     return (
                       <tr key={`${isNote ? 'note' : 'purchase'}-${item.id}`} className="hover:bg-zinc-50/50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className={cn(
                               "p-2 rounded-lg",
-                              isNote ? "bg-amber-50 text-amber-600" : "bg-blue-50 text-blue-600"
+                              isNote ? (item.type === 'credit' ? "bg-rose-50 text-rose-600" : "bg-blue-50 text-blue-600") :
+                              isDirect ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
                             )}>
-                              {isNote ? <FileText size={18} /> : <ShoppingBag size={18} />}
+                              {isNote ? <FileText size={18} /> : isDirect ? <ShoppingBag size={18} /> : <Truck size={18} />}
                             </div>
                             <div>
                               <p className="font-bold text-zinc-900">{item.invoice_number || `#${item.id}`}</p>
                               <p className="text-[10px] text-zinc-400 font-black uppercase tracking-widest">
-                                {isNote ? (item.type === 'credit' ? 'Nota Crédito' : 'Nota Débito') : 'Fatura Compra'}
+                                {docTypeLabel}
                               </p>
                             </div>
                           </div>
@@ -832,22 +910,24 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                         </td>
                         <td className="px-6 py-4">
                           <span className={cn(
-                            "px-2 py-1 rounded-full text-[10px] font-black uppercase border",
-                            !isNote ? "bg-zinc-50 text-zinc-600 border-zinc-100" :
-                            item.type === 'credit' ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-blue-50 text-blue-600 border-blue-100"
+                            "px-2.5 py-1 rounded-full text-[10px] font-black uppercase border",
+                            isNote ? (item.type === 'credit' ? "bg-rose-50 text-rose-600 border-rose-100" : "bg-blue-50 text-blue-600 border-blue-100") :
+                            isDirect ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-amber-50 text-amber-700 border-amber-100"
                           )}>
-                            {!isNote ? 'Compra' : item.type === 'credit' ? 'Crédito' : 'Débito'}
+                            {isNote ? (item.type === 'credit' ? 'Nota Crédito' : 'Nota Débito') : isDirect ? 'Compra Direta' : 'Encomenda'}
                           </span>
                         </td>
                         <td className="px-6 py-4">
                           <span className={cn(
-                            "px-2 py-1 rounded-full text-[10px] font-black uppercase border",
-                            (item.status === 'liquidado' || (item.paid_amount !== undefined && item.paid_amount >= item.total_amount) || isNote) 
+                            "px-2.5 py-1 rounded-full text-[10px] font-black uppercase border",
+                            isNote ? "bg-emerald-50 text-emerald-600 border-emerald-100" :
+                            (item.status === 'liquidado' || (item.paid_amount !== undefined && item.paid_amount >= item.total_amount)) 
                               ? "bg-emerald-50 text-emerald-600 border-emerald-100" 
                               : "bg-amber-50 text-amber-600 border-amber-100"
                           )}>
-                            {(item.status === 'liquidado' || (item.paid_amount !== undefined && item.paid_amount >= item.total_amount) || isNote) 
-                              ? 'Liquidado' 
+                            {isNote ? 'Processada' :
+                             (item.status === 'liquidado' || (item.paid_amount !== undefined && item.paid_amount >= item.total_amount)) 
+                              ? 'Liquidada' 
                               : 'Pendente'}
                           </span>
                         </td>
@@ -873,7 +953,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                         </td>
                       </tr>
                     );
-                  })}
+                  }))}
                 </tbody>
               </table>
             </div>
@@ -885,8 +965,8 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
       <Modal 
         isOpen={isPurchaseModalOpen} 
         onClose={() => setIsPurchaseModalOpen(false)} 
-        title={isDirectPurchase ? "Nova Compra Direta" : "Nova Encomenda"}
-        maxWidth="max-w-2xl"
+        title={isDirectPurchase ? "Nova Compra Direta" : "Nova Encomenda a Fornecedor"}
+        maxWidth="max-w-5xl"
       >
         <form onSubmit={handleSavePurchase} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -904,12 +984,12 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
             </div>
             {!isDirectPurchase && (
               <div className="space-y-1.5">
-                <label className="text-sm font-bold text-zinc-700">Data Prevista</label>
+                <label className="text-sm font-bold text-zinc-700">Data Prevista de Entrega</label>
                 <input 
                   type="date" 
                   value={purchaseForm.due_date}
                   onChange={e => setPurchaseForm({ ...purchaseForm, due_date: e.target.value })}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black/5"
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black/5 font-bold"
                 />
               </div>
             )}
@@ -928,92 +1008,153 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
             <select 
               onChange={e => handleAddProductToPurchase(e.target.value)}
               value=""
-              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black/5"
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black/5 font-bold"
             >
-              <option value="">Pesquisar produto...</option>
-              {products.map(p => <option key={p.id} value={p.id}>{p.name} (Stock: {p.stock})</option>)}
+              <option value="">Pesquisar e selecionar produto...</option>
+              {products.map(p => <option key={p.id} value={p.id}>{p.name} (Stock Atual: {p.stock})</option>)}
             </select>
           </div>
 
-          <div className="border border-zinc-100 rounded-xl overflow-hidden">
-            <table className="w-full text-left">
-              <thead className="bg-zinc-50 border-b border-zinc-100">
+          <div className="border border-zinc-200 rounded-2xl overflow-x-auto bg-white shadow-sm">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead className="bg-zinc-100/80 border-b border-zinc-200">
                 <tr>
-                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase">Produto</th>
-                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase">Unidade</th>
-                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase">Preço Unidade/Grade</th>
-                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase">Qtd Comprada</th>
-                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase">Preço Custo (Unit)</th>
-                  <th className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase text-right">Subtotal</th>
+                  <th className="px-3 py-3 font-black text-zinc-600 uppercase text-[10px] min-w-[140px]">Produto</th>
+                  <th className="px-3 py-3 font-black text-zinc-600 uppercase text-[10px] min-w-[110px]">Unidade</th>
+                  <th className="px-3 py-3 font-black text-zinc-600 uppercase text-[10px] min-w-[120px]">Prods por Unid</th>
+                  <th className="px-3 py-3 font-black text-zinc-600 uppercase text-[10px] min-w-[100px]">Qtd Unidades</th>
+                  <th className="px-3 py-3 font-black text-zinc-600 uppercase text-[10px] min-w-[170px]">Valor de Compra</th>
+                  <th className="px-3 py-3 font-black text-zinc-600 uppercase text-[10px] text-center min-w-[130px]">Resumo & Stock</th>
+                  <th className="px-3 py-3 font-black text-zinc-600 uppercase text-[10px] text-right min-w-[110px]">Subtotal</th>
+                  <th className="px-2 py-3 font-black text-zinc-600 uppercase text-[10px] text-center min-w-[40px]"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-50">
+              <tbody className="divide-y divide-zinc-100">
                 {purchaseForm.items.map((item, index) => (
-                  <tr key={index}>
-                    <td className="px-4 py-3">
-                      <p className="text-sm font-bold">{item.name}</p>
-                      <p className="text-[10px] text-zinc-500 font-bold uppercase">Preço Venda: Kz {item.selling_price.toLocaleString()}</p>
+                  <tr key={index} className="hover:bg-zinc-50/60 transition-colors">
+                    <td className="px-3 py-3 align-top">
+                      <p className="font-bold text-zinc-900 text-xs">{item.name}</p>
+                      <p className="text-[10px] text-zinc-500 font-bold uppercase mt-0.5">Preço Venda: Kz {item.selling_price.toLocaleString()}</p>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3 align-top">
                       <select 
-                        value={item.purchase_unit}
+                        value={item.purchase_unit || 'unid'}
                         onChange={e => handleUpdatePurchaseItem(index, 'purchase_unit', e.target.value)}
-                        className="px-2 py-1 bg-zinc-100 rounded border-none text-xs font-bold w-full"
+                        className="px-2 py-1.5 bg-zinc-100 rounded-lg border-none text-xs font-bold w-full focus:ring-2 focus:ring-black"
                       >
-                        <option value="unid">Unid</option>
+                        <option value="unid">Unid (Unidade)</option>
                         <option value="grade">Grade</option>
                         <option value="caixa">Caixa</option>
                         <option value="pacote">Pacote</option>
+                        <option value="saco">Saco</option>
+                        <option value="kit">Kit</option>
+                        <option value="fardo">Fardo</option>
+                        <option value="outra">Outra</option>
                       </select>
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="space-y-1">
-                        <input 
-                          type="number" 
-                          value={isNaN(item.bulk_price) ? '' : item.bulk_price}
-                          onChange={e => handleUpdatePurchaseItem(index, 'bulk_price', parseFloat(e.target.value))}
-                          placeholder="Preço Unit/Bulk"
-                          className="w-full px-2 py-1 bg-zinc-100 rounded border-none text-xs font-bold"
-                        />
-                        {item.purchase_unit !== 'unid' && (
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] text-zinc-400 font-bold">Unids/Bulk:</span>
-                            <input 
-                              type="number" 
-                              min="1"
-                              value={isNaN(item.units_per_bulk) ? '' : item.units_per_bulk}
-                              onChange={e => handleUpdatePurchaseItem(index, 'units_per_bulk', parseInt(e.target.value))}
-                              className="w-12 px-1 py-0.5 bg-zinc-200 rounded border-none text-[10px] font-bold text-center"
-                            />
-                          </div>
-                        )}
-                      </div>
+                    <td className="px-3 py-3 align-top">
+                      {item.purchase_unit !== 'unid' ? (
+                        <div className="space-y-1">
+                          <input 
+                            type="number" 
+                            min="1"
+                            value={isNaN(item.units_per_bulk) ? '' : item.units_per_bulk}
+                            onChange={e => handleUpdatePurchaseItem(index, 'units_per_bulk', parseInt(e.target.value) || 1)}
+                            placeholder="Qtd por embalagem"
+                            className="w-full px-2 py-1.5 bg-zinc-100 rounded-lg border-none text-xs font-bold text-center focus:ring-2 focus:ring-black"
+                          />
+                          <p className="text-[9px] text-zinc-400 font-bold text-center">prods / {item.purchase_unit}</p>
+                        </div>
+                      ) : (
+                        <div className="text-center py-1.5 text-xs text-zinc-400 font-bold italic">
+                          1 (Unid)
+                        </div>
+                      )}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3 align-top">
                       <input 
                         type="number" 
                         min="1"
                         value={isNaN(item.bulk_quantity) ? '' : item.bulk_quantity}
-                        onChange={e => handleUpdatePurchaseItem(index, 'bulk_quantity', parseInt(e.target.value))}
-                        className="w-16 px-2 py-1 bg-zinc-100 rounded border-none text-center font-bold"
+                        onChange={e => handleUpdatePurchaseItem(index, 'bulk_quantity', parseInt(e.target.value) || 1)}
+                        className="w-full px-2 py-1.5 bg-zinc-100 rounded-lg border-none text-center font-bold text-xs focus:ring-2 focus:ring-black"
                       />
-                      <p className="text-[10px] text-center font-bold text-zinc-400 mt-1">Total: {item.quantity} unids</p>
+                      <p className="text-[9px] text-center font-bold text-zinc-400 mt-1">
+                        {item.purchase_unit !== 'unid' ? `${item.bulk_quantity || 1} ${item.purchase_unit}s` : 'unidades'}
+                      </p>
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col items-center">
-                        <span className="text-sm font-black text-zinc-900 leading-none">Kz {Math.round(item.price).toLocaleString()}</span>
+                    <td className="px-3 py-3 align-top space-y-1">
+                      {item.purchase_unit !== 'unid' && (
+                        <select
+                          value={item.price_mode || 'per_unit'}
+                          onChange={e => handleUpdatePurchaseItem(index, 'price_mode', e.target.value)}
+                          className="w-full text-[10px] font-bold bg-zinc-200 text-zinc-700 py-0.5 px-1.5 rounded cursor-pointer"
+                        >
+                          <option value="per_unit">Valor por Produto (Unit)</option>
+                          <option value="per_pack">Valor por {item.purchase_unit.toUpperCase()}</option>
+                        </select>
+                      )}
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-zinc-400">Kz</span>
+                        <input 
+                          type="number" 
+                          step="0.01"
+                          min="0"
+                          value={isNaN(item.bulk_price) ? '' : item.bulk_price}
+                          onChange={e => handleUpdatePurchaseItem(index, 'bulk_price', parseFloat(e.target.value) || 0)}
+                          placeholder="Valor de compra"
+                          className="w-full pl-8 pr-2 py-1.5 bg-zinc-100 rounded-lg border-none text-xs font-bold focus:ring-2 focus:ring-black"
+                        />
+                      </div>
+                      {item.purchase_unit !== 'unid' && item.price_mode === 'per_unit' && (
+                        <p className="text-[9px] font-bold text-orange-600">
+                          = Kz {((item.bulk_price || 0) * (item.units_per_bulk || 1)).toLocaleString()} / {item.purchase_unit}
+                        </p>
+                      )}
+                      {item.purchase_unit !== 'unid' && item.price_mode === 'per_pack' && (
+                        <p className="text-[9px] font-bold text-orange-600">
+                          = Kz {Math.round(item.price).toLocaleString()} / produto
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 align-top">
+                      <div className="flex flex-col items-center justify-center text-center">
+                        <span className="text-xs font-black text-zinc-900 bg-zinc-100 px-2 py-0.5 rounded-full border border-zinc-200">
+                          {item.quantity} unids no stock
+                        </span>
+                        <span className="text-[10px] text-zinc-500 font-bold mt-1">
+                          Custo Unit: Kz {Math.round(item.price).toLocaleString()}
+                        </span>
                         {item.selling_price > 0 && (
                           <span className={cn(
-                            "text-[10px] font-black uppercase mt-1",
-                            (item.selling_price - item.price) > 0 ? "text-emerald-500" : "text-rose-500"
+                            "text-[9px] font-black uppercase mt-0.5",
+                            (item.selling_price - item.price) >= 0 ? "text-emerald-600" : "text-rose-600"
                           )}>
                             Lucro: Kz {Math.round(item.selling_price - item.price).toLocaleString()}
                           </span>
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right font-bold text-sm whitespace-nowrap">
+                    <td className="px-3 py-3 align-top text-right font-black text-xs whitespace-nowrap">
                       Kz {(Math.round(item.quantity * item.price * (1 + (item.tax_percentage / 100)))).toLocaleString()}
+                      <p className="text-[9px] text-zinc-400 font-normal">
+                        (IVA {item.tax_percentage}%)
+                      </p>
+                    </td>
+                    <td className="px-2 py-3 align-top text-center">
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setPurchaseForm({
+                            ...purchaseForm,
+                            items: purchaseForm.items.filter((_, i) => i !== index)
+                          });
+                        }}
+                        className="p-1.5 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                        title="Remover produto"
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </td>
                   </tr>
                 ))}

@@ -54,6 +54,10 @@ export interface User {
   bi_number?: string;
   social_security_number?: string;
   address?: string;
+  cv_url?: string;
+  bank_name?: string;
+  bank_account?: string;
+  iban?: string;
   features?: {
     reports?: boolean;
     multi_establishment?: boolean;
@@ -172,6 +176,8 @@ export interface Product {
   tax_id?: number;
   tax_percentage?: number;
   tax_code?: string;
+  has_warranty?: boolean;
+  warranty_days?: number;
 }
 
 export interface Transaction {

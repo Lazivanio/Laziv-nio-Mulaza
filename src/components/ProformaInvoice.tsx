@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Printer, Download } from 'lucide-react';
+import { Printer, Download, ShieldCheck } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 
@@ -244,6 +244,12 @@ export const ProformaInvoice = ({ proforma, establishment }: { proforma: any, es
                     <tr key={idx}>
                       <td className="py-4">
                         <p className="font-bold">{item.name.toUpperCase()}</p>
+                        {(Boolean(item.has_warranty) || Number(item.warranty_days) > 0) && Number(item.warranty_days) > 0 && (
+                          <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded border border-emerald-200">
+                            <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                            Garantia: {item.warranty_days} dias
+                          </span>
+                        )}
                       </td>
                       <td className="py-4 text-center">{item.quantity}</td>
                       <td className="py-4 text-right">Kz {item.price.toLocaleString()}</td>
