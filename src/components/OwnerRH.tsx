@@ -116,14 +116,7 @@ const AVAILABLE_PERMISSIONS = [
 ];
 
 export const OwnerRH = ({ user }: { user: User }) => {
-  const hasFullRH = user.role === 'admin' || !!user.features?.rh;
-  const [activeTab, setActiveTab] = useState<string>(hasFullRH ? 'dashboard' : 'employees');
-
-  useEffect(() => {
-    if (!hasFullRH && activeTab !== 'employees' && activeTab !== 'roles') {
-      setActiveTab('employees');
-    }
-  }, [hasFullRH, activeTab]);
+  const [activeTab, setActiveTab] = useState<string>('employees');
 
   const [employees, setEmployees] = useState<User[]>([]);
   const [roles, setRoles] = useState<HRRole[]>([]);
@@ -592,74 +585,12 @@ export const OwnerRH = ({ user }: { user: User }) => {
     }
   };
 
-  const categories = hasFullRH ? [
-    {
-      id: 'dashboard',
-      name: 'Dashboard',
-      icon: LayoutDashboard,
-      tabs: []
-    },
-    {
-      id: 'pessoal',
-      name: 'Pessoal',
-      icon: Users,
-      tabs: [
-        { id: 'employees', label: 'Funcionários', icon: Users },
-        { id: 'roles', label: 'Cargos', icon: ShieldCheck },
-        { id: 'organogram', label: 'Organograma', icon: Network },
-      ]
-    },
-    {
-      id: 'financeiro',
-      name: 'Financeiro',
-      icon: DollarSign,
-      tabs: [
-        { id: 'salaries', label: 'Histórico Salarial', icon: DollarSign },
-        { id: 'payroll', label: 'Folha Salarial', icon: FileText },
-        { id: 'benefits', label: 'Benefícios', icon: Heart },
-        { id: 'advances', label: 'Adiantamentos', icon: DollarSign },
-        { id: 'loans', label: 'Empréstimos', icon: DollarSign },
-      ]
-    },
-    {
-      id: 'gestao',
-      name: 'Gestão',
-      icon: Building,
-      tabs: [
-        { id: 'departments', label: 'Departamentos', icon: Building },
-        { id: 'contracts', label: 'Contratos', icon: Briefcase },
-        { id: 'attendance', label: 'Presenças', icon: Clock },
-        { id: 'leaves', label: 'Férias & Licenças', icon: Calendar },
-        { id: 'evaluations', label: 'Avaliações', icon: UserCheck },
-        { id: 'warnings', label: 'Advertências', icon: AlertTriangle },
-        { id: 'resignations', label: 'Demissões', icon: UserX },
-      ]
-    },
-    {
-      id: 'atracao',
-      name: 'Atração & Análise',
-      icon: TrendingUp,
-      tabs: [
-        { id: 'recruitment', label: 'Recrutamento', icon: Briefcase },
-        { id: 'resumes', label: 'Banco de Currículos', icon: FileText },
-        { id: 'reports', label: 'Relatórios de Gestão', icon: FileDown },
-      ]
-    }
-  ] : [
-    {
-      id: 'pessoal',
-      name: 'Gestão de Pessoal (Básico)',
-      icon: Users,
-      tabs: [
-        { id: 'employees', label: 'Funcionários', icon: Users },
-        { id: 'roles', label: 'Cargos', icon: ShieldCheck },
-      ]
-    }
+  const tabs = [
+    { id: 'employees', label: 'Funcionários', icon: Users },
+    { id: 'roles', label: 'Cargos', icon: ShieldCheck },
+    { id: 'attendance', label: 'Marcar Faltas & Presenças', icon: Clock },
+    { id: 'salaries', label: 'Pagar Salários', icon: DollarSign },
   ];
-
-  const currentCategory = categories.find(cat => 
-    cat.id === activeTab || cat.tabs.some(t => t.id === activeTab)
-  ) || categories[0];
 
   return (
     <div className="space-y-6">
@@ -667,82 +598,31 @@ export const OwnerRH = ({ user }: { user: User }) => {
         <div>
           <h1 className="text-2xl font-black">Recursos Humanos</h1>
           <p className="text-zinc-500">
-            {hasFullRH 
-              ? 'Gestão completa de pessoal, financeiro, administrativo e contratações' 
-              : 'Gestão de funcionários e cargos para os seus estabelecimentos'}
+            Gestão de funcionários, cargos, registo de faltas e pagamentos de salários
           </p>
         </div>
       </div>
 
-      {!hasFullRH && (
-        <div className="p-4 bg-amber-50 border border-amber-200/80 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-amber-100 rounded-xl text-amber-700 shrink-0">
-              <ShieldAlert size={20} />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-amber-900">Acesso Básico de RH (Incluso no Proprietário)</p>
-              <p className="text-xs text-amber-700">
-                Pode criar e gerir Funcionários e Cargos livremente. Para desbloquear Folha de Pagamento, Contratos, Férias e Avaliações, adquira o Módulo RH Completo.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Top Navigation */}
-      <div className="flex flex-col gap-3">
-        {/* Main Categories Row */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-none">
-          {categories.map((category) => {
-            const isSelected = currentCategory.id === category.id;
-            return (
-              <button
-                key={category.id}
-                onClick={() => {
-                  if (category.id === 'dashboard') {
-                    setActiveTab('dashboard');
-                  } else if (category.tabs.length > 0) {
-                    setActiveTab(category.tabs[0].id);
-                  }
-                }}
-                className={cn(
-                  "flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap border",
-                  isSelected 
-                    ? "bg-black text-white border-black shadow-md shadow-black/10" 
-                    : "bg-white text-zinc-600 border-zinc-200/60 hover:bg-zinc-50"
-                )}
-              >
-                <category.icon size={15} />
-                <span>{category.name}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Sub-tabs Row for the selected category */}
-        {currentCategory.tabs.length > 0 && (
-          <div className="flex items-center gap-1.5 overflow-x-auto py-1.5 px-2 bg-zinc-50 border border-zinc-200/60 rounded-xl scrollbar-none">
-            {currentCategory.tabs.map((tab) => {
-              const isTabSelected = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap",
-                    isTabSelected 
-                      ? "bg-white text-zinc-950 shadow-sm border border-zinc-200/60" 
-                      : "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/60"
-                  )}
-                >
-                  <tab.icon size={14} />
-                  <span>{tab.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-none border-b border-zinc-100">
+        {tabs.map((tab) => {
+          const isSelected = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap border",
+                isSelected 
+                  ? "bg-black text-white border-black shadow-md shadow-black/10" 
+                  : "bg-white text-zinc-600 border-zinc-200/60 hover:bg-zinc-50"
+              )}
+            >
+              <tab.icon size={15} />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Content Area */}

@@ -12,7 +12,8 @@ import {
   Wallet,
   Monitor,
   CheckCircle,
-  Lock
+  Lock,
+  AlertTriangle
 } from 'lucide-react';
 import { User, Establishment as EstablishmentType, BankAccount } from '../types';
 
@@ -66,7 +67,7 @@ export const MyEstablishments = ({ user }: { user: User }) => {
     establishment_code: '',
     status: 'active' as 'active' | 'inactive',
     bank_accounts: [] as BankAccount[],
-    type: 'comum' as 'comum' | 'farmácia'
+    type: 'comercial' as 'comercial'
   });
 
   const [viewingProformasEstablishment, setViewingProformasEstablishment] = useState<EstablishmentType | null>(null);
@@ -76,10 +77,22 @@ export const MyEstablishments = ({ user }: { user: User }) => {
   const [selectedEstablishmentForOpening, setSelectedEstablishmentForOpening] = useState<EstablishmentType | null>(null);
   const [registersForSelectedEstablishment, setRegistersForSelectedEstablishment] = useState<any[]>([]);
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
+  const [confirmCodeModalData, setConfirmCodeModalData] = useState<{
+    isOpen: boolean;
+    originalCode: string;
+    newCode: string;
+  } | null>(null);
 
   const fetchEstablishments = () => {
     fetch(`/api/owner/establishments/${user.id}`)
-      .then(res => res.json())
+      .then(async res => {
+        if (!res.ok) {
+          const text = await res.text();
+          console.error("Server returned non-OK status for establishments:", res.status, text);
+          return [];
+        }
+        return res.json();
+      })
       .then(data => {
         if (Array.isArray(data)) {
           setEstablishments(data);
@@ -90,7 +103,6 @@ export const MyEstablishments = ({ user }: { user: User }) => {
       })
       .catch(err => {
         console.error("Error fetching establishments:", err);
-        alert("Erro ao carregar estabelecimentos. Verifique sua conexão ou tente novamente.");
         setEstablishments([]);
       });
   };
@@ -206,26 +218,66 @@ export const MyEstablishments = ({ user }: { user: User }) => {
     }
   };
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const generateNextEstablishmentCode = (list: EstablishmentType[]) => {
+    let maxNum = 0;
+    list.forEach(est => {
+      if (est.establishment_code) {
+        const digits = est.establishment_code.replace(/\D/g, '');
+        if (digits) {
+          const num = parseInt(digits, 10);
+          if (!isNaN(num) && num > maxNum) {
+            maxNum = num;
+          }
+        }
+      }
+    });
+    const nextNum = maxNum > 0 ? maxNum + 1 : list.length + 1;
+    return `EST-${String(nextNum).padStart(2, '0')}`;
+  };
+
+  const executeSave = async (codeToSave: string) => {
     const url = editingEstablishment ? `/api/owner/establishments/${editingEstablishment.id}` : '/api/owner/establishments';
     const method = editingEstablishment ? 'PUT' : 'POST';
-    
+
     const res = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...formData, owner_id: user.id })
+      body: JSON.stringify({ ...formData, establishment_code: codeToSave, owner_id: user.id })
     });
 
     if (res.ok) {
       setIsModalOpen(false);
+      setConfirmCodeModalData(null);
       setEditingEstablishment(null);
-      setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', establishment_code: '', status: 'active', bank_accounts: [], type: 'comum' });
+      setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', establishment_code: '', status: 'active', bank_accounts: [], type: 'comercial' });
       fetchEstablishments();
     } else {
       const data = await res.json();
       alert(data.error || "Erro ao processar pedido");
     }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    
+    const finalCode = formData.establishment_code.trim() || generateNextEstablishmentCode(establishments);
+    const defaultAutoCode = generateNextEstablishmentCode(establishments);
+
+    let originalCode = defaultAutoCode;
+    if (editingEstablishment) {
+      originalCode = (editingEstablishment.establishment_code || '').trim();
+    }
+
+    if (finalCode !== originalCode) {
+      setConfirmCodeModalData({
+        isOpen: true,
+        originalCode,
+        newCode: finalCode
+      });
+      return;
+    }
+
+    await executeSave(finalCode);
   };
 
   const handleEdit = (establishment: EstablishmentType) => {
@@ -237,10 +289,10 @@ export const MyEstablishments = ({ user }: { user: User }) => {
       email: establishment.email || '',
       nif: establishment.nif || '',
       logo_url: establishment.logo_url || '',
-      establishment_code: establishment.establishment_code || '',
+      establishment_code: establishment.establishment_code || generateNextEstablishmentCode(establishments),
       status: establishment.status,
       bank_accounts: establishment.bank_accounts || [],
-      type: (establishment.type as any) || 'comum'
+      type: (establishment.type as any) || 'comercial'
     });
     setIsModalOpen(true);
   };
@@ -276,7 +328,18 @@ export const MyEstablishments = ({ user }: { user: User }) => {
           <button 
             onClick={() => {
               setEditingEstablishment(null);
-              setFormData({ name: '', address: '', phone: '', email: '', nif: '', logo_url: '', establishment_code: '', status: 'active', bank_accounts: [], type: 'comum' });
+              setFormData({ 
+                name: '', 
+                address: '', 
+                phone: '', 
+                email: '', 
+                nif: '', 
+                logo_url: '', 
+                establishment_code: generateNextEstablishmentCode(establishments), 
+                status: 'active', 
+                bank_accounts: [], 
+                type: 'comercial' 
+              });
               setIsModalOpen(true);
             }}
             className="w-full md:w-auto bg-black text-white px-6 py-3 rounded-xl flex items-center justify-center gap-2 font-bold hover:bg-zinc-800 transition-all active:scale-95 shadow-lg shadow-black/10"
@@ -343,11 +406,8 @@ export const MyEstablishments = ({ user }: { user: User }) => {
                     </span>
                   )}
                   {establishment.type && (
-                    <span className={cn(
-                      "px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border",
-                      establishment.type === 'farmácia' ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-zinc-50 text-zinc-500 border-zinc-200"
-                    )}>
-                      {establishment.type}
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border bg-zinc-50 text-zinc-600 border-zinc-200">
+                      {establishment.type === 'farmácia' ? 'Comercial' : (establishment.type === 'comum' ? 'Comercial' : establishment.type)}
                     </span>
                   )}
                   <span className={cn(
@@ -442,10 +502,10 @@ export const MyEstablishments = ({ user }: { user: User }) => {
               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Código do Estabelecimento</label>
               <input 
                 type="text" 
-                placeholder="Ex: LJ01, LJ02, T01"
+                placeholder="Ex: EST-01"
                 value={formData.establishment_code}
                 onChange={e => setFormData({...formData, establishment_code: e.target.value})}
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all" 
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-mono font-bold text-sm" 
               />
             </div>
             <div className="col-span-2">
@@ -500,8 +560,7 @@ export const MyEstablishments = ({ user }: { user: User }) => {
                 onChange={e => setFormData({...formData, type: e.target.value as any})}
                 className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all font-bold text-sm"
               >
-                <option value="comum">Comum (Default)</option>
-                <option value="farmácia">Farmácia</option>
+                <option value="comercial">Comercial</option>
               </select>
             </div>
 
@@ -683,6 +742,64 @@ export const MyEstablishments = ({ user }: { user: User }) => {
           </div>
         </div>
       </Modal>
+
+      {confirmCodeModalData && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl border border-zinc-100 text-center space-y-4">
+            <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mx-auto border border-amber-200">
+              <AlertTriangle size={24} />
+            </div>
+            
+            <div className="space-y-2">
+              <h3 className="text-lg font-bold text-zinc-900">
+                Confirmar Alteração do Código
+              </h3>
+              <p className="text-xs text-zinc-600 leading-relaxed">
+                Deseja mesmo alterar o código do estabelecimento?
+              </p>
+              
+              <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-3 my-2 text-left space-y-1.5 text-xs">
+                <div className="flex justify-between items-center text-zinc-500">
+                  <span>Código anterior / padrão:</span>
+                  <span className="font-mono font-bold text-zinc-700 bg-zinc-200/60 px-2 py-0.5 rounded">
+                    {confirmCodeModalData.originalCode}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-black font-semibold">
+                  <span>Novo código inserido:</span>
+                  <span className="font-mono font-bold text-black bg-amber-100 border border-amber-300 text-amber-900 px-2 py-0.5 rounded">
+                    {confirmCodeModalData.newCode}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => executeSave(confirmCodeModalData.newCode)}
+                className="w-full bg-black text-white py-3 rounded-xl font-bold text-xs hover:bg-zinc-800 transition-all active:scale-95"
+              >
+                Sim, alterar código
+              </button>
+              <button
+                type="button"
+                onClick={() => executeSave(confirmCodeModalData.originalCode)}
+                className="w-full bg-zinc-100 text-zinc-700 py-3 rounded-xl font-bold text-xs hover:bg-zinc-200 transition-all active:scale-95"
+              >
+                Não, manter código anterior
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmCodeModalData(null)}
+                className="w-full text-zinc-400 text-[11px] font-medium hover:text-zinc-600 transition-colors pt-1"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

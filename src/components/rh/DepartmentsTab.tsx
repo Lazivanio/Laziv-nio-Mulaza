@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Building2, Plus, Trash2, Users, DollarSign, X } from 'lucide-react';
+import { Building2, Plus, Trash2, Users, DollarSign, X, AlertTriangle } from 'lucide-react';
 import { Department } from './types';
 import { User } from '../../types';
 
@@ -13,6 +13,7 @@ interface Props {
 export const DepartmentsTab = ({ departments, setDepartments, employees, employeeDepartments }: Props) => {
   const [isOpen, setIsOpen] = useState(false);
   const [form, setForm] = useState({ name: '', description: '', budget: '' });
+  const [deptToDelete, setDeptToDelete] = useState<Department | null>(null);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,9 +31,10 @@ export const DepartmentsTab = ({ departments, setDepartments, employees, employe
     setIsOpen(false);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('Tem a certeza que deseja eliminar este departamento?')) {
-      setDepartments(prev => prev.filter(d => d.id !== id));
+  const confirmDelete = () => {
+    if (deptToDelete) {
+      setDepartments(prev => prev.filter(d => d.id !== deptToDelete.id));
+      setDeptToDelete(null);
     }
   };
 
@@ -69,8 +71,8 @@ export const DepartmentsTab = ({ departments, setDepartments, employees, employe
                   <Building2 size={24} />
                 </div>
                 <button
-                  onClick={() => handleDelete(dept.id)}
-                  className="opacity-0 group-hover:opacity-100 p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                  onClick={() => setDeptToDelete(dept)}
+                  className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-all"
                   title="Eliminar Departamento"
                 >
                   <Trash2 size={16} />
@@ -158,6 +160,46 @@ export const DepartmentsTab = ({ departments, setDepartments, employees, employe
           </div>
         </div>
       )}
+
+      {/* Modal Confirmar Eliminação */}
+      {deptToDelete && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-md w-full overflow-hidden shadow-2xl p-6 space-y-4 animate-in fade-in zoom-in-95 border border-zinc-100">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-rose-100 text-rose-600 rounded-xl">
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-zinc-900">Eliminar Departamento</h3>
+                <p className="text-xs text-zinc-500">Confirmação de eliminação permanente</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-zinc-600 leading-relaxed">
+              Tem a certeza que deseja eliminar o departamento <strong className="text-zinc-900">{deptToDelete.name}</strong>? Esta ação não poderá ser desfeita.
+            </p>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeptToDelete(null)}
+                className="flex-1 py-2.5 bg-zinc-100 text-zinc-700 font-bold rounded-xl text-sm hover:bg-zinc-200 transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                className="flex-1 py-2.5 bg-rose-600 text-white font-bold rounded-xl text-sm hover:bg-rose-700 transition-all shadow-md shadow-rose-200 flex items-center justify-center gap-2"
+              >
+                <Trash2 size={16} />
+                <span>Eliminar</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

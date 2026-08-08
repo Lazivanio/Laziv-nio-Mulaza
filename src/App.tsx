@@ -129,7 +129,6 @@ function cn(...inputs: ClassValue[]) {
 
 function hasPermission(user: User | null, permissionId: string): boolean {
   if (!user) return false;
-  if (user.features?.only_rh && permissionId.startsWith('pos_')) return false;
   if (user.role === 'admin' || user.role === 'owner') return true;
   const perms = user.permissions;
   if (!perms || !Array.isArray(perms)) return false;
@@ -137,9 +136,7 @@ function hasPermission(user: User | null, permissionId: string): boolean {
 }
 
 function hasRHModule(user: User | null): boolean {
-  if (!user) return false;
-  if (user.role === 'admin' || user.role === 'owner') return true;
-  return !!user.features?.rh;
+  return true;
 }
 
 // --- Components ---
@@ -745,19 +742,15 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
             {user.role === 'owner' && (
               <>
                 <SidebarItem icon={LayoutDashboard} label="Visão Geral" to="/owner" onClick={closeSidebar} />
-                {!user.features?.only_rh && <SidebarItem icon={Store} label="Meus Estabelecimentos" to="/owner/establishments" onClick={closeSidebar} />}
-                {hasRHModule(user) && <SidebarItem icon={Briefcase} label="RH" to="/owner/rh" onClick={closeSidebar} />}
-                {!user.features?.only_rh && (
-                  <>
-                    <SidebarItem icon={Users} label="Parceiros" to="/owner/partners" onClick={closeSidebar} />
-                    <SidebarItem icon={ShoppingCart} label="Compras" to="/owner/purchases" onClick={closeSidebar} />
-                    <SidebarItem icon={Sparkles} label="Serviços" to="/owner/services" onClick={closeSidebar} />
-                    <SidebarItem icon={FileText} label="Documentos" to="/owner/documents" onClick={closeSidebar} />
-                    <SidebarItem icon={Warehouse} label="Armazéns" to="/owner/warehouses" onClick={closeSidebar} />
-                    <SidebarItem icon={DollarSign} label="Financeiro" to="/owner/finance" onClick={closeSidebar} />
-                    <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
-                  </>
-                )}
+                <SidebarItem icon={Store} label="Meus Estabelecimentos" to="/owner/establishments" onClick={closeSidebar} />
+                <SidebarItem icon={Briefcase} label="RH" to="/owner/rh" onClick={closeSidebar} />
+                <SidebarItem icon={Users} label="Parceiros" to="/owner/partners" onClick={closeSidebar} />
+                <SidebarItem icon={ShoppingCart} label="Compras" to="/owner/purchases" onClick={closeSidebar} />
+                <SidebarItem icon={Sparkles} label="Serviços" to="/owner/services" onClick={closeSidebar} />
+                <SidebarItem icon={FileText} label="Documentos" to="/owner/documents" onClick={closeSidebar} />
+                <SidebarItem icon={Warehouse} label="Armazéns" to="/owner/warehouses" onClick={closeSidebar} />
+                <SidebarItem icon={DollarSign} label="Financeiro" to="/owner/finance" onClick={closeSidebar} />
+                <SidebarItem icon={TrendingUp} label="Relatórios" to="/owner/reports" onClick={closeSidebar} />
                 <SidebarItem icon={Settings} label="Configurações" to="/owner/settings" onClick={closeSidebar} />
               </>
             )}
@@ -959,7 +952,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
 
 const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [financeSubTab, setFinanceSubTab] = useState<'payments' | 'saas'>('payments');
+  const [financeSubTab, setFinanceSubTab] = useState<'payments' | 'proofs' | 'saas'>('payments');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [dashboardData, setDashboardData] = useState<any>({
@@ -1008,6 +1001,108 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [isSendingPublicReply, setIsSendingPublicReply] = useState(false);
   const [publicFilter, setPublicFilter] = useState('open');
 
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+
+  // Helper to calculate days active for free/trial accounts
+  const getDaysOld = (createdAtStr: string) => {
+    if (!createdAtStr) return 0;
+    try {
+      const createdDate = new Date(createdAtStr.includes('Z') || createdAtStr.includes('UTC') ? createdAtStr : createdAtStr.replace(' ', 'T') + 'Z');
+      const now = new Date();
+      const diffTime = Math.max(0, now.getTime() - createdDate.getTime());
+      return Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    } catch (e) {
+      return 0;
+    }
+  };
+
+  // Free / trial accounts list (only accounts created via the "Conta Grátis" registration form)
+  const freeAccountsList = clients.filter((c: any) => c.is_test_account === 1 && c.email !== 'owner@factu.com');
+  const freeAccountsCount = freeAccountsList.length;
+
+  // Notifications calculation
+  const pendingApprovalsCount = licenses.filter((l: any) => l.status === 'pending_approval').length;
+  const pendingSupportCount = tickets.filter((t: any) => t.status === 'open').length;
+  const pendingPublicCount = publicMessages.filter((m: any) => m.status === 'open').length;
+  const expiredCount = licenses.filter((l: any) => l.status === 'expired').length;
+
+  const totalNotifications = pendingApprovalsCount + pendingSupportCount + pendingPublicCount + expiredCount;
+
+  const adminNotificationsList = [
+    ...licenses.filter((l: any) => l.status === 'pending_approval').map((l: any) => ({
+      id: `lic-app-${l.id}`,
+      title: 'Comprovativo Pendente de Validação',
+      description: `Empresa "${l.company_name || l.client_name || 'Cliente'}" enviou comprovativo para o plano ${l.plan_type}.`,
+      time: l.created_at ? new Date(l.created_at).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }) : 'Recente',
+      badge: 'Aprovação Urgente',
+      badgeColor: 'bg-amber-100 text-amber-900 border-amber-300',
+      icon: CreditCard,
+      onClick: () => {
+        setActiveTab('finance');
+        setFinanceSubTab('proofs');
+        setIsNotificationsOpen(false);
+      }
+    })),
+    ...tickets.filter((t: any) => t.status === 'open').map((t: any) => ({
+      id: `ticket-${t.id}`,
+      title: 'Novo Chamado de Suporte',
+      description: `Cliente "${t.company_name || t.user_name || 'Cliente'}": "${t.subject || t.message || 'Atendimento'}"`,
+      time: 'Pendente',
+      badge: 'Suporte Direto',
+      badgeColor: 'bg-blue-100 text-blue-900 border-blue-300',
+      icon: LifeBuoy,
+      onClick: () => {
+        setActiveTab('support');
+        setSupportSubTab('private');
+        setIsNotificationsOpen(false);
+      }
+    })),
+    ...publicMessages.filter((m: any) => m.status === 'open').map((m: any) => ({
+      id: `pub-${m.id}`,
+      title: 'Mensagem Pública do Site',
+      description: `Contacto de ${m.name || 'Visitante'}: "${m.message?.substring(0, 50)}..."`,
+      time: 'Contacto',
+      badge: 'Acuradoria',
+      badgeColor: 'bg-purple-100 text-purple-900 border-purple-300',
+      icon: Users,
+      onClick: () => {
+        setActiveTab('support');
+        setSupportSubTab('public');
+        setIsNotificationsOpen(false);
+      }
+    })),
+    ...licenses.filter((l: any) => l.status === 'expired').map((l: any) => ({
+      id: `exp-${l.id}`,
+      title: 'Licença Expirada',
+      description: `A licença da empresa "${l.company_name || l.client_name}" expirou e necessita de renovação.`,
+      time: 'Expirada',
+      badge: 'Atenção',
+      badgeColor: 'bg-rose-100 text-rose-900 border-rose-300',
+      icon: AlertCircle,
+      onClick: () => {
+        setActiveTab('licenses');
+        setIsNotificationsOpen(false);
+      }
+    })),
+    ...freeAccountsList.map((c: any) => {
+      const days = getDaysOld(c.created_at);
+      const daysLabel = days === 0 ? 'Criada hoje (0 dias)' : days === 1 ? '1 dia de conta' : `${days} dias de conta`;
+      return {
+        id: `free-acc-${c.id}`,
+        title: `Conta Grátis: ${c.company_name || c.name || 'Cliente'}`,
+        description: `Contacto: ${c.email}. Registada há ${days} dia(s). Plano actual: ${c.current_plan || 'Grátis/Teste'}.`,
+        time: daysLabel,
+        badge: `${days}d em teste`,
+        badgeColor: days >= 25 ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-emerald-100 text-emerald-900 border-emerald-300',
+        icon: UserCheck,
+        onClick: () => {
+          setActiveTab('clients');
+          setIsNotificationsOpen(false);
+        }
+      };
+    })
+  ];
+
   // New states for client management
   const [selectedClient, setSelectedClient] = useState<any>(null);
   const [clientDetails, setClientDetails] = useState<any>(null);
@@ -1015,28 +1110,24 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [clientPlanType, setClientPlanType] = useState('Básico');
   const [clientLicenseDuration, setClientLicenseDuration] = useState(12);
-  const [clientEstTypes, setClientEstTypes] = useState<string[]>(['comum']);
+  const [clientEstTypes, setClientEstTypes] = useState<string[]>(['comercial']);
   const [numEmpresarialEsts, setNumEmpresarialEsts] = useState(3);
-  const [includeRHModule, setIncludeRHModule] = useState(false);
 
   const handlePlanTypeChange = (plan: string) => {
     setClientPlanType(plan);
     if (plan === 'Básico') {
-      setClientEstTypes(['comum']);
+      setClientEstTypes(['comercial']);
     } else if (plan === 'Profissional') {
-      setClientEstTypes(['comum', 'comum']);
+      setClientEstTypes(['comercial', 'comercial']);
     } else if (plan === 'Empresarial') {
-      setClientEstTypes(Array(numEmpresarialEsts).fill('comum'));
-    } else if (plan === 'Apenas RH') {
-      setClientEstTypes(['comum']);
-      setIncludeRHModule(true);
+      setClientEstTypes(Array(numEmpresarialEsts).fill('comercial'));
     }
   };
 
   const handleNumEmpresarialEstsChange = (num: number) => {
     setNumEmpresarialEsts(num);
     if (clientPlanType === 'Empresarial') {
-      setClientEstTypes(Array(num).fill('comum'));
+      setClientEstTypes(Array(num).fill('comercial'));
     }
   };
 
@@ -1070,6 +1161,30 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [licenseSearchQuery, setLicenseSearchQuery] = useState('');
   const [licenseFilterStatus, setLicenseFilterStatus] = useState('all');
   const [licenseFilterPlan, setLicenseFilterPlan] = useState('all');
+  const [proofSearchQuery, setProofSearchQuery] = useState('');
+  const [proofMethodFilter, setProofMethodFilter] = useState('all');
+  const [proofStatusFilter, setProofStatusFilter] = useState('all');
+  const [proofModal, setProofModal] = useState<{
+    isOpen: boolean;
+    proofData: string | null;
+    fileName?: string | null;
+    clientName: string;
+    companyName: string;
+    planType: string;
+    paymentMethod: string;
+    licenseId: number;
+    status: string;
+  }>({
+    isOpen: false,
+    proofData: null,
+    fileName: null,
+    clientName: '',
+    companyName: '',
+    planType: '',
+    paymentMethod: '',
+    licenseId: 0,
+    status: ''
+  });
 
   const [clientFormData, setClientFormData] = useState({
     name: '',
@@ -1205,8 +1320,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
           ...clientFormData,
           plan_type: clientPlanType,
           license_duration_months: clientLicenseDuration,
-          establishment_types: clientEstTypes,
-          rh_module: includeRHModule
+          establishment_types: clientEstTypes
         })
       });
       if (!res.ok) throw new Error("Failed to create client");
@@ -1215,9 +1329,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       // Reset additional fields
       setClientPlanType('Básico');
       setClientLicenseDuration(12);
-      setClientEstTypes(['comum']);
+      setClientEstTypes(['comercial']);
       setNumEmpresarialEsts(3);
-      setIncludeRHModule(false);
       fetchData();
     } catch (e) {
       console.error(e);
@@ -1289,13 +1402,13 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
           features: { 
             max_establishments: selectedPlan?.max_establishments || 1, 
             max_products: selectedPlan?.max_products || 100,
-            rh: !!licenseFormData.rh_module
+            rh: true
           }
         })
       });
       if (!res.ok) throw new Error("Failed to manage license");
       setIsLicenseModalOpen(false);
-      setLicenseFormData({ plan_type: '', duration_months: 1, establishment_id: '', user_id: '', rh_module: false });
+      setLicenseFormData({ plan_type: '', duration_months: 1, establishment_id: '', user_id: '' });
       fetchData();
       if (isClientDetailsOpen && userId === selectedClient?.id) fetchClientDetails(userId);
     } catch (e) {
@@ -1601,11 +1714,23 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   });
 
   const filteredLicenses = licenses.filter(l => {
-    const matchesSearch = l.client_name.toLowerCase().includes(licenseSearchQuery.toLowerCase()) || 
+    const matchesSearch = (l.client_name || '').toLowerCase().includes(licenseSearchQuery.toLowerCase()) || 
                          (l.company_name?.toLowerCase() || '').includes(licenseSearchQuery.toLowerCase());
     const matchesPlan = licenseFilterPlan === 'all' || l.plan_type === licenseFilterPlan;
     const matchesStatus = licenseFilterStatus === 'all' || l.status === licenseFilterStatus;
     return matchesSearch && matchesPlan && matchesStatus;
+  });
+
+  const filteredProofLicenses = licenses.filter((l: any) => {
+    const matchesSearch = (l.client_name || '').toLowerCase().includes(proofSearchQuery.toLowerCase()) ||
+                         (l.company_name || '').toLowerCase().includes(proofSearchQuery.toLowerCase()) ||
+                         (l.client_email || '').toLowerCase().includes(proofSearchQuery.toLowerCase()) ||
+                         (l.client_phone || '').includes(proofSearchQuery);
+    const matchesMethod = proofMethodFilter === 'all' || 
+                         (proofMethodFilter === 'multicaixa' && (l.payment_method || '').toLowerCase().includes('multicaixa')) ||
+                         (proofMethodFilter === 'iban' && ((l.payment_method || '').toLowerCase().includes('iban') || (l.payment_method || '').toLowerCase().includes('transferência') || (l.payment_method || '').toLowerCase().includes('bank')));
+    const matchesStatus = proofStatusFilter === 'all' || l.status === proofStatusFilter;
+    return matchesSearch && matchesMethod && matchesStatus;
   });
 
   useEffect(() => {
@@ -1815,10 +1940,162 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-full text-[10px] font-black uppercase">
               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
               Sistemas Online
+            </div>
+
+            {/* Notification Bell Button & Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
+                className={cn(
+                  "p-2.5 rounded-2xl border transition-all relative flex items-center justify-center",
+                  isNotificationsOpen 
+                    ? "bg-zinc-900 text-white border-zinc-900 shadow-md" 
+                    : "bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-100 hover:text-black"
+                )}
+                title="Notificações e Avisos do Administrador"
+              >
+                <Bell size={20} className={totalNotifications > 0 ? "animate-pulse text-amber-500" : ""} />
+                {totalNotifications > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-rose-600 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm">
+                    {totalNotifications > 99 ? '99+' : totalNotifications}
+                  </span>
+                )}
+              </button>
+
+              {/* Notification Popover Dropdown */}
+              <AnimatePresence>
+                {isNotificationsOpen && (
+                  <>
+                    {/* Backdrop for closing dropdown */}
+                    <div 
+                      className="fixed inset-0 z-40" 
+                      onClick={() => setIsNotificationsOpen(false)} 
+                    />
+
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                      className="absolute right-0 mt-3 w-80 sm:w-96 bg-white rounded-3xl shadow-2xl border border-zinc-200 z-50 overflow-hidden flex flex-col max-h-[85vh]"
+                    >
+                      {/* Header */}
+                      <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-900 text-white flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-2 bg-white/10 rounded-xl">
+                            <Bell size={18} className="text-amber-400" />
+                          </div>
+                          <div>
+                            <h3 className="font-black text-sm text-white">Central de Notificações</h3>
+                            <p className="text-[10px] text-zinc-400 font-bold">
+                              {totalNotifications} pendência(s) • {freeAccountsCount} conta(s) grátis
+                            </p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => setIsNotificationsOpen(false)}
+                          className="p-1.5 hover:bg-white/10 rounded-xl text-zinc-400 hover:text-white transition-colors"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+
+                      {/* Summary Badges */}
+                      <div className="grid grid-cols-3 gap-1.5 p-2.5 bg-zinc-50 border-b border-zinc-100 text-[10px] font-black">
+                        <button 
+                          onClick={() => { setActiveTab('finance'); setFinanceSubTab('proofs'); setIsNotificationsOpen(false); }}
+                          className="p-2 bg-white rounded-xl border border-zinc-200 hover:border-amber-400 transition-all text-left flex items-center justify-between"
+                        >
+                          <span className="text-zinc-500 truncate">Comprovat.</span>
+                          <span className={cn("px-1.5 py-0.5 rounded-full font-black text-[9px]", pendingApprovalsCount > 0 ? "bg-amber-500 text-white" : "bg-zinc-100 text-zinc-400")}>
+                            {pendingApprovalsCount}
+                          </span>
+                        </button>
+
+                        <button 
+                          onClick={() => { setActiveTab('support'); setIsNotificationsOpen(false); }}
+                          className="p-2 bg-white rounded-xl border border-zinc-200 hover:border-blue-400 transition-all text-left flex items-center justify-between"
+                        >
+                          <span className="text-zinc-500 truncate">Suporte</span>
+                          <span className={cn("px-1.5 py-0.5 rounded-full font-black text-[9px]", (pendingSupportCount + pendingPublicCount) > 0 ? "bg-blue-600 text-white" : "bg-zinc-100 text-zinc-400")}>
+                            {pendingSupportCount + pendingPublicCount}
+                          </span>
+                        </button>
+
+                        <button 
+                          onClick={() => { setActiveTab('clients'); setIsNotificationsOpen(false); }}
+                          className="p-2 bg-white rounded-xl border border-zinc-200 hover:border-emerald-400 transition-all text-left flex items-center justify-between"
+                        >
+                          <span className="text-zinc-500 truncate">Grátis</span>
+                          <span className={cn("px-1.5 py-0.5 rounded-full font-black text-[9px]", freeAccountsCount > 0 ? "bg-emerald-600 text-white" : "bg-zinc-100 text-zinc-400")}>
+                            {freeAccountsCount}
+                          </span>
+                        </button>
+                      </div>
+
+                      {/* List of items */}
+                      <div className="overflow-y-auto p-3 space-y-2 flex-1 divide-y divide-zinc-100">
+                        {adminNotificationsList.length === 0 ? (
+                          <div className="py-10 text-center space-y-2">
+                            <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+                              <Check size={24} />
+                            </div>
+                            <p className="text-xs font-black text-zinc-800">Tudo em dia!</p>
+                            <p className="text-[11px] text-zinc-400 max-w-[200px] mx-auto">Não há comprovativos ou suporte pendentes neste momento.</p>
+                          </div>
+                        ) : (
+                          adminNotificationsList.map((item) => {
+                            const IconComponent = item.icon || Bell;
+                            return (
+                              <div 
+                                key={item.id}
+                                onClick={item.onClick}
+                                className="pt-2 first:pt-0 pb-2 p-2.5 hover:bg-zinc-50 rounded-2xl transition-all cursor-pointer group flex items-start gap-3 border border-transparent hover:border-zinc-200"
+                              >
+                                <div className="p-2.5 bg-zinc-100 group-hover:bg-black group-hover:text-white text-zinc-700 rounded-2xl transition-colors shrink-0 mt-0.5">
+                                  <IconComponent size={16} />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center justify-between gap-1 mb-0.5">
+                                    <span className="text-xs font-black text-zinc-900 truncate group-hover:text-blue-600 transition-colors">
+                                      {item.title}
+                                    </span>
+                                    <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full border uppercase shrink-0", item.badgeColor)}>
+                                      {item.badge}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-zinc-600 line-clamp-2 leading-tight">
+                                    {item.description}
+                                  </p>
+                                  <p className="text-[9px] text-zinc-400 font-bold mt-1">
+                                    {item.time}
+                                  </p>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Footer */}
+                      <div className="p-3 bg-zinc-50 border-t border-zinc-100 flex items-center justify-between text-xs font-bold">
+                        <span className="text-zinc-400 text-[10px]">
+                          Clique em qualquer item para tratar
+                        </span>
+                        <button 
+                          onClick={() => { setActiveTab('finance'); setFinanceSubTab('proofs'); setIsNotificationsOpen(false); }}
+                          className="text-blue-600 hover:text-blue-800 font-black text-[11px] flex items-center gap-1"
+                        >
+                          Ver Comprovativos <ChevronRight size={12} />
+                        </button>
+                      </div>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </header>
@@ -1911,7 +2188,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
           {activeTab === 'finance' && (
             <div className="space-y-8">
               {/* Seletor de Sub-Abas Financeiras */}
-              <div className="flex bg-zinc-100 p-1 rounded-2xl w-fit">
+              <div className="flex bg-zinc-100 p-1 rounded-2xl w-fit flex-wrap gap-1">
                 <button
                   onClick={() => setFinanceSubTab('payments')}
                   className={cn(
@@ -1920,6 +2197,20 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   )}
                 >
                   Pagamentos Clientes
+                </button>
+                <button
+                  onClick={() => setFinanceSubTab('proofs')}
+                  className={cn(
+                    "px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
+                    financeSubTab === 'proofs' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
+                  )}
+                >
+                  <span>Documentos de Referência</span>
+                  {licenses.filter((l: any) => l.status === 'pending_approval').length > 0 && (
+                    <span className="px-2 py-0.5 bg-amber-500 text-white rounded-full text-[9px] font-black animate-pulse">
+                      {licenses.filter((l: any) => l.status === 'pending_approval').length}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => setFinanceSubTab('saas')}
@@ -1932,7 +2223,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                 </button>
               </div>
 
-              {financeSubTab === 'payments' ? (
+              {financeSubTab === 'payments' && (
                 <div className="space-y-8">
                   {/* 1️⃣ Resumo Financeiro Clientes */}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -2092,7 +2383,216 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     </Card>
                   </div>
                 </div>
-              ) : (
+              )}
+
+              {financeSubTab === 'proofs' && (
+                <div className="space-y-8">
+                  {/* Header & Controls */}
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-zinc-100 shadow-sm">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-lg font-black text-zinc-900">Documentos de Referência & Comprovativos</h2>
+                        <span className="px-2.5 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[10px] font-black uppercase">
+                          {licenses.filter((l: any) => l.status === 'pending_approval').length} Pendentes
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        Consulte os documentos de referência de pagamento e comprovativos anexados pelos clientes na criação de contas.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="relative w-full sm:w-64">
+                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+                        <input
+                          type="text"
+                          placeholder="Buscar cliente, empresa ou email..."
+                          value={proofSearchQuery}
+                          onChange={(e) => setProofSearchQuery(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs outline-none focus:border-black transition-all"
+                        />
+                      </div>
+
+                      <select
+                        value={proofMethodFilter}
+                        onChange={(e) => setProofMethodFilter(e.target.value)}
+                        className="px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-700 outline-none focus:border-black transition-all"
+                      >
+                        <option value="all">Todos os Métodos</option>
+                        <option value="multicaixa">Referência Multicaixa</option>
+                        <option value="iban">Transferência / IBAN</option>
+                      </select>
+
+                      <select
+                        value={proofStatusFilter}
+                        onChange={(e) => setProofStatusFilter(e.target.value)}
+                        className="px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-700 outline-none focus:border-black transition-all"
+                      >
+                        <option value="all">Todos os Estados</option>
+                        <option value="pending_approval">Aguardando Validação</option>
+                        <option value="active">Ativas / Aprovadas</option>
+                        <option value="suspended">Suspensas</option>
+                        <option value="expired">Expiradas</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <Card className="p-6 bg-amber-50 border-amber-200">
+                      <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest mb-1">Aguardando Validação</p>
+                      <h3 className="text-3xl font-black text-amber-900">{licenses.filter((l: any) => l.status === 'pending_approval').length}</h3>
+                    </Card>
+                    <Card className="p-6 bg-blue-50 border-blue-200">
+                      <p className="text-[10px] font-black text-blue-700 uppercase tracking-widest mb-1">Comprovativos Anexados</p>
+                      <h3 className="text-3xl font-black text-blue-900">{licenses.filter((l: any) => l.payment_proof).length}</h3>
+                    </Card>
+                    <Card className="p-6 bg-emerald-50 border-emerald-200">
+                      <p className="text-[10px] font-black text-emerald-700 uppercase tracking-widest mb-1">Licenças Validadas</p>
+                      <h3 className="text-3xl font-black text-emerald-900">{licenses.filter((l: any) => l.status === 'active').length}</h3>
+                    </Card>
+                    <Card className="p-6 bg-zinc-50 border-zinc-200">
+                      <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest mb-1">Total de Registo de Contas</p>
+                      <h3 className="text-3xl font-black text-zinc-900">{licenses.length}</h3>
+                    </Card>
+                  </div>
+
+                  {/* Table View of Payment Proofs */}
+                  <Card className="overflow-hidden">
+                    <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+                      <h3 className="font-bold text-sm text-zinc-900">Documentos de Referência & Registos de Pagamento</h3>
+                      <span className="text-xs text-zinc-400 font-bold">
+                        {filteredProofLicenses.length} registos encontrados
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-zinc-100 bg-zinc-50/50">
+                            <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente / Empresa</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano Solicitado</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Método / Referência</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Documento Anexo</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Data de Registo</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estado</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">Ação</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100 text-xs">
+                          {filteredProofLicenses.length === 0 ? (
+                            <tr>
+                              <td colSpan={7} className="text-center py-12 text-zinc-400 font-medium">
+                                <FileText size={36} className="mx-auto mb-2 text-zinc-300" />
+                                Nenhum documento de referência ou comprovativo encontrado com os filtros selecionados.
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredProofLicenses.map((lic: any) => (
+                              <tr key={`proof-lic-${lic.id}`} className="hover:bg-zinc-50/50 transition-colors">
+                                <td className="px-6 py-4">
+                                  <p className="font-bold text-zinc-900">{lic.company_name || lic.client_name}</p>
+                                  <p className="text-[10px] text-zinc-400">{lic.client_name} • {lic.client_email || 'Sem email'}</p>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <span className={cn(
+                                    "px-2.5 py-1 text-[10px] font-black rounded-full uppercase",
+                                    lic.plan_type === 'Empresarial' || lic.plan_type === 'enterprise' ? "bg-purple-100 text-purple-700" :
+                                    lic.plan_type === 'Profissional' || lic.plan_type === 'pro' ? "bg-blue-100 text-blue-700" : "bg-zinc-100 text-zinc-700"
+                                  )}>
+                                    {lic.plan_type}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 font-bold text-zinc-800">
+                                  <span className="inline-flex items-center gap-1 bg-zinc-100 px-2.5 py-1 rounded-lg text-[11px]">
+                                    <CreditCard size={12} className="text-zinc-500" />
+                                    {lic.payment_method || 'Transferência / IBAN'}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4">
+                                  {lic.payment_proof ? (
+                                    <div className="flex flex-col items-start gap-1">
+                                      <span className="text-[11px] font-bold text-zinc-900 truncate max-w-[180px]" title={lic.payment_proof_name || 'Comprovativo_Anexado.pdf'}>
+                                        📄 {lic.payment_proof_name || (lic.payment_proof?.startsWith('data:') ? 'Comprovativo_Anexado.pdf' : lic.payment_proof)}
+                                      </span>
+                                      <button
+                                        onClick={() => setProofModal({
+                                          isOpen: true,
+                                          proofData: lic.payment_proof,
+                                          fileName: lic.payment_proof_name || (lic.payment_proof?.startsWith('data:') ? 'Comprovativo_Anexado.pdf' : lic.payment_proof),
+                                          clientName: lic.client_name || 'Cliente',
+                                          companyName: lic.company_name || 'Empresa',
+                                          planType: lic.plan_type,
+                                          paymentMethod: lic.payment_method || 'Pagamento',
+                                          licenseId: lic.id,
+                                          status: lic.status
+                                        })}
+                                        className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-[10px] font-black hover:bg-blue-100 transition-all"
+                                      >
+                                        <FileText size={12} />
+                                        <span>Visualizar Ficheiro</span>
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[10px] text-zinc-400 italic">Sem ficheiro anexo</span>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 text-zinc-500 font-medium">
+                                  {lic.start_date ? new Date(lic.start_date).toLocaleDateString('pt-PT') : 'N/D'}
+                                </td>
+                                <td className="px-6 py-4">
+                                  <span className={cn(
+                                    "px-2.5 py-1 rounded-full text-[10px] font-black uppercase",
+                                    lic.status === 'pending_approval' ? "bg-amber-100 text-amber-800 border border-amber-300 animate-pulse" :
+                                    lic.status === 'active' ? "bg-emerald-100 text-emerald-800" :
+                                    lic.status === 'suspended' ? "bg-rose-100 text-rose-800" : "bg-zinc-100 text-zinc-600"
+                                  )}>
+                                    {lic.status === 'pending_approval' ? 'Aguardando Validação' : lic.status}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 text-right">
+                                  <div className="flex items-center justify-end gap-2">
+                                    {lic.status === 'pending_approval' && (
+                                      <button
+                                        onClick={() => handleUpdateLicenseStatus(lic.id, 'active')}
+                                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1 shadow-sm"
+                                        title="Aprovar e Ativar Licença"
+                                      >
+                                        <Check size={14} /> Aprovar Licença
+                                      </button>
+                                    )}
+                                    {lic.payment_proof && (
+                                      <button
+                                        onClick={() => setProofModal({
+                                          isOpen: true,
+                                          proofData: lic.payment_proof,
+                                          fileName: lic.payment_proof_name || (lic.payment_proof?.startsWith('data:') ? 'Comprovativo_Anexado.pdf' : lic.payment_proof),
+                                          clientName: lic.client_name || 'Cliente',
+                                          companyName: lic.company_name || 'Empresa',
+                                          planType: lic.plan_type,
+                                          paymentMethod: lic.payment_method || 'Pagamento',
+                                          licenseId: lic.id,
+                                          status: lic.status
+                                        })}
+                                        className="p-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl transition-all"
+                                        title="Inspecionar Ficheiro"
+                                      >
+                                        <Eye size={16} />
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                </div>
+              )}
+
+              {financeSubTab === 'saas' && (
                 <div className="space-y-8">
                   {/* Resumo SaaS */}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -2493,6 +2993,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       className="flex-1 md:flex-none px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm font-bold"
                     >
                       <option value="all">Todos os Estados</option>
+                      <option value="pending_approval">Aguardando Validação</option>
                       <option value="active">Ativas</option>
                       <option value="expired">Expiradas</option>
                       <option value="suspended">Suspensas</option>
@@ -2508,14 +3009,18 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <Card className="p-6 bg-amber-50 border-amber-200">
+                  <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest mb-1">Aguardando Validação</p>
+                  <h3 className="text-3xl font-black text-amber-900">{licenses.filter(l => l.status === 'pending_approval').length}</h3>
+                </Card>
                 <Card className="p-6 bg-emerald-50 border-emerald-100">
                   <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Total Ativas</p>
                   <h3 className="text-3xl font-black text-emerald-900">{licenses.filter(l => l.status === 'active').length}</h3>
                 </Card>
-                <Card className="p-6 bg-amber-50 border-amber-100">
-                  <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1">A Expirar (7 dias)</p>
-                  <h3 className="text-3xl font-black text-amber-900">{dashboardData.stats.expiringSoon}</h3>
+                <Card className="p-6 bg-blue-50 border-blue-100">
+                  <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">A Expirar (7 dias)</p>
+                  <h3 className="text-3xl font-black text-blue-900">{dashboardData.stats.expiringSoon}</h3>
                 </Card>
                 <Card className="p-6 bg-rose-50 border-rose-100">
                   <p className="text-[10px] font-black text-rose-600 uppercase tracking-widest mb-1">Expiradas</p>
@@ -2533,6 +3038,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       <tr className="border-b border-zinc-50">
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cliente / Empresa</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Plano</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Método / Comprovativo</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Início</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Expiração</th>
                         <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">Estado</th>
@@ -2549,25 +3055,57 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                           <td className="px-6 py-4">
                             <span className={cn(
                               "px-2 py-1 text-[10px] font-black rounded-full uppercase",
-                              license.plan_type === 'enterprise' ? "bg-purple-100 text-purple-700" :
-                              license.plan_type === 'pro' ? "bg-blue-100 text-blue-700" : "bg-zinc-100 text-zinc-600"
+                              license.plan_type === 'enterprise' || license.plan_type === 'Empresarial' ? "bg-purple-100 text-purple-700" :
+                              license.plan_type === 'pro' || license.plan_type === 'Profissional' ? "bg-blue-100 text-blue-700" : "bg-zinc-100 text-zinc-600"
                             )}>
                               {license.plan_type}
                             </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-xs font-bold text-zinc-800">{license.payment_method || 'Direto'}</p>
+                            {license.payment_proof && (
+                              <button
+                                onClick={() => setProofModal({
+                                  isOpen: true,
+                                  proofData: license.payment_proof,
+                                  fileName: license.payment_proof_name || (license.payment_proof?.startsWith('data:') ? 'Comprovativo_Anexado.pdf' : license.payment_proof),
+                                  clientName: license.client_name || 'Cliente',
+                                  companyName: license.company_name || 'Empresa',
+                                  planType: license.plan_type,
+                                  paymentMethod: license.payment_method || 'Pagamento',
+                                  licenseId: license.id,
+                                  status: license.status
+                                })}
+                                className="mt-1 flex items-center gap-1 text-[10px] font-extrabold text-blue-600 hover:text-blue-800 underline max-w-[150px] truncate"
+                                title={license.payment_proof_name || 'Ver Comprovativo'}
+                              >
+                                <FileText size={12} /> {license.payment_proof_name || 'Ver Comprovativo'}
+                              </button>
+                            )}
                           </td>
                           <td className="px-6 py-4 text-sm text-zinc-500">{new Date(license.start_date).toLocaleDateString()}</td>
                           <td className="px-6 py-4 text-sm font-bold text-zinc-700">{new Date(license.expiry_date).toLocaleDateString()}</td>
                           <td className="px-6 py-4">
                             <span className={cn(
-                              "px-2 py-1 rounded-full text-[10px] font-black uppercase",
+                              "px-2.5 py-1 rounded-full text-[10px] font-black uppercase",
+                              license.status === 'pending_approval' ? "bg-amber-100 text-amber-800 border border-amber-300 animate-pulse" :
                               license.status === 'active' ? "bg-emerald-100 text-emerald-700" : 
                               license.status === 'suspended' ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"
                             )}>
-                              {license.status}
+                              {license.status === 'pending_approval' ? 'Aguardando Validação' : license.status}
                             </span>
                           </td>
                           <td className="px-6 py-4 text-right">
                             <div className="flex items-center justify-end gap-2">
+                              {license.status === 'pending_approval' && (
+                                <button 
+                                  onClick={() => handleUpdateLicenseStatus(license.id, 'active')}
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black transition-all flex items-center gap-1 shadow-sm"
+                                  title="Validar Comprovativo & Libertar Licença"
+                                >
+                                  <Check size={14} /> Aprovar Licença
+                                </button>
+                              )}
                               <button 
                                 onClick={() => fetchLicenseHistory(license.user_id)}
                                 className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 hover:text-black transition-all"
@@ -3700,11 +4238,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                               <p className="font-bold text-sm flex items-center gap-1.5 flex-wrap">
                                 {establishment.name}
                                 {establishment.type && (
-                                  <span className={cn(
-                                    "text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md",
-                                    establishment.type === 'farmácia' ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-zinc-100 text-zinc-500 border border-zinc-200"
-                                  )}>
-                                    {establishment.type}
+                                  <span className="text-[9px] px-1.5 py-0.5 font-black uppercase rounded-md bg-zinc-100 text-zinc-600 border border-zinc-200">
+                                    {establishment.type === 'farmácia' ? 'Comercial' : (establishment.type === 'comum' ? 'Comercial' : establishment.type)}
                                   </span>
                                 )}
                               </p>
@@ -3812,19 +4347,11 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                         onClick={() => {
                           setSelectedClient(clientDetails.client);
                           const activeLic = clientDetails.licenses?.[0];
-                          let hasRH = false;
-                          if (activeLic) {
-                            try {
-                              const parsedFeatures = typeof activeLic.features === 'string' ? JSON.parse(activeLic.features) : activeLic.features;
-                              hasRH = parsedFeatures?.rh === true;
-                            } catch (e) {}
-                          }
                           setLicenseFormData({
                             plan_type: activeLic?.plan_type || '',
                             duration_months: 12,
                             establishment_id: '',
-                            user_id: clientDetails.client.id,
-                            rh_module: hasRH
+                            user_id: clientDetails.client.id
                           });
                           setIsLicenseModalOpen(true);
                         }}
@@ -3950,7 +4477,6 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                         <option value="Básico">Básico (1 Estab.)</option>
                         <option value="Profissional">Profissional (2 Estab.)</option>
                         <option value="Empresarial">Empresarial (Até 10 Estab.)</option>
-                        <option value="Apenas RH">Apenas RH (15.000 Kz/mês)</option>
                       </select>
                     </div>
                     
@@ -3996,51 +4522,25 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                           onChange={(e) => handleEstTypeAtIdxChange(idx, e.target.value)}
                           className="px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs font-bold outline-none focus:border-black transition-all"
                         >
-                          <option value="comum">Comum (Default)</option>
-                          <option value="farmácia">Farmácia</option>
+                          <option value="comercial">Comercial</option>
                         </select>
                       </div>
                     ))}
                   </div>
-
-                  {/* Toggle RH Module */}
-                  {clientPlanType !== 'Apenas RH' && (
-                    <div className="pt-2">
-                      <label className="flex items-center gap-3 cursor-pointer group p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
-                        <input 
-                          type="checkbox" 
-                          checked={includeRHModule}
-                          onChange={(e) => setIncludeRHModule(e.target.checked)}
-                          className="w-5 h-5 rounded-lg border-zinc-300 text-black focus:ring-black"
-                        />
-                        <div>
-                          <p className="text-xs font-bold text-zinc-800">Incluir Módulo de Recursos Humanos (RH)</p>
-                          <p className="text-[10px] text-zinc-500 font-medium mt-0.5">Adiciona o módulo de RH por mais Kz 3.000/mês ao preço do plano</p>
-                        </div>
-                      </label>
-                    </div>
-                  )}
 
                   {/* Price Summary Panel */}
                   <div className="bg-zinc-900 text-zinc-100 p-4 rounded-2xl space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="text-xs text-zinc-400 font-bold">Plano {clientPlanType}:</span>
                       <span className="text-xs font-black">
-                        Kz {clientPlanType === 'Básico' ? '5.000' : clientPlanType === 'Profissional' ? '15.000' : clientPlanType === 'Apenas RH' ? '15.000' : '35.000'}/mês
+                        Kz {clientPlanType === 'Básico' ? '5.000' : clientPlanType === 'Profissional' ? '15.000' : '35.000'}/mês
                       </span>
                     </div>
-                    {includeRHModule && clientPlanType !== 'Apenas RH' && (
-                      <div className="flex justify-between items-center text-emerald-400">
-                        <span className="text-xs font-bold">Módulo Recursos Humanos (RH):</span>
-                        <span className="text-xs font-black">+ Kz 3.000/mês</span>
-                      </div>
-                    )}
                     <div className="border-t border-zinc-800 my-1 pt-1 flex justify-between items-center text-white">
                       <span className="text-xs font-black uppercase tracking-wider">Preço Total Mensal:</span>
                       <span className="text-sm font-black">
                         Kz {(
-                          (clientPlanType === 'Básico' ? 5000 : clientPlanType === 'Profissional' ? 15000 : clientPlanType === 'Apenas RH' ? 15000 : 35000) + 
-                          (includeRHModule && clientPlanType !== 'Apenas RH' ? 3000 : 0)
+                          clientPlanType === 'Básico' ? 5000 : clientPlanType === 'Profissional' ? 15000 : 35000
                         ).toLocaleString()}/mês
                       </span>
                     </div>
@@ -4048,8 +4548,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                       <span>Total Contrato ({clientLicenseDuration} Meses):</span>
                       <span>
                         Kz {(
-                          ((clientPlanType === 'Básico' ? 5000 : clientPlanType === 'Profissional' ? 15000 : clientPlanType === 'Apenas RH' ? 15000 : 35000) + 
-                          (includeRHModule && clientPlanType !== 'Apenas RH' ? 3000 : 0)) * clientLicenseDuration
+                          (clientPlanType === 'Básico' ? 5000 : clientPlanType === 'Profissional' ? 15000 : 35000) * clientLicenseDuration
                         ).toLocaleString()}
                       </span>
                     </div>
@@ -4212,20 +4711,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   </select>
                 </div>
 
-                <div className="pt-2">
-                  <label className="flex items-center gap-3 cursor-pointer group p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
-                    <input 
-                      type="checkbox" 
-                      checked={!!licenseFormData.rh_module}
-                      onChange={(e) => setLicenseFormData({...licenseFormData, rh_module: e.target.checked})}
-                      className="w-5 h-5 rounded-lg border-zinc-300 text-black focus:ring-black"
-                    />
-                    <div>
-                      <p className="text-xs font-bold text-zinc-800">Incluir Módulo de Recursos Humanos (RH)</p>
-                      <p className="text-[10px] text-zinc-500 font-medium mt-0.5">Adiciona o módulo de RH por mais Kz 3.000/mês ao preço do plano</p>
-                    </div>
-                  </label>
-                </div>
+
 
                 <div className="pt-4">
                   <button 
@@ -4237,6 +4723,121 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Proof Viewer Modal */}
+      <AnimatePresence>
+        {proofModal.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setProofModal(prev => ({ ...prev, isOpen: false }))}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden relative z-10 flex flex-col max-h-[90vh]"
+            >
+              <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50">
+                <div>
+                  <h3 className="text-lg font-black text-zinc-900">Validar Comprovativo de Pagamento</h3>
+                  <p className="text-xs text-zinc-500 font-bold">{proofModal.companyName} ({proofModal.clientName}) - Plano {proofModal.planType}</p>
+                </div>
+                <button 
+                  onClick={() => setProofModal(prev => ({ ...prev, isOpen: false }))} 
+                  className="p-2 hover:bg-zinc-200 rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto space-y-4 flex-1">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-zinc-50 p-4 rounded-2xl border border-zinc-200 text-xs font-bold">
+                  <div>
+                    <span className="text-zinc-400 uppercase text-[10px] block">Método de Pagamento</span>
+                    <span className="text-zinc-900">{proofModal.paymentMethod}</span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-400 uppercase text-[10px] block">Nome do Ficheiro Anexo</span>
+                    <span className="text-blue-600 font-black truncate block" title={proofModal.fileName || 'Comprovativo_Anexado.pdf'}>
+                      📄 {proofModal.fileName || 'Comprovativo_Anexado.pdf'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-400 uppercase text-[10px] block">Estado Atual</span>
+                    <span className={cn(
+                      "px-2 py-0.5 rounded-full text-[10px] font-black uppercase inline-block mt-0.5",
+                      proofModal.status === 'pending_approval' ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"
+                    )}>
+                      {proofModal.status === 'pending_approval' ? 'Pendente de Validação' : proofModal.status}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="border border-zinc-200 rounded-2xl p-2 bg-zinc-900 flex flex-col items-center justify-center min-h-[300px] relative overflow-hidden">
+                  {proofModal.proofData && proofModal.proofData.startsWith('data:image') ? (
+                    <div className="space-y-3 text-center">
+                      <img 
+                        src={proofModal.proofData} 
+                        alt="Comprovativo de Pagamento" 
+                        className="max-h-[450px] w-auto object-contain rounded-lg mx-auto"
+                        referrerPolicy="no-referrer"
+                      />
+                      <a
+                        href={proofModal.proofData}
+                        download={proofModal.fileName || "comprovativo-pagamento.png"}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs rounded-xl transition-all"
+                      >
+                        <FileText size={14} /> Descarregar Imagem ({proofModal.fileName || 'comprovativo.png'})
+                      </a>
+                    </div>
+                  ) : proofModal.proofData && proofModal.proofData.startsWith('data:application/pdf') ? (
+                    <div className="text-center text-white py-12 space-y-4">
+                      <FileText size={56} className="mx-auto text-blue-400" />
+                      <div>
+                        <p className="text-base font-black">{proofModal.fileName || 'Documento_Comprovativo.pdf'}</p>
+                        <p className="text-xs text-zinc-400">Documento em formato PDF pronto para consulta e download.</p>
+                      </div>
+                      <a 
+                        href={proofModal.proofData} 
+                        download={proofModal.fileName || "comprovativo-pagamento.pdf"} 
+                        className="inline-flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white font-black text-xs rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/30"
+                      >
+                        <FileText size={16} /> Descarregar {proofModal.fileName || 'Documento PDF'}
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="text-center text-zinc-400 py-12 space-y-2">
+                      <FileText size={48} className="mx-auto text-zinc-600" />
+                      <p className="text-sm font-bold text-zinc-200">{proofModal.fileName || 'Ficheiro do comprovativo'}</p>
+                      <p className="text-xs text-zinc-500 font-mono">{proofModal.proofData || 'Sem dados do ficheiro'}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-zinc-100 bg-zinc-50 flex items-center justify-end gap-3">
+                <button 
+                  onClick={() => setProofModal(prev => ({ ...prev, isOpen: false }))}
+                  className="px-5 py-2.5 bg-zinc-200 text-zinc-700 font-bold text-xs rounded-xl hover:bg-zinc-300 transition-all"
+                >
+                  Fechar
+                </button>
+                {proofModal.status === 'pending_approval' && (
+                  <button 
+                    onClick={() => {
+                      handleUpdateLicenseStatus(proofModal.licenseId, 'active');
+                      setProofModal(prev => ({ ...prev, isOpen: false }));
+                    }}
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-emerald-600/20"
+                  >
+                    <Check size={16} /> Validar Comprovativo & Libertar Licença
+                  </button>
+                )}
+              </div>
             </motion.div>
           </div>
         )}
@@ -5832,16 +6433,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
 
         <div className="flex items-center gap-3 min-w-0 w-full lg:w-auto">
           <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-xl overflow-x-auto pb-1">
-          {(establishment.type === 'farmácia' ? [
-            { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-            { id: 'products', icon: Package, label: 'Produtos', perm: 'stock_view' },
-            { id: 'stock', icon: Barcode, label: 'Stock', perm: 'stock_view' },
-            { id: 'invoices', icon: CreditCard, label: 'Vendas (Faturas)', perm: 'documents_view' },
-            { id: 'cash-registers', icon: Wallet, label: 'Caixas', perm: 'reports_view' },
-            { id: 'reports', icon: BarChart3, label: 'Relatórios', perm: 'reports_view' },
-            { id: 'settings', icon: Settings2, label: 'Configurações', perm: 'settings_manage' },
-            { id: 'support', icon: LifeBuoy, label: 'Suporte' },
-          ] : [
+          {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
             { id: 'invoices', icon: CreditCard, label: 'Faturas', perm: 'documents_view' },
             { id: 'products', icon: Package, label: 'Produtos', perm: 'stock_view' },
@@ -5852,7 +6444,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
             { id: 'reports', icon: BarChart3, label: 'Relatórios', perm: 'reports_view' },
             { id: 'settings', icon: Settings2, label: 'Configurações', perm: 'settings_manage' },
             { id: 'support', icon: LifeBuoy, label: 'Suporte' },
-          ]).filter(tab => !tab.perm || hasPermission(user, tab.perm)).map(tab => (
+          ].filter(tab => !tab.perm || hasPermission(user, tab.perm)).map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
@@ -6038,7 +6630,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                       <h3 className="font-bold text-lg">Gestão de Produtos</h3>
                       <p className="text-xs text-zinc-500 mt-0.5">
                         {productsSubTab === 'all' && "Gerencie os produtos do seu estabelecimento."}
-                        {productsSubTab === 'categories' && "Gerencie as categorias de produtos da sua farmácia."}
+                        {productsSubTab === 'categories' && "Gerencie as categorias de produtos do seu estabelecimento."}
                         {productsSubTab === 'manufacturers' && "Gerencie os fabricantes / laboratórios cadastrados."}
                         {productsSubTab === 'active_substances' && "Gerencie os princípios ativos (substâncias) dos medicamentos."}
                         {productsSubTab === 'forms' && "Gerencie as formas farmacêuticas (comprimidos, xaropes, etc.)."}
@@ -12430,7 +13022,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     }))
   ];
 
-  const isPharmacy = establishmentInfo?.type === 'farmácia';
+  const isPharmacy = false;
   const themeBg = isPharmacy ? "bg-emerald-600" : "bg-orange-500";
   const themeBgHover = isPharmacy ? "hover:bg-emerald-700" : "hover:bg-orange-600";
   const themeBgLight = isPharmacy ? "bg-emerald-50" : "bg-orange-100";

@@ -163,8 +163,29 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [paidError, setPaidError] = useState('');
   const [paidLoading, setPaidLoading] = useState(false);
   const [paidSuccess, setPaidSuccess] = useState(false);
-  const [hasPaidSimulated, setHasPaidSimulated] = useState(false);
-  const [ibanReceiptUploaded, setIbanReceiptUploaded] = useState<string | null>(null);
+  const [ibanReceiptFile, setIbanReceiptFile] = useState<{ name: string; size: string; data: string } | null>(null);
+  const ibanFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleIbanFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 10 * 1024 * 1024) {
+        setPaidError('O comprovativo deve ter um tamanho inferior a 10MB.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const sizeKb = (file.size / 1024).toFixed(1);
+        setIbanReceiptFile({
+          name: file.name,
+          size: `${sizeKb} KB`,
+          data: reader.result as string
+        });
+        setPaidError('');
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   // Login form states
   const [identifier, setIdentifier] = useState('owner@factu.com');
@@ -295,7 +316,8 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
         if (res.ok) {
           const data = await res.json();
           if (active && Array.isArray(data) && data.length > 0) {
-            setDbPlans(data);
+            const cleanPlans = data.filter((p: any) => !p.name?.toLowerCase().includes('rh'));
+            setDbPlans(cleanPlans);
           }
         } else {
           throw new Error(`HTTP status ${res.status}`);
@@ -492,15 +514,9 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
       setPaidError('Nome, Empresa, Email e Palavra-passe são obrigatórios.');
       return;
     }
-    
-    // Check if simulated payment was completed
-    if (paidPaymentMethod === 'multicaixa' && !hasPaidSimulated) {
-      setPaidError('Por favor, efetue a "Simulação de Pagamento" no formulário para validar a licença.');
-      return;
-    }
 
-    if (paidPaymentMethod === 'iban' && !ibanReceiptUploaded) {
-      setPaidError('Por favor, envie o comprovativo de transferência bancária fictício para aprovação.');
+    if (paidPaymentMethod === 'iban' && !ibanReceiptFile) {
+      setPaidError('Por favor, carregue o comprovativo de transferência bancária para validação.');
       return;
     }
 
@@ -524,7 +540,9 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
           address: paidAddress,
           planName: paidPlan,
           months: months,
-          paymentMethod: paidPaymentMethod === 'multicaixa' ? 'Reference Multicaixa' : 'Bank Transfer'
+          paymentMethod: paidPaymentMethod === 'multicaixa' ? 'Referência Multicaixa' : 'Transferência / IBAN',
+          paymentProof: paidPaymentMethod === 'iban' ? ibanReceiptFile?.data : null,
+          proofFileName: paidPaymentMethod === 'iban' ? ibanReceiptFile?.name : null
         })
       });
 
@@ -535,7 +553,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
           setIsPaidModalOpen(false);
           setPaidSuccess(false);
           onLogin(user);
-        }, 2200);
+        }, 2800);
       } else {
         const data = await res.json();
         setPaidError(data.error || 'Erro ao efetivar a subscrição da licença paga.');
@@ -1324,7 +1342,6 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                     onClick={() => {
                       setPaidError('');
                       setPaidSuccess(false);
-                      setHasPaidSimulated(false);
                       setIsPaidModalOpen(true);
                     }}
                     className="w-full sm:w-auto bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-amber-500/15 border border-amber-400/20"
@@ -3224,10 +3241,11 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                   <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center mx-auto animate-bounce border border-emerald-200">
                     <CheckCircle2 size={36} className="fill-current text-white bg-emerald-500 rounded-full" />
                   </div>
-                  <h4 className="text-lg font-black text-slate-900">Subscrição Ativada com Sucesso!</h4>
+                  <h4 className="text-lg font-black text-slate-900">Solicitação de Licença Registada!</h4>
                   <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
-                    Registámos a sua empresa com a licença 100% ativa de forma comercial. O servidor concluiu as configurações básicas de segurança e séries certificadas da AGT.<br />
-                    <span className="font-bold text-orange-500 mt-2 block">A iniciar sessão automática...</span>
+                    Registámos a sua empresa e o comprovativo de pagamento foi enviado para validação pelo Administrador.<br />
+                    Assim que o pagamento for verificado pelo Administrador, a sua licença comercial do plano <strong className="text-slate-800">{paidPlan}</strong> será libertada e ativada.<br />
+                    <span className="font-bold text-orange-500 mt-2 block">A iniciar sessão no sistema...</span>
                   </p>
                 </div>
               ) : (
@@ -3238,6 +3256,15 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                        {paidError}
                     </div>
                   )}
+
+                  {/* Hidden File Input for IBAN Receipt */}
+                  <input 
+                    type="file"
+                    ref={ibanFileInputRef}
+                    accept="image/*,.pdf,application/pdf"
+                    className="hidden"
+                    onChange={handleIbanFileSelect}
+                  />
 
                   {/* STEP 1: PLAN & DURATION */}
                   <div className="space-y-3.5">
@@ -3501,7 +3528,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                       </button>
                     </div>
 
-                    {/* Dynamic payment info box with simulator */}
+                    {/* Dynamic payment info box */}
                     {paidPaymentMethod === 'multicaixa' ? (
                       <div className="bg-white border text-xs border-slate-200 rounded-xl p-3.5 space-y-3">
                         <div className="flex border-b border-dashed pb-2 items-center justify-between">
@@ -3522,32 +3549,9 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                             <span className="font-black text-orange-600">{getPaidPrice().label}</span>
                           </div>
                         </div>
-
-                        {/* Interactive Multicaixa simulator */}
-                        <div className="pt-2 bg-gradient-to-r from-slate-50 to-orange-50/50 p-3 rounded-lg border border-orange-100/70 text-center">
-                          {hasPaidSimulated ? (
-                            <div className="flex items-center justify-center gap-1.5 text-emerald-600 font-black text-xs">
-                              <Check size={16} className="bg-emerald-500 text-white rounded-full p-0.5" />
-                              PAGAMENTO SIMULADO E APROVADO!
-                            </div>
-                          ) : (
-                            <div className="space-y-2">
-                              <p className="text-[10px] text-slate-400 font-semibold leading-relaxed font-sans">
-                                Clique abaixo para simular que pagou esta licença no banco ou caixa automático multicaixa.
-                              </p>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setHasPaidSimulated(true);
-                                  setPaidError('');
-                                }}
-                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] px-3 py-2 rounded-lg transition-all shadow-sm"
-                              >
-                                💳 Simular Pagamento Multicaixa
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                        <p className="text-[10px] text-slate-400 font-medium text-center italic pt-1">
+                          Efetue o pagamento no Multicaixa ou App Express com a referência acima e clique em &quot;Activar Plano&quot; abaixo para submeter o pedido de licença.
+                        </p>
                       </div>
                     ) : (
                       <div className="bg-white border text-xs border-slate-200 rounded-xl p-3.5 space-y-3">
@@ -3555,8 +3559,8 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                           <span className="font-extrabold text-[10px] text-slate-400 uppercase">Transferência Bancária Directa</span>
                           <span className="text-[10px] bg-sky-50 text-sky-600 font-bold px-2 py-0.5 rounded border border-sky-100 uppercase">BAI / BFA</span>
                         </div>
-                        <p className="text-[10px] text-slate-550 text-slate-500 font-normal leading-relaxed font-sans">
-                          Efetue a transferência para o seguinte IBAN oficial do Fatu-R e insira o comprovativo fictício abaixo para confirmar a ativação imediata.
+                        <p className="text-[10px] text-slate-500 font-normal leading-relaxed font-sans">
+                          Efetue a transferência para o seguinte IBAN oficial do Fatu-R e anexe o comprovativo de pagamento do seu dispositivo.
                         </p>
                         <div className="space-y-1.5 font-mono text-[10.5px]">
                           <div className="flex justify-between items-center bg-slate-50 p-1.5 rounded border border-slate-100">
@@ -3573,27 +3577,27 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                           </div>
                         </div>
 
-                        {/* Interactive receipt uploader */}
+                        {/* Interactive native file receipt uploader */}
                         <div 
-                          onClick={() => {
-                            setIbanReceiptUploaded("comprovativo_transferencia_aula_paid.png");
-                            setPaidError('');
-                          }}
+                          onClick={() => ibanFileInputRef.current?.click()}
                           className={`mt-2 border-2 border-dashed ${
-                            ibanReceiptUploaded ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'
-                          } p-3 rounded-lg text-center cursor-pointer transition-all`}
+                            ibanReceiptFile ? 'border-emerald-400 bg-emerald-50/40' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'
+                          } p-3.5 rounded-xl text-center cursor-pointer transition-all hover:border-orange-400`}
                         >
-                          {ibanReceiptUploaded ? (
-                            <div className="flex flex-col items-center gap-1">
-                              <CheckCircle2 size={20} className="text-emerald-500 fill-current text-white bg-emerald-500 rounded-full" />
-                              <span className="text-[10px] font-black text-emerald-700 font-sans">Comprovativo Simulado Carregado!</span>
-                              <span className="text-[8px] text-slate-450 font-mono">comprovativo_fatur_v1.pdf (342KB)</span>
+                          {ibanReceiptFile ? (
+                            <div className="flex flex-col items-center gap-1.5">
+                              <CheckCircle2 size={24} className="text-emerald-500 fill-current text-white bg-emerald-500 rounded-full" />
+                              <span className="text-[11px] font-black text-emerald-800 font-sans">Comprovativo Anexado!</span>
+                              <span className="text-[10px] font-mono text-slate-600 font-bold bg-white px-2 py-0.5 rounded border border-slate-200">
+                                📎 {ibanReceiptFile.name} ({ibanReceiptFile.size})
+                              </span>
+                              <span className="text-[9px] text-orange-600 font-extrabold underline mt-1">Clique para substituir o ficheiro</span>
                             </div>
                           ) : (
-                            <div className="flex flex-col items-center gap-1 text-slate-505">
-                              <FileText size={20} className="text-slate-400" />
-                              <span className="text-[10px] font-extrabold uppercase font-sans text-slate-700">Anexar Comprovativo Simulado</span>
-                              <span className="text-[8.5px] text-slate-400 font-normal font-sans">Arraste ou clique para carregar o recibo simulado</span>
+                            <div className="flex flex-col items-center gap-1 text-slate-600">
+                              <FileText size={24} className="text-orange-500" />
+                              <span className="text-[11px] font-extrabold uppercase font-sans text-slate-800">Carregar Comprovativo de Pagamento</span>
+                              <span className="text-[9.5px] text-slate-400 font-normal font-sans">Clique para abrir os ficheiros do seu dispositivo (Imagem ou PDF)</span>
                             </div>
                           )}
                         </div>

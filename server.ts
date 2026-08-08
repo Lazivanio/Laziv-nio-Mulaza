@@ -531,15 +531,29 @@ function runStartupMigrations() {
   }
 }
 
-runStartupMigrations();
-
 // Digital Signature Service
-const SIGNATURE_MASTER_KEY = process.env.SIGNATURE_MASTER_KEY || "factu-r-master-signature-key-2024";
+function getSignatureMasterKey(): string {
+  if (process.env.SIGNATURE_MASTER_KEY) {
+    return process.env.SIGNATURE_MASTER_KEY;
+  }
+  try {
+    const setting = db.prepare("SELECT value FROM system_settings WHERE key = 'signature_master_key'").get() as any;
+    if (setting && setting.value) {
+      return setting.value;
+    }
+    const generated = crypto.randomBytes(32).toString('hex');
+    db.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('signature_master_key', ?)").run(generated);
+    return generated;
+  } catch (e) {
+    return "factu-r-master-signature-key-2024";
+  }
+}
 
 const DigitalSignatureService = {
   encryptPrivateKey: (privateKey: string) => {
     try {
-      const cipher = crypto.createCipheriv("aes-256-cbc", Buffer.from(SIGNATURE_MASTER_KEY.padEnd(32).slice(0, 32)), Buffer.alloc(16, 0));
+      const masterKey = getSignatureMasterKey();
+      const cipher = crypto.createCipheriv("aes-256-cbc", Buffer.from(masterKey.padEnd(32).slice(0, 32)), Buffer.alloc(16, 0));
       let encrypted = cipher.update(privateKey, "utf8", "hex");
       encrypted += cipher.final("hex");
       return encrypted;
@@ -551,7 +565,8 @@ const DigitalSignatureService = {
 
   decryptPrivateKey: (encrypted: string) => {
     try {
-      const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.from(SIGNATURE_MASTER_KEY.padEnd(32).slice(0, 32)), Buffer.alloc(16, 0));
+      const masterKey = getSignatureMasterKey();
+      const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.from(masterKey.padEnd(32).slice(0, 32)), Buffer.alloc(16, 0));
       let decrypted = decipher.update(encrypted, "hex", "utf8");
       decrypted += decipher.final("utf8");
       return decrypted;
@@ -1008,6 +1023,10 @@ function initializeDatabase() {
         start_date TEXT,
         expiry_date TEXT,
         status TEXT DEFAULT 'active',
+        payment_method TEXT,
+        payment_proof TEXT,
+        payment_proof_name TEXT,
+        amount REAL,
         features TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id),
@@ -1082,8 +1101,22 @@ function initializeDatabase() {
       );
     `);
 
-    // Add currency columns to transactions if they don't exist
+    // Add currency columns and licenses columns if they don't exist
     try {
+      const licenseCols = db.prepare("PRAGMA table_info(licenses)").all() as any[];
+      if (!licenseCols.some((c: any) => c.name === 'payment_method')) {
+        db.prepare("ALTER TABLE licenses ADD COLUMN payment_method TEXT").run();
+      }
+      if (!licenseCols.some((c: any) => c.name === 'payment_proof')) {
+        db.prepare("ALTER TABLE licenses ADD COLUMN payment_proof TEXT").run();
+      }
+      if (!licenseCols.some((c: any) => c.name === 'payment_proof_name')) {
+        db.prepare("ALTER TABLE licenses ADD COLUMN payment_proof_name TEXT").run();
+      }
+      if (!licenseCols.some((c: any) => c.name === 'amount')) {
+        db.prepare("ALTER TABLE licenses ADD COLUMN amount REAL").run();
+      }
+
       const transCols = db.prepare("PRAGMA table_info(transactions)").all() as any[];
       if (!transCols.some(c => c.name === 'currency_code')) {
         db.prepare("ALTER TABLE transactions ADD COLUMN currency_code TEXT DEFAULT 'Kz'").run();
@@ -2077,21 +2110,25 @@ function initializeDatabase() {
     });
 
     // Ensure default admin exists
-    let adminUser = db.prepare("SELECT id FROM users WHERE email = ?").get("admin@factu.com") as any;
+    const initialAdminEmail = process.env.INITIAL_ADMIN_EMAIL || "admin@factu.com";
+    const initialAdminPass = process.env.INITIAL_ADMIN_PASSWORD || "admin";
+    let adminUser = db.prepare("SELECT id FROM users WHERE email = ?").get(initialAdminEmail) as any;
     if (!adminUser) {
-      console.log("[DB] Creating default admin...");
+      console.log(`[DB] Creating initial admin account (${initialAdminEmail})...`);
       const result = db.prepare("INSERT INTO users (email, password, name, role, status, owner_id) VALUES (?, ?, ?, ?, ?, ?)").run(
-        "admin@factu.com", "admin", "Admin Master", "admin", "active", null
+        initialAdminEmail, initialAdminPass, "Admin Master", "admin", "active", null
       );
       adminUser = { id: result.lastInsertRowid };
     }
 
     // Ensure default owner exists
-    let ownerUser = db.prepare("SELECT id FROM users WHERE email = ?").get("owner@factu.com") as any;
+    const initialOwnerEmail = process.env.INITIAL_OWNER_EMAIL || "owner@factu.com";
+    const initialOwnerPass = process.env.INITIAL_OWNER_PASSWORD || "owner";
+    let ownerUser = db.prepare("SELECT id FROM users WHERE email = ?").get(initialOwnerEmail) as any;
     if (!ownerUser) {
-      console.log("[DB] Creating default owner...");
+      console.log(`[DB] Creating initial owner account (${initialOwnerEmail})...`);
       const result = db.prepare("INSERT INTO users (email, password, name, role, status, billing_mode) VALUES (?, ?, ?, ?, ?, ?)").run(
-        "owner@factu.com", "owner", "Proprietário", "owner", "active", "eletronica"
+        initialOwnerEmail, initialOwnerPass, "Proprietário", "owner", "active", "eletronica"
       );
       ownerUser = { id: result.lastInsertRowid };
       // Self-reference for owner
@@ -2150,6 +2187,11 @@ function initializeDatabase() {
       }
     }
 
+    // Clean up any old RH plans from system_plans
+    try {
+      db.prepare("DELETE FROM system_plans WHERE name LIKE '%RH%' OR name = 'Apenas RH'").run();
+    } catch (e) {}
+
     // Seed Data (granular checks)
     const plansCount = db.prepare("SELECT COUNT(*) as count FROM system_plans").get() as any;
     if (plansCount.count === 0) {
@@ -2157,11 +2199,6 @@ function initializeDatabase() {
       db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Básico", 5000, 1, 100, '{"reports": false, "multi_establishment": false}');
       db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Profissional", 15000, 2, 1000, '{"reports": true, "multi_establishment": true}');
       db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Empresarial", 35000, 10, 5000, '{"reports": true, "multi_establishment": true, "api_access": true}');
-    }
-
-    const hasRHPlan = db.prepare("SELECT COUNT(*) as count FROM system_plans WHERE name = ?").get("Apenas RH") as any;
-    if (hasRHPlan.count === 0) {
-      db.prepare("INSERT INTO system_plans (name, price, max_establishments, max_products, features) VALUES (?, ?, ?, ?, ?)").run("Apenas RH", 15000, 1, 100, '{"reports": true, "multi_establishment": false, "rh": true, "only_rh": true}');
     }
 
     const settingsCount = db.prepare("SELECT COUNT(*) as count FROM system_settings").get() as any;
@@ -3467,7 +3504,7 @@ async function startServer() {
   });
 
   app.post("/api/register-paid", (req, res) => {
-    const { name, companyName, email, password, phone, nif, address, planName, months, paymentMethod } = req.body;
+    const { name, companyName, email, password, phone, nif, address, planName, months, paymentMethod, paymentProof, proofFileName } = req.body;
     
     if (!name || !companyName || !email || !password || !planName || !months) {
       return res.status(400).json({ error: "Nome, Empresa, Email, Palavra-passe, Plano e Período são obrigatórios." });
@@ -3496,49 +3533,51 @@ async function startServer() {
       expiryDate.setMonth(expiryDate.getMonth() + numMonths);
       const expiryDateStr = expiryDate.toISOString().split('T')[0];
 
-      // 3. Create the principal establishment
+      // 3. Create the principal establishment (license_status = pending_approval awaiting admin confirmation)
       const establishmentResult = db.prepare(`
         INSERT INTO establishments (owner_id, name, address, phone, email, nif, license_status, license_expiry, status, establishment_code)
-        VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 'active', ?)
+        VALUES (?, ?, ?, ?, ?, ?, 'pending_approval', ?, 'active', ?)
       `).run(ownerId, companyName + " - Principal", address, phone, email, nif, expiryDateStr, `EST-${ownerId}-01`);
 
       const establishmentId = establishmentResult.lastInsertRowid as number;
 
-      // 4. Create an active license representing the paid period
+      // 4. Create license record with status = pending_approval and attached proof
       const startDateStr = new Date().toISOString().split('T')[0];
       
-      // Ensure the plan matches legal titles (Básico, Profissional, Empresarial)
       let resolvedPlan = "Básico";
       if (planName === "Flex" || planName === "Profissional") resolvedPlan = "Profissional";
       if (planName === "Pro" || planName === "Empresarial") resolvedPlan = "Empresarial";
 
       db.prepare(`
-        INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, features)
-        VALUES (?, ?, ?, ?, ?, 'active', ?)
+        INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, payment_method, payment_proof, payment_proof_name, features)
+        VALUES (?, ?, ?, ?, ?, 'pending_approval', ?, ?, ?, ?)
       `).run(
         ownerId, 
         establishmentId, 
         resolvedPlan, 
         startDateStr, 
         expiryDateStr, 
+        paymentMethod || 'Transferência / IBAN',
+        paymentProof || proofFileName || null,
+        proofFileName || (paymentProof ? 'Comprovativo_Anexado.pdf' : null),
         '["all_features", "pos", "saft-a", "support", "reports"]'
       );
 
-      // 5. Create a default cashier register (using ownerId to ensure uniqueness)
+      // 5. Create a default cashier register
       const regCode = `CX-${ownerId}-01`;
       db.prepare(`
         INSERT INTO cash_registers (establishment_id, name, code, default_initial_balance, max_limit)
         VALUES (?, 'Caixa Principal', ?, 0, 150000)
       `).run(establishmentId, regCode);
 
-      // 6. Record the transaction payment in cashier_sessions, or just log it
+      // 6. Log license submission event
       logAction({
         userId: ownerId,
         ownerId: ownerId,
         establishmentId: establishmentId,
         module: 'AUTH',
-        actionType: 'REGISTER_PAID_SUCCESS',
-        description: `Novo registo de empresa PAGO: ${companyName} com plano ${resolvedPlan} (${months} meses via ${paymentMethod})`,
+        actionType: 'REGISTER_PAID_PENDING_APPROVAL',
+        description: `Registo de empresa com comprovativo submetido: ${companyName} (${resolvedPlan}, via ${paymentMethod}). Aguarda libertação pelo Administrador.`,
         req
       });
 
@@ -3909,10 +3948,6 @@ async function startServer() {
         max_establishments = 10;
         max_products = 5000;
         features = { reports: true, multi_establishment: true, api_access: true } as any;
-      } else if (resolvedPlan === "Apenas RH") {
-        max_establishments = 1;
-        max_products = 100;
-        features = { reports: true, multi_establishment: false, rh: true, only_rh: true } as any;
       }
       
       db.prepare(`
@@ -3924,7 +3959,7 @@ async function startServer() {
         resolvedPlan, 
         startDateStr, 
         expiryDateStr, 
-        JSON.stringify({ max_establishments, max_products, ...features, rh: (rh_module === true || resolvedPlan === "Apenas RH") })
+        JSON.stringify({ max_establishments, max_products, ...features, rh: true })
       );
 
       res.json({ success: true });
@@ -3957,11 +3992,11 @@ async function startServer() {
 
   app.get("/api/admin/licenses", (req, res) => {
     const licenses = db.prepare(`
-      SELECT l.*, u.name as client_name, u.company_name, s.name as establishment_name
+      SELECT l.*, u.name as client_name, u.company_name, u.email as client_email, u.phone as client_phone, s.name as establishment_name
       FROM licenses l
       JOIN users u ON l.user_id = u.id
       LEFT JOIN establishments s ON l.establishment_id = s.id
-      ORDER BY l.expiry_date DESC
+      ORDER BY l.id DESC
     `).all();
     res.json(licenses);
   });
@@ -5390,21 +5425,10 @@ async function startServer() {
           max_products = 1000;
           features.reports = true;
           features.multi_establishment = true;
-        } else if (planName.includes('rh') || planName.includes('recursos')) {
-          max_establishments = 1;
-          max_products = 100;
-          features.reports = true;
-          features.multi_establishment = false;
-          features.rh = true;
-          features.only_rh = true;
         }
 
-        // Keep rh feature as true ONLY if explicitly stored as true in license, if plan is Apenas RH, or for test owner (owner@factu.com)
-        if (typeof storedFeatures.rh === 'boolean') {
-          features.rh = storedFeatures.rh;
-        } else {
-          features.rh = isTestOwner || planName.includes('rh');
-        }
+        features.rh = true;
+        features.only_rh = false;
 
         return {
           plan_type: activeLicense.plan_type,
@@ -5419,7 +5443,7 @@ async function startServer() {
         plan_type: isTestOwner ? "Empresarial (Teste)" : "Premium (Teste)",
         max_establishments: 10,
         max_products: 5000,
-        features: { reports: true, multi_establishment: true, api_access: true, rh: isTestOwner }
+        features: { reports: true, multi_establishment: true, api_access: true, rh: true, only_rh: false }
       };
     } catch (e) {
       console.error("[resolveUserPlanAndLimits] Error resolving user plan:", e);

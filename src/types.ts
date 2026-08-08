@@ -153,7 +153,7 @@ export interface Establishment {
   staff_count?: number;
   today_sales?: number;
   bank_accounts?: BankAccount[];
-  type?: 'comum' | 'farmácia';
+  type?: 'comum';
 }
 
 export type Store = Establishment;
