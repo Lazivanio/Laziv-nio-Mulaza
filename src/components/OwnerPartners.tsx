@@ -52,7 +52,7 @@ const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-lg" }: { is
               <X size={20} />
             </button>
           </div>
-          <div className="p-6 max-h-[80vh] overflow-y-auto">
+          <div className="p-4 sm:p-6 max-h-[80vh] overflow-y-auto overflow-x-auto">
             {children}
           </div>
         </motion.div>
@@ -197,7 +197,7 @@ export const OwnerPartners = ({ user }: { user: User }) => {
   );
 
   return (
-    <div className="flex-1 flex flex-col p-8 space-y-8 max-w-7xl mx-auto">
+    <div className="flex-1 flex flex-col p-4 sm:p-8 space-y-6 sm:space-y-8 max-w-7xl mx-auto">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-4xl font-black text-zinc-900 tracking-tight">Parceiros</h1>
@@ -237,7 +237,7 @@ export const OwnerPartners = ({ user }: { user: User }) => {
         </div>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
         <div className="flex-1 relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={20} />
           <input 
@@ -255,7 +255,7 @@ export const OwnerPartners = ({ user }: { user: User }) => {
               setClientForm({ name: '', nif: '', email: '', phone: '', address: '', type: 'individual' });
               setIsClientModalOpen(true);
             }}
-            className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200"
+            className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200 whitespace-nowrap"
           >
             <Plus size={18} />
             Novo Cliente
@@ -268,7 +268,7 @@ export const OwnerPartners = ({ user }: { user: User }) => {
               setSupplierForm({ name: '', nif: '', email: '', phone: '', address: '', category: '' });
               setIsSupplierModalOpen(true);
             }}
-            className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200"
+            className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200 whitespace-nowrap"
           >
             <Plus size={18} />
             Novo Fornecedor
@@ -283,15 +283,15 @@ export const OwnerPartners = ({ user }: { user: User }) => {
       ) : (
         <div className="grid grid-cols-1 gap-6">
           {activeTab === 'clients' && (
-            <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
-              <table className="w-full text-left border-collapse">
+            <div className="bg-white border border-zinc-200 rounded-2xl overflow-x-auto shadow-sm">
+              <table className="w-full min-w-[700px] text-left border-collapse">
                 <thead>
                   <tr className="bg-zinc-50 border-b border-zinc-200">
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Cliente</th>
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Segmentação</th>
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Contacto</th>
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Total Compras</th>
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider text-right">Ações</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[180px]">Cliente</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[140px]">Segmentação</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[180px]">Contacto</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[140px]">Total Compras</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider text-right min-w-[80px]">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
@@ -299,9 +299,9 @@ export const OwnerPartners = ({ user }: { user: User }) => {
                     const seg = getClientSegmentation(client);
                     return (
                       <tr key={client.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[180px]">
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600 font-bold">
+                            <div className="w-10 h-10 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600 font-bold flex-shrink-0">
                               {client.name.charAt(0)}
                             </div>
                             <div>
@@ -310,21 +310,21 @@ export const OwnerPartners = ({ user }: { user: User }) => {
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[140px]">
                           <div className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border", seg.color)}>
                             <seg.icon size={12} />
                             {seg.label}
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[180px]">
                           <p className="text-sm text-zinc-600">{client.email || '---'}</p>
                           <p className="text-xs text-zinc-400">{client.phone || '---'}</p>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[140px]">
                           <p className="text-sm font-bold text-zinc-900">Kz {(client.total_spent || 0).toLocaleString()}</p>
                           <p className="text-xs text-zinc-500">{client.total_purchases || 0} compras</p>
                         </td>
-                        <td className="px-6 py-4 text-right">
+                        <td className="px-6 py-4 text-right min-w-[80px]">
                           <button 
                             onClick={() => {
                               setEditingClient(client);
@@ -352,22 +352,22 @@ export const OwnerPartners = ({ user }: { user: User }) => {
           )}
 
           {activeTab === 'suppliers' && (
-            <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
-              <table className="w-full text-left border-collapse">
+            <div className="bg-white border border-zinc-200 rounded-2xl overflow-x-auto shadow-sm">
+              <table className="w-full min-w-[650px] text-left border-collapse">
                 <thead>
                   <tr className="bg-zinc-50 border-b border-zinc-200">
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Fornecedor</th>
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Categoria</th>
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Contacto</th>
-                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider text-right">Ações</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[180px]">Fornecedor</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[130px]">Categoria</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[180px]">Contacto</th>
+                    <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider text-right min-w-[80px]">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {filteredSuppliers.map((supplier) => (
                     <tr key={supplier.id} className="hover:bg-zinc-50/50 transition-colors">
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 min-w-[180px]">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600 font-bold">
+                          <div className="w-10 h-10 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-600 font-bold flex-shrink-0">
                             {supplier.name.charAt(0)}
                           </div>
                           <div>
@@ -376,16 +376,16 @@ export const OwnerPartners = ({ user }: { user: User }) => {
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 min-w-[130px]">
                         <span className="px-2.5 py-1 bg-zinc-100 text-zinc-600 rounded-lg text-xs font-bold">
                           {supplier.category || 'Geral'}
                         </span>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 min-w-[180px]">
                         <p className="text-sm text-zinc-600">{supplier.email || '---'}</p>
                         <p className="text-xs text-zinc-400">{supplier.phone || '---'}</p>
                       </td>
-                      <td className="px-6 py-4 text-right">
+                      <td className="px-6 py-4 text-right min-w-[80px]">
                         <button 
                           onClick={() => {
                             setEditingSupplier(supplier);
@@ -449,33 +449,33 @@ export const OwnerPartners = ({ user }: { user: User }) => {
                 </Card>
               </div>
 
-              <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
+              <div className="bg-white border border-zinc-200 rounded-2xl overflow-x-auto shadow-sm">
                 <div className="p-6 border-b border-zinc-100">
                   <h3 className="text-lg font-bold">Relatório de Compras por Fornecedor</h3>
                 </div>
-                <table className="w-full text-left border-collapse">
+                <table className="w-full min-w-[650px] text-left border-collapse">
                   <thead>
                     <tr className="bg-zinc-50 border-b border-zinc-200">
-                      <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Fornecedor</th>
-                      <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Qtd. Compras</th>
-                      <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Total Gasto</th>
-                      <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Total Pago</th>
-                      <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Dívida</th>
+                      <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[180px]">Fornecedor</th>
+                      <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[120px]">Qtd. Compras</th>
+                      <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[140px]">Total Gasto</th>
+                      <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[140px]">Total Pago</th>
+                      <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider min-w-[140px]">Dívida</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
                     {supplierReport.map((item) => (
                       <tr key={item.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[180px]">
                           <p className="font-bold text-zinc-900">{item.name}</p>
                           <p className="text-xs text-zinc-500">NIF: {item.nif}</p>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[120px]">
                           <span className="font-bold">{item.total_purchases}</span>
                         </td>
-                        <td className="px-6 py-4 font-bold">Kz {item.total_spent.toLocaleString()}</td>
-                        <td className="px-6 py-4 text-emerald-600 font-bold">Kz {item.total_paid.toLocaleString()}</td>
-                        <td className="px-6 py-4 text-rose-600 font-bold">Kz {item.total_debt.toLocaleString()}</td>
+                        <td className="px-6 py-4 font-bold min-w-[140px]">Kz {item.total_spent.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-emerald-600 font-bold min-w-[140px]">Kz {item.total_paid.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-rose-600 font-bold min-w-[140px]">Kz {item.total_debt.toLocaleString()}</td>
                       </tr>
                     ))}
                   </tbody>

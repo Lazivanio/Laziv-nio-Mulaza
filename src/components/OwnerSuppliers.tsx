@@ -525,7 +525,7 @@ export const OwnerSuppliers = ({ user }: { user: User }) => {
 
           <Card className="overflow-hidden border-zinc-100">
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
+              <table className="w-full min-w-[500px] text-left">
                 <thead className="bg-zinc-50 border-b border-zinc-100">
                   <tr>
                     <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Data</th>

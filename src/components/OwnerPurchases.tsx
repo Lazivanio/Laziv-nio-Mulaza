@@ -60,7 +60,7 @@ const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-lg" }: { is
               <X size={20} />
             </button>
           </div>
-          <div className="p-6 max-h-[80vh] overflow-y-auto">
+          <div className="p-4 sm:p-6 max-h-[80vh] overflow-y-auto overflow-x-auto">
             {children}
           </div>
         </motion.div>
@@ -556,7 +556,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
         </div>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
         <select 
           value={selectedEstablishmentId}
           onChange={e => setSelectedEstablishmentId(e.target.value)}
@@ -599,7 +599,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
               setIsDirectPurchase(activeTab === 'direct');
               setIsPurchaseModalOpen(true);
             }}
-            className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200"
+            className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200 whitespace-nowrap"
           >
             <Plus size={18} />
             {activeTab === 'direct' ? 'Comprar' : activeTab === 'notes' ? 'Nova Nota' : 'Nova Encomenda'}
@@ -614,8 +614,8 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
       ) : (
         <div className="grid grid-cols-1 gap-6">
           {(activeTab === 'direct' || activeTab === 'orders' || activeTab === 'receipts') ? (
-            <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
-              <table className="w-full text-left border-collapse">
+            <div className="bg-white border border-zinc-200 rounded-2xl overflow-x-auto shadow-sm">
+              <table className="w-full min-w-[700px] text-left border-collapse">
                 <thead>
                   <tr className="bg-zinc-50 border-b border-zinc-200">
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Fornecedor / Fatura</th>
@@ -636,12 +636,12 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                   ) : (
                     filteredPurchases.map((p) => (
                     <tr key={p.id} className="hover:bg-zinc-50/50 transition-colors">
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 min-w-[180px]">
                         <p className="font-bold text-zinc-900">{p.supplier_name}</p>
                         <p className="text-xs text-zinc-500">Fatura: {p.invoice_number || '---'}</p>
                       </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-1 max-w-xs">
+                      <td className="px-6 py-4 min-w-[200px]">
+                        <div className="flex flex-wrap gap-1">
                           {(typeof p.items === 'string' ? JSON.parse(p.items || '[]') : (p.items || [])).map((item: any, i: number) => (
                             <span key={i} className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded text-[10px] font-bold">
                               {item.quantity}x {item.name}
@@ -759,8 +759,8 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
               </table>
             </div>
           ) : activeTab === 'notes' ? (
-            <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
-              <table className="w-full text-left border-collapse">
+            <div className="bg-white border border-zinc-200 rounded-2xl overflow-x-auto shadow-sm">
+              <table className="w-full min-w-[750px] text-left border-collapse">
                 <thead>
                   <tr className="bg-zinc-50 border-b border-zinc-200">
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Fornecedor</th>
@@ -782,11 +782,11 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                   ) : (
                     filteredNotes.map((r) => (
                     <tr key={r.id} className="hover:bg-zinc-50/50 transition-colors">
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 min-w-[160px]">
                         <p className="font-bold text-zinc-900">{r.supplier_name}</p>
                         <p className="text-xs text-zinc-500">Ref: #{r.id}</p>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 min-w-[120px]">
                         <span className={cn(
                           "px-2 py-1 rounded-full text-[10px] font-black uppercase border",
                           r.type === 'credit' ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-blue-50 text-blue-600 border-blue-100"
@@ -794,14 +794,14 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                           {r.type === 'credit' ? 'Nota de Crédito' : 'Nota de Débito'}
                         </span>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 min-w-[100px]">
                         <span className="text-xs font-bold text-zinc-500">
                           {r.note_category === 'return' ? 'Devolução' : 'Ajuste'}
                         </span>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 min-w-[180px]">
                         {r.note_category === 'return' ? (
-                          <div className="flex flex-wrap gap-1 max-w-xs">
+                          <div className="flex flex-wrap gap-1">
                             {(r.items || []).map((item: any, i: number) => (
                               <span key={i} className={cn(
                                 "px-2 py-0.5 rounded text-[10px] font-bold",
@@ -817,10 +817,10 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                           </p>
                         )}
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 min-w-[180px]">
                         <p className="text-sm text-zinc-600">{r.reason}</p>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 min-w-[120px]">
                         <p className={cn(
                           "text-sm font-bold",
                           r.type === 'credit' ? "text-rose-600" : "text-blue-600"
@@ -828,7 +828,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                           Kz {r.total_amount.toLocaleString()}
                         </p>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 min-w-[120px]">
                         <div className="flex items-center gap-2">
                           <button 
                             onClick={() => handleDownloadNote(r)}
@@ -846,8 +846,8 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
               </table>
             </div>
           ) : (
-            <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
-              <table className="w-full text-left border-collapse">
+            <div className="bg-white border border-zinc-200 rounded-2xl overflow-x-auto shadow-sm">
+              <table className="w-full min-w-[750px] text-left border-collapse">
                 <thead>
                   <tr className="bg-zinc-50 border-b border-zinc-200">
                     <th className="px-6 py-4 text-xs font-black text-zinc-500 uppercase tracking-wider">Documento</th>
@@ -888,7 +888,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
 
                     return (
                       <tr key={`${isNote ? 'note' : 'purchase'}-${item.id}`} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[180px]">
                           <div className="flex items-center gap-3">
                             <div className={cn(
                               "p-2 rounded-lg",
@@ -905,10 +905,10 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[160px]">
                           <p className="text-sm font-medium text-zinc-700">{item.supplier_name}</p>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[130px]">
                           <span className={cn(
                             "px-2.5 py-1 rounded-full text-[10px] font-black uppercase border",
                             isNote ? (item.type === 'credit' ? "bg-rose-50 text-rose-600 border-rose-100" : "bg-blue-50 text-blue-600 border-blue-100") :
@@ -917,7 +917,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                             {isNote ? (item.type === 'credit' ? 'Nota Crédito' : 'Nota Débito') : isDirect ? 'Compra Direta' : 'Encomenda'}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[120px]">
                           <span className={cn(
                             "px-2.5 py-1 rounded-full text-[10px] font-black uppercase border",
                             isNote ? "bg-emerald-50 text-emerald-600 border-emerald-100" :
@@ -931,7 +931,7 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                               : 'Pendente'}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[120px]">
                           <p className={cn(
                             "text-sm font-bold",
                             isNote && item.type === 'credit' ? "text-rose-600" : "text-zinc-900"
@@ -939,10 +939,10 @@ export const OwnerPurchases = ({ user }: { user: User }) => {
                             {isNote && item.type === 'credit' ? '-' : ''}Kz {item.total_amount.toLocaleString()}
                           </p>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 min-w-[110px]">
                           <p className="text-sm text-zinc-500">{new Date(item.timestamp).toLocaleDateString()}</p>
                         </td>
-                        <td className="px-6 py-4 text-right">
+                        <td className="px-6 py-4 text-right min-w-[80px]">
                           <button 
                             onClick={() => isNote ? handleDownloadNote(item) : handleDownloadPurchase(item)}
                             className="p-2 text-zinc-500 hover:bg-zinc-50 rounded-lg transition-all"
