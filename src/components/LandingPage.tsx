@@ -124,7 +124,20 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
 
     setChatMessages(prev => [...prev, userMsg]);
     const currentInput = chatInput.toLowerCase();
+    const rawMessage = chatInput;
     setChatInput('');
+
+    // Send chat bubble message to server so it arrives in administrator's notifications / public messages
+    fetch('/api/public/contact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Visitante (Balão de Chat)',
+        email: 'lazivaniomulazaeren@gmail.com',
+        phone: '923 019 047',
+        message: `[Mensagem do Balão de Chat] ${rawMessage}`
+      })
+    }).catch(err => console.error("Error sending chat to admin:", err));
 
     setTimeout(() => {
       let replyText = "Agradecemos o seu contacto! Um dos nossos assistentes reais foi notificado e responderá aqui ou pelo e-mail do seu registo dentro de instantes.";
@@ -135,7 +148,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
       } else if (currentInput.includes('teste') || currentInput.includes('testar') || currentInput.includes('gratis') || currentInput.includes('gratuito') || currentInput.includes('experimentar')) {
         replyText = "Pode experimentar o Fatu-R gratuitamente por 14 dias sem compromissos! Basta selecionar 'Testar Grátis' em cima e preencher os dados de cadastro para começar imediatamente.";
       } else if (currentInput.includes('ajuda') || currentInput.includes('suporte') || currentInput.includes('contacto') || currentInput.includes('telefone') || currentInput.includes('email')) {
-        replyText = "Dispomos de suporte premium! Contacte-nos pelo e-mail suporte@fatur.ao, telefone +244 923 000 000, ou diretamente na consola Fatu-R com um dos nossos consultores.";
+        replyText = "Dispomos de suporte premium! Contacte-nos pelo e-mail lazivaniomulazaeren@gmail.com, telefone +244 923 019 047, ou diretamente na consola Fatu-R com um dos nossos consultores.";
       }
 
       setChatMessages(prev => [...prev, {
@@ -950,7 +963,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                         setHelpMessageModal({
                           isOpen: true,
                           title: "Recuperar Palavra-passe",
-                          body: "Para recuperar a sua palavra-passe de acesso ao Fatu-R, contacte o nosso suporte técnico oficial enviando um e-mail para suporte@fatur.ao com o seu endereço de registo, ou ligue direto para a nossa linha de atendimento +244 923 000 000."
+                          body: "Para recuperar a sua palavra-passe de acesso ao Fatu-R, contacte o nosso suporte técnico oficial enviando um e-mail para lazivaniomulazaeren@gmail.com com o seu endereço de registo, ou ligue direto para a nossa linha de atendimento +244 923 019 047."
                         });
                       }}
                       className="text-left text-slate-500 hover:text-orange-500 font-bold transition-colors cursor-pointer"
@@ -1149,7 +1162,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                                 setHelpMessageModal({
                                   isOpen: true,
                                   title: "Recuperar Palavra-passe",
-                                  body: "Fale com o suporte técnico no suporte@fatur.ao ou ligue +244 923 000 000 para receber suporte de reset."
+                                  body: "Fale com o suporte técnico no lazivaniomulazaeren@gmail.com ou ligue +244 923 019 047 para receber suporte de reset."
                                 });
                               }}
                               className="text-left py-0.5 hover:text-orange-500 cursor-pointer"
@@ -2717,11 +2730,11 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             <div className="space-y-2 pt-2 text-xs font-semibold">
               <div className="flex items-center gap-2">
                 <Phone size={15} className="text-orange-400" />
-                <span>+244 923 000 000</span>
+                <span>+244 923 019 047</span>
               </div>
               <div className="flex items-center gap-2">
                 <Mail size={15} className="text-orange-400" />
-                <span>suporte@fatu-r.co.ao</span>
+                <span>lazivaniomulazaeren@gmail.com</span>
               </div>
             </div>
           </div>
@@ -2803,7 +2816,6 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               <ul className="space-y-2 text-slate-400 text-[11px]">
                 <li><button onClick={() => { setIsPOSSubpageOpen(false); setIsClothingSubpageOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software de Facturação</button></li>
                 <li><button onClick={() => { setIsPOSSubpageOpen(true); setIsClothingSubpageOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software POS Comercial</button></li>
-                <li><button onClick={() => { setIsClothingSubpageOpen(true); setIsPOSSubpageOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Software Loja de Roupa</button></li>
               </ul>
             </div>
 
@@ -3832,10 +3844,10 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">18. Contactos</h2>
                 <p>Em caso de dúvidas sobre estes Termos e Condições, contacte:</p>
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 font-sans space-y-1">
-                  <p><strong>Empresa:</strong> Fatu-R Gestão e Tecnologias S.A.</p>
-                  <p><strong>Email:</strong> suporte@fatu-r.co.ao</p>
-                  <p><strong>Telefone:</strong> +244 923 000 000</p>
-                  <p><strong>Morada:</strong> Via Principal Talatona, Luanda, Angola</p>
+                  <p><strong>Empresa:</strong> TCCM-PRO PRESTAÇÃO DE SERVIÇOS (SU) LDA</p>
+                  <p><strong>Email:</strong> lazivaniomulazaeren@gmail.com</p>
+                  <p><strong>Telefone:</strong> +244 923 019 047</p>
+                  <p><strong>Morada:</strong> onde você precisar</p>
                 </div>
 
                 <div className="pt-4 border-t border-slate-100 text-center font-bold text-slate-800">
@@ -3890,11 +3902,11 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">1. Responsável pelo Tratamento dos Dados</h2>
                 <p>O responsável pelo tratamento dos dados pessoais é:</p>
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-1 font-sans">
-                  <p><strong>Empresa:</strong> Fatu-R Gestão e Tecnologias S.A.</p>
-                  <p><strong>NIF/NIPC:</strong> 5000493821</p>
-                  <p><strong>Endereço:</strong> Via Principal Talatona, Luanda, Angola</p>
-                  <p><strong>Email de suporte:</strong> suporte@fatu-r.co.ao</p>
-                  <p><strong>Telefone:</strong> +244 923 000 000</p>
+                  <p><strong>Empresa:</strong> TCCM-PRO PRESTAÇÃO DE SERVIÇOS (SU) LDA</p>
+                  <p><strong>NIF/NIPC:</strong> 5001905198</p>
+                  <p><strong>Endereço:</strong> onde você precisar</p>
+                  <p><strong>Email de suporte:</strong> lazivaniomulazaeren@gmail.com</p>
+                  <p><strong>Telefone:</strong> +244 923 019 047</p>
                 </div>
                 <p>
                   Caso tenha dúvidas sobre esta Política de Privacidade ou sobre o tratamento dos seus dados, poderá contactar-nos através dos canais acima.
@@ -4017,7 +4029,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                   <li>Direito de retirar consentimento.</li>
                 </ul>
                 <p>Para exercer estes direitos, o utilizador poderá contactar:</p>
-                <p><strong>Email:</strong> suporte@fatu-r.co.ao</p>
+                <p><strong>Email:</strong> lazivaniomulazaeren@gmail.com</p>
 
                 <h2 className="text-xs font-black text-slate-800 uppercase tracking-wide pt-2">10. Cookies e Tecnologias Semelhantes</h2>
                 <p>O Fatu-R poderá utilizar cookies para:</p>
@@ -4042,10 +4054,10 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 <p>Se tiver dúvidas sobre esta Política de Privacidade ou sobre os seus dados pessoais, contacte:</p>
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 font-sans space-y-1">
                   <p><strong>Sistema:</strong> Fatu-R</p>
-                  <p><strong>Empresa:</strong> Fatu-R Gestão e Tecnologias S.A.</p>
-                  <p><strong>Email:</strong> suporte@fatu-r.co.ao</p>
-                  <p><strong>Telefone:</strong> +244 923 000 000</p>
-                  <p><strong>Morada:</strong> Via Principal Talatona, Luanda, Angola</p>
+                  <p><strong>Empresa:</strong> TCCM-PRO PRESTAÇÃO DE SERVIÇOS (SU) LDA</p>
+                  <p><strong>Email:</strong> lazivaniomulazaeren@gmail.com</p>
+                  <p><strong>Telefone:</strong> +244 923 019 047</p>
+                  <p><strong>Morada:</strong> onde você precisar</p>
                 </div>
 
                 <div className="pt-4 border-t border-slate-100 text-center font-bold text-slate-800">
@@ -4231,10 +4243,10 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 <p>Caso tenha dúvidas sobre proteção de dados ou privacidade, poderá contactar:</p>
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 font-sans space-y-1">
                   <p><strong>Sistema:</strong> Fatu-r</p>
-                  <p><strong>Empresa:</strong> Fatu-R Gestão e Tecnologias S.A.</p>
-                  <p><strong>Email:</strong> suporte@fatu-r.co.ao</p>
-                  <p><strong>Telefone:</strong> +244 923 000 000</p>
-                  <p><strong>Morada:</strong> Via Principal Talatona, Luanda, Angola</p>
+                  <p><strong>Empresa:</strong> TCCM-PRO PRESTAÇÃO DE SERVIÇOS (SU) LDA</p>
+                  <p><strong>Email:</strong> lazivaniomulazaeren@gmail.com</p>
+                  <p><strong>Telefone:</strong> +244 923 019 047</p>
+                  <p><strong>Morada:</strong> onde você precisar</p>
                 </div>
 
                 <div className="pt-4 border-t border-slate-100 text-center font-bold text-slate-800">

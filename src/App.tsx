@@ -5611,9 +5611,19 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     fetch(`/api/owner/cancellation-requests/${user.id}`)
       .then(res => res.json())
       .then(setCancellationRequests).catch(() => {});
-    fetch(`/api/owner/currencies/${user.id}`)
+    const ownerId = user.role === 'owner' ? user.id : (user.owner_id || user.id);
+    fetch(`/api/owner/currencies/${ownerId}`)
       .then(res => res.json())
-      .then(setCurrencies).catch(() => {});
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setCurrencies(data);
+        } else {
+          setCurrencies([{ id: 'default-aoa', code: 'AOA', symbol: 'Kz', name: 'Kwanza (AOA)', is_base: true, exchange_rate: 1 }]);
+        }
+      })
+      .catch(() => {
+        setCurrencies([{ id: 'default-aoa', code: 'AOA', symbol: 'Kz', name: 'Kwanza (AOA)', is_base: true, exchange_rate: 1 }]);
+      });
 
     // Pharmacy specific list fetches
     fetch(`/api/pharmacy/categories/${establishmentId}`)
@@ -8242,84 +8252,85 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                 </form>
               </Modal>
 
-              <div className="flex justify-between items-center mb-6 shrink-0">
-                <div className="flex gap-6 items-center">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6 shrink-0">
+                <div className="flex flex-wrap items-center gap-4">
                   <div>
                     <h3 className="text-xl font-bold text-zinc-900 tracking-tighter uppercase font-black italic">Gestão de Documentos</h3>
                     <p className="text-xs text-zinc-500 uppercase tracking-widest font-bold">Histórico de faturas e notas emitidas.</p>
                   </div>
-                  <div className="h-8 w-px bg-zinc-200 hidden md:block"></div>
-                  <div className="hidden md:flex items-center gap-2">
-                    <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Natureza:</p>
-                    <div className="flex bg-zinc-100 p-1 rounded-xl gap-1">
-                      {['ALL', 'FT', 'FR', 'PP', 'RC', 'NC', 'ND'].map(f => (
-                        <button
-                          key={f}
-                          onClick={() => setInvoiceTypeFilter(f)}
-                          className={cn(
-                            "px-3 py-1.5 text-[10px] font-bold uppercase rounded-lg transition-all",
-                            invoiceTypeFilter === f ? "bg-black text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-200"
-                          )}
+                  <div className="h-8 w-px bg-zinc-200 hidden lg:block"></div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-1.5 overflow-x-auto max-w-full py-0.5">
+                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest whitespace-nowrap">Natureza:</p>
+                      <div className="flex bg-zinc-100 p-1 rounded-xl gap-1 shrink-0">
+                        {['ALL', 'FT', 'FR', 'PP', 'RC', 'NC', 'ND'].map(f => (
+                          <button
+                            key={f}
+                            onClick={() => setInvoiceTypeFilter(f)}
+                            className={cn(
+                              "px-2.5 py-1 text-[10px] font-bold uppercase rounded-lg transition-all whitespace-nowrap cursor-pointer",
+                              invoiceTypeFilter === f ? "bg-black text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-200"
+                            )}
+                          >
+                            {f === 'ALL' ? 'TUDO' : f}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 border-l border-zinc-200 pl-3">
+                      <div className="flex flex-col">
+                        <p className="text-[8px] font-black text-zinc-400 uppercase tracking-widest mb-0.5">De:</p>
+                        <input 
+                          type="date"
+                          value={startDateFilter}
+                          onChange={(e) => setStartDateFilter(e.target.value)}
+                          className="bg-zinc-100 px-2 py-1 rounded-lg text-[10px] font-bold outline-none focus:ring-1 focus:ring-black"
+                        />
+                      </div>
+                      <div className="flex flex-col">
+                        <p className="text-[8px] font-black text-zinc-400 uppercase tracking-widest mb-0.5">Até:</p>
+                        <input 
+                          type="date"
+                          value={endDateFilter}
+                          onChange={(e) => setEndDateFilter(e.target.value)}
+                          className="bg-zinc-100 px-2 py-1 rounded-lg text-[10px] font-bold outline-none focus:ring-1 focus:ring-black"
+                        />
+                      </div>
+                      {(startDateFilter || endDateFilter) && (
+                        <button 
+                          onClick={() => { setStartDateFilter(''); setEndDateFilter(''); }}
+                          className="mt-3 p-1 text-zinc-400 hover:text-rose-600 transition-colors"
+                          title="Limpar Datas"
                         >
-                          {f === 'ALL' ? 'TUDO' : f}
+                          <X size={14} />
                         </button>
-                      ))}
+                      )}
                     </div>
-                  </div>
-                  <div className="hidden md:flex items-center gap-4 border-l border-zinc-200 pl-4">
-                    <div className="flex flex-col">
-                      <p className="text-[8px] font-black text-zinc-400 uppercase tracking-widest mb-1">De:</p>
-                      <input 
-                        type="date"
-                        value={startDateFilter}
-                        onChange={(e) => setStartDateFilter(e.target.value)}
-                        className="bg-zinc-100 px-2 py-1.5 rounded-lg text-[10px] font-bold outline-none focus:ring-1 focus:ring-black"
-                      />
-                    </div>
-                    <div className="flex flex-col">
-                      <p className="text-[8px] font-black text-zinc-400 uppercase tracking-widest mb-1">Até:</p>
-                      <input 
-                        type="date"
-                        value={endDateFilter}
-                        onChange={(e) => setEndDateFilter(e.target.value)}
-                        className="bg-zinc-100 px-2 py-1.5 rounded-lg text-[10px] font-bold outline-none focus:ring-1 focus:ring-black"
-                      />
-                    </div>
-                    {(startDateFilter || endDateFilter) && (
-                      <button 
-                        onClick={() => { setStartDateFilter(''); setEndDateFilter(''); }}
-                        className="mt-4 p-1.5 text-zinc-400 hover:text-rose-600 transition-colors"
-                        title="Limpar Datas"
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-start sm:justify-end">
                   <button 
                     onClick={() => {
-                      if (currencies.length === 0) {
-                        alert('Por favor, cadastre pelo menos uma moeda nas configurações antes de emitir faturas.');
-                        return;
+                      if (!currencies || currencies.length === 0) {
+                        setCurrencies([{ id: 'default-aoa', code: 'AOA', symbol: 'Kz', name: 'Kwanza (AOA)', is_base: true, exchange_rate: 1 }]);
                       }
                       setInvoiceModalMode('invoice');
                       setIsInvoiceTypeModalOpen(true);
                     }}
-                    className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-zinc-800 transition-all shadow-lg shadow-black/10"
+                    className="flex-1 sm:flex-none justify-center bg-black text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-2xl font-bold text-xs sm:text-sm flex items-center gap-2 hover:bg-zinc-800 transition-all shadow-lg shadow-black/10 cursor-pointer whitespace-nowrap"
                   >
                     <Plus size={18} /> Nova Fatura
                   </button>
                   <button 
                     onClick={() => {
-                      if (currencies.length === 0) {
-                        alert('Por favor, cadastre pelo menos uma moeda nas configurações antes de emitir notas.');
-                        return;
+                      if (!currencies || currencies.length === 0) {
+                        setCurrencies([{ id: 'default-aoa', code: 'AOA', symbol: 'Kz', name: 'Kwanza (AOA)', is_base: true, exchange_rate: 1 }]);
                       }
                       setInvoiceModalMode('note');
                       setIsInvoiceTypeModalOpen(true);
                     }}
-                    className="bg-zinc-200 text-zinc-900 px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-zinc-300 transition-all font-black"
+                    className="flex-1 sm:flex-none justify-center bg-zinc-200 text-zinc-900 px-4 sm:px-6 py-2.5 sm:py-3 rounded-2xl font-bold text-xs sm:text-sm flex items-center gap-2 hover:bg-zinc-300 transition-all font-black cursor-pointer whitespace-nowrap"
                   >
                     <FileText size={18} /> Notas
                   </button>
@@ -13045,13 +13056,13 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         "flex-1 flex flex-col min-w-0 min-h-0 transition-all",
         showCartMobile ? "hidden lg:flex" : "flex"
       )}>
-        <div className="mb-6 space-y-6">
-          <div className={cn("-mx-6 -mt-6 p-6 text-white rounded-b-[2rem] shadow-lg transition-colors duration-350", themeBg)}>
-            <div className="flex items-center justify-between mb-4">
+        <div className="mb-4 sm:mb-6 space-y-4 sm:space-y-6">
+          <div className={cn("-mx-4 -mt-4 p-4 sm:-mx-6 sm:-mt-6 sm:p-6 text-white rounded-b-[2rem] shadow-lg transition-colors duration-350", themeBg)}>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
               <div>
-                <h2 className="text-2xl font-bold tracking-tight">PDV - Estabelecimento</h2>
-                <div className="flex items-center gap-2">
-                  <p className={cn("text-sm opacity-85", isPharmacy ? "text-emerald-100" : "text-orange-100")}>Terminal: {user.cash_register_name || 'Caixa'}</p>
+                <h2 className="text-xl sm:text-2xl font-bold tracking-tight">PDV - Estabelecimento</h2>
+                <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                  <p className={cn("text-xs sm:text-sm opacity-85", isPharmacy ? "text-emerald-100" : "text-orange-100")}>Terminal: {user.cash_register_name || 'Caixa'}</p>
                   <button 
                     onClick={() => setIsTerminalSettingsOpen(true)}
                     className={cn("p-1 rounded-lg transition-colors", isPharmacy ? "hover:bg-emerald-500/30 text-emerald-100" : "hover:bg-orange-400/30 text-orange-100")}
@@ -13061,7 +13072,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   </button>
                   <button 
                     onClick={() => triggerCashDrawerOpen(true)}
-                    className={cn("ml-2.5 p-1 px-2 py-1 rounded-lg transition-all flex items-center gap-1.5 shadow-sm border cursor-pointer", isPharmacy ? "bg-emerald-700/40 hover:bg-emerald-700/85 text-emerald-100 border-emerald-500/20" : "bg-orange-650/40 hover:bg-orange-600/80 text-orange-100 border-orange-400/20")}
+                    className={cn("p-1 px-2 py-1 rounded-lg transition-all flex items-center gap-1.5 shadow-sm border cursor-pointer", isPharmacy ? "bg-emerald-700/40 hover:bg-emerald-700/85 text-emerald-100 border-emerald-500/20" : "bg-orange-650/40 hover:bg-orange-600/80 text-orange-100 border-orange-400/20")}
                     title="Comandar Abertura da Gaveta de Dinheiro 🔓"
                   >
                     <Coins size={12} className={cn("animate-pulse", isPharmacy ? "text-emerald-200" : "text-orange-200")} />
@@ -13069,45 +13080,47 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   </button>
                 </div>
               </div>
-              <div className={cn("flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold", isPharmacy ? "bg-emerald-500/30" : "bg-orange-400/30")}>
+              <div className={cn("flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold self-start sm:self-auto", isPharmacy ? "bg-emerald-500/30" : "bg-orange-400/30")}>
                 <div className="w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
                 OFF
               </div>
             </div>
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-inner">
-                <div className={cn("w-12 h-12 rounded-full flex items-center justify-center transition-colors duration-350", themeBgLight, themeText)}>
-                  <ShoppingCart size={24} />
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="w-12 h-12 sm:w-16 sm:h-16 bg-white rounded-full flex items-center justify-center shadow-inner shrink-0">
+                <div className={cn("w-9 h-9 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-colors duration-350", themeBgLight, themeText)}>
+                  <ShoppingCart size={20} className="sm:hidden" />
+                  <ShoppingCart size={24} className="hidden sm:block" />
                 </div>
               </div>
-              <div>
-                <p className="font-bold text-lg">{user.name}</p>
-                <p className={cn("text-sm opacity-85", isPharmacy ? "text-emerald-100" : "text-orange-100")}>Perfil: {user.role}</p>
+              <div className="min-w-0">
+                <p className="font-bold text-base sm:text-lg truncate">{user.name}</p>
+                <p className={cn("text-xs sm:text-sm opacity-85 truncate", isPharmacy ? "text-emerald-100" : "text-orange-100")}>Perfil: {user.role}</p>
               </div>
             </div>
           </div>
 
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 sm:gap-4">
             {hasActiveSession === false && (
-              <div className="bg-rose-50 border border-rose-200 p-6 rounded-[2rem] flex flex-col md:flex-row items-center justify-between gap-4 mb-4 shadow-sm">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center shrink-0">
-                    <Lock size={24} />
+              <div className="bg-rose-50 border border-rose-200 p-4 sm:p-6 rounded-[2rem] flex flex-col md:flex-row items-center justify-between gap-4 mb-2 shadow-sm">
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center shrink-0">
+                    <Lock size={20} className="sm:hidden" />
+                    <Lock size={24} className="hidden sm:block" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-rose-900">Caixa Fechado</h3>
-                    <p className="text-sm text-rose-600">É necessário abrir o caixa para realizar vendas.</p>
+                    <h3 className="font-bold text-rose-900 text-sm sm:text-base">Caixa Fechado</h3>
+                    <p className="text-xs sm:text-sm text-rose-600">É necessário abrir o caixa para realizar vendas.</p>
                   </div>
                 </div>
                 {hasPermission(user, 'pos_open_cashier') ? (
                   <button 
                     onClick={() => window.location.hash = '#/seller/close'}
-                    className="px-6 py-2 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-all active:scale-95 shadow-lg shadow-green-200"
+                    className="w-full sm:w-auto px-6 py-2.5 bg-green-600 text-white rounded-xl text-xs sm:text-sm font-bold hover:bg-green-700 transition-all active:scale-95 shadow-lg shadow-green-200"
                   >
                     Abrir Caixa Agora
                   </button>
                 ) : (
-                  <div className="px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-bold border border-rose-200">
+                  <div className="w-full sm:w-auto text-center px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-bold border border-rose-200">
                     Aguarde a abertura por um supervisor
                   </div>
                 )}
@@ -13115,39 +13128,41 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             )}
             <div className="flex items-center gap-3">
               <div className="relative flex-1">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={20} />
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
                 <input 
                   type="text" 
                   placeholder="Pesquisar por nome ou código de barra..." 
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className={cn("w-full pl-12 pr-4 py-4 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 shadow-sm text-lg", themeRing)}
+                  className={cn("w-full pl-11 pr-4 py-3 sm:py-4 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 shadow-sm text-sm sm:text-lg", themeRing)}
                 />
               </div>
             </div>
 
-            <div className="flex gap-3 overflow-x-auto pb-2">
+            <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-2 scrollbar-none">
               {categories.map(cat => (
                 <button
                   key={cat.name}
                   onClick={() => setCategory(cat.name)}
                   className={cn(
-                    "flex items-center gap-2 px-6 py-3 rounded-2xl text-sm font-bold whitespace-nowrap transition-all shadow-sm border-2",
+                    "flex items-center gap-2 px-4 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all shadow-sm border-2 shrink-0 active:scale-95",
                     category === cat.name 
                       ? (isPharmacy ? "bg-emerald-600 border-emerald-600 text-white" : "bg-orange-500 border-orange-500 text-white")
                       : (isPharmacy ? "bg-white border-zinc-100 text-zinc-500 hover:border-emerald-200" : "bg-white border-zinc-100 text-zinc-500 hover:border-orange-200")
                   )}
                 >
-                  <cat.icon size={18} />
+                  <cat.icon size={16} className="sm:hidden" />
+                  <cat.icon size={18} className="hidden sm:block" />
                   {cat.name}
                 </button>
               ))}
               {services.length > 0 && (
                 <button
                   onClick={() => setIsServiceModalOpen(true)}
-                  className="flex items-center gap-2 px-6 py-3 rounded-2xl text-sm font-bold whitespace-nowrap transition-all shadow-sm border-2 bg-zinc-900 border-zinc-900 text-white hover:bg-zinc-800"
+                  className="flex items-center gap-2 px-4 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all shadow-sm border-2 bg-zinc-900 border-zinc-900 text-white hover:bg-zinc-800 shrink-0 active:scale-95"
                 >
-                  <Sparkles size={18} />
+                  <Sparkles size={16} className="sm:hidden" />
+                  <Sparkles size={18} className="hidden sm:block" />
                   Serviços
                 </button>
               )}
@@ -13155,46 +13170,46 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3 pr-2 pb-4">
+        <div className="flex-1 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2.5 sm:gap-3 pr-1 sm:pr-2 pb-28 lg:pb-4">
           {filteredProducts.map(product => (
             <motion.div
               layout
               key={product.id}
               onClick={() => addToCart(product)}
-              className="group cursor-pointer"
+              className="group cursor-pointer select-none active:scale-95 transition-transform"
             >
-              <Card className={cn("h-full transition-all border-zinc-100 shadow-sm rounded-xl flex flex-col overflow-hidden", isPharmacy ? "hover:border-emerald-500" : "hover:border-orange-500")}>
-                <div className="aspect-[4/3] relative p-2 bg-zinc-50/50">
+              <Card className={cn("h-full transition-all border-zinc-100 shadow-sm rounded-xl flex flex-col overflow-hidden hover:shadow-md", isPharmacy ? "hover:border-emerald-500" : "hover:border-orange-500")}>
+                <div className="aspect-square relative p-2 bg-zinc-50/50 flex items-center justify-center">
                   <img 
                     src={product.image_url || undefined} 
                     alt={product.name} 
-                    className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500" 
+                    className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300" 
                     referrerPolicy="no-referrer" 
                   />
                   {product.discount_percent && (
-                    <div className="absolute top-1 right-1 bg-rose-600 text-white text-[7px] font-bold px-1 py-0.5 rounded-full uppercase shadow-sm">
+                    <div className="absolute top-1.5 right-1.5 bg-rose-600 text-white text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase shadow-sm">
                       -{product.discount_percent}%
                     </div>
                   )}
                 </div>
-                <div className="p-1.5 flex-1 flex flex-col min-h-0">
-                  <h4 className="font-bold text-[10px] text-zinc-800 line-clamp-1 mb-0.5 leading-tight">{product.name}</h4>
-                  <div className="mt-auto flex items-center justify-between gap-1">
+                <div className="p-2 sm:p-2.5 flex-1 flex flex-col min-h-0">
+                  <h4 className="font-bold text-xs sm:text-sm text-zinc-800 line-clamp-2 mb-1 leading-tight">{product.name}</h4>
+                  <div className="mt-auto flex items-end justify-between gap-1 pt-1">
                     <div className="flex flex-col">
                       {product.discount_percent && (
-                        <span className="text-[7px] text-zinc-400 line-through">Kz {(product.price || 0).toLocaleString()}</span>
+                        <span className="text-[9px] text-zinc-400 line-through">Kz {(product.price || 0).toLocaleString()}</span>
                       )}
-                      <p className={cn("font-black text-[10px]", themeText)}>
+                      <p className={cn("font-black text-xs sm:text-sm", themeText)}>
                         Kz {(product.discount_percent 
                           ? (product.price || 0) * (1 - product.discount_percent / 100) 
                           : (product.price || 0)).toLocaleString()}
                       </p>
                     </div>
                     <span className={cn(
-                      "text-[7px] font-bold px-1 rounded-md",
+                      "text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0",
                       product.stock > 10 ? "text-emerald-600 bg-emerald-50" : "text-rose-600 bg-rose-50"
                     )}>
-                      {product.stock}
+                      {product.stock} un
                     </span>
                   </div>
                 </div>
@@ -13206,12 +13221,14 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
 
       {/* Cart / Checkout - Sidebar on desktop, Toggleable on mobile */}
       <div className={cn(
-        "lg:flex w-full lg:w-80 flex-col transition-all",
-        showCartMobile ? "flex flex-1 fixed inset-0 z-50 p-4 bg-white lg:relative lg:p-0 lg:bg-transparent lg:inset-auto" : "hidden"
+        "lg:flex w-full lg:w-80 xl:w-96 flex-col transition-all shrink-0",
+        showCartMobile 
+          ? "flex flex-1 fixed inset-0 z-[100] p-2 sm:p-4 pb-20 sm:pb-24 lg:pb-0 bg-black/60 backdrop-blur-md lg:relative lg:p-0 lg:bg-transparent lg:inset-auto" 
+          : "hidden"
       )}>
-        <Card className="flex-1 flex flex-col shadow-2xl border-zinc-200 rounded-[2rem] overflow-hidden">
-          <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
-            <h3 className="font-bold text-lg flex items-center gap-2">
+        <Card className="flex-1 flex flex-col shadow-2xl border-zinc-200 rounded-[2rem] overflow-hidden max-h-full bg-white">
+          <div className="p-4 sm:p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
+            <h3 className="font-bold text-base sm:text-lg flex items-center gap-2">
               <ShoppingCart size={20} className={themeText} /> Carrinho
             </h3>
 
@@ -13257,29 +13274,30 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               </button>
             </div>
 
-            <div className="flex items-center gap-3">
-              <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-black transition-colors duration-350", themeBgLight, themeText)}>
+            <div className="flex items-center gap-2 sm:gap-3">
+              <span className={cn("px-2.5 py-1 rounded-full text-[10px] font-black transition-colors duration-350", themeBgLight, themeText)}>
                 {cart.reduce((acc, item) => acc + item.quantity, 0)} ITENS
               </span>
               <button 
                 onClick={() => setShowCartMobile(false)}
-                className="lg:hidden p-2 text-zinc-400 hover:text-black hover:bg-zinc-100 rounded-full"
+                className="lg:hidden p-2 text-zinc-500 hover:text-black hover:bg-zinc-100 rounded-full transition-colors active:scale-95"
+                title="Fechar carrinho"
               >
-                <X size={20} />
+                <X size={22} />
               </button>
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 custom-scrollbar">
             {cart.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-zinc-300 space-y-3">
+              <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-zinc-300 space-y-3">
                 <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center">
                   <ShoppingCart size={32} strokeWidth={1.5} />
                 </div>
-                <p className="text-xs font-medium">Seu carrinho está vazio</p>
+                <p className="text-xs sm:text-sm font-medium text-zinc-400">Seu carrinho está vazio</p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-3 sm:space-y-4">
                 {cart.map(i => {
                   const unitPrice = i.type === 'product' 
                     ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
@@ -13288,9 +13306,9 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   const totalPrice = (unitPrice + feesTotal) * i.quantity;
 
                   return (
-                    <div key={i.id} className="flex flex-col gap-1 border-b border-zinc-50 pb-3 last:border-0 group">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl overflow-hidden bg-zinc-100 flex-shrink-0 flex items-center justify-center">
+                    <div key={i.id} className="flex flex-col gap-1 border-b border-zinc-100 pb-3 last:border-0 group">
+                      <div className="flex items-center gap-2.5 sm:gap-3">
+                        <div className="w-10 h-10 rounded-xl overflow-hidden bg-zinc-100 shrink-0 flex items-center justify-center">
                           {i.type === 'product' ? (
                             <img src={(i.item as Product).image_url || undefined} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                           ) : (
@@ -13298,41 +13316,42 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-[11px] font-black text-zinc-900 truncate uppercase tracking-tight">{i.item.name}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
+                          <p className="text-xs font-black text-zinc-900 truncate uppercase tracking-tight">{i.item.name}</p>
+                          <div className="flex items-center gap-1.5 sm:gap-2 mt-1">
                             <button 
                               onClick={() => updateQuantity(i.id, -1)}
-                              className="w-4 h-4 flex items-center justify-center bg-zinc-100 rounded text-zinc-600 hover:bg-zinc-200 text-[10px] font-bold"
+                              className="w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center bg-zinc-100 rounded-lg text-zinc-700 hover:bg-zinc-200 text-xs font-bold active:scale-95 transition-all"
                             >
                               -
                             </button>
-                            <span className="text-[10px] font-black w-4 text-center">{i.quantity}</span>
+                            <span className="text-xs font-black w-5 text-center">{i.quantity}</span>
                             <button 
                               onClick={() => updateQuantity(i.id, 1)}
-                              className="w-4 h-4 flex items-center justify-center bg-zinc-100 rounded text-zinc-600 hover:bg-zinc-200 text-[10px] font-bold"
+                              className="w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center bg-zinc-100 rounded-lg text-zinc-700 hover:bg-zinc-200 text-xs font-bold active:scale-95 transition-all"
                             >
                               +
                             </button>
-                            <span className="text-[9px] font-bold text-zinc-400 ml-1">
+                            <span className="text-[10px] font-bold text-zinc-400 ml-1 truncate">
                               x {selectedCurrencyCode} {((unitPrice + feesTotal) / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className="text-[11px] font-black text-zinc-900">
+                        <div className="text-right shrink-0">
+                          <p className="text-xs font-black text-zinc-900">
                             {selectedCurrencyCode} {(totalPrice / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </p>
                           <button 
                             onClick={() => removeFromCart(i.id)}
-                            className="text-rose-400 hover:text-rose-600 p-1 transition-colors"
+                            className="text-rose-400 hover:text-rose-600 p-1.5 transition-colors active:scale-95"
+                            title="Remover item"
                           >
-                            <X size={12} />
+                            <X size={14} />
                           </button>
                         </div>
                       </div>
                       
                       {i.selectedFees && i.selectedFees.length > 0 && (
-                        <div className="pl-13 flex flex-wrap gap-1">
+                        <div className="pl-12 flex flex-wrap gap-1 mt-1">
                           {i.selectedFees.map((fee, fIdx) => (
                             <span key={fIdx} className={cn("text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest border", isPharmacy ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-orange-50 text-orange-600 border-orange-100")}>
                               {fee.name} (+{selectedCurrencyCode} {(fee.amount / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
@@ -13344,18 +13363,18 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   );
                 })}
 
-                <div className="pt-4 border-t border-zinc-100 space-y-3">
+                <div className="pt-3 border-t border-zinc-100 space-y-3">
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</label>
                     <button 
                       onClick={() => setIsClientModalOpen(true)}
-                      className={cn("w-full flex items-center justify-between px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl transition-all group", isPharmacy ? "hover:border-emerald-500" : "hover:border-orange-500")}
+                      className={cn("w-full flex items-center justify-between px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl transition-all group", isPharmacy ? "hover:border-emerald-500" : "hover:border-orange-500")}
                     >
-                      <div className="text-left">
-                        <p className="text-[10px] font-black text-zinc-800">{client.name}</p>
-                        <p className="text-[8px] text-zinc-400">NIF: {client.nif}</p>
+                      <div className="text-left min-w-0 pr-2">
+                        <p className="text-xs font-black text-zinc-800 truncate">{client.name}</p>
+                        <p className="text-[9px] text-zinc-400">NIF: {client.nif}</p>
                       </div>
-                      <UserPlus size={16} className={cn("text-zinc-400 transition-colors", isPharmacy ? "group-hover:text-emerald-500" : "group-hover:text-orange-500")} />
+                      <UserPlus size={18} className={cn("text-zinc-400 shrink-0 transition-colors", isPharmacy ? "group-hover:text-emerald-500" : "group-hover:text-orange-500")} />
                     </button>
                   </div>
 
@@ -13383,8 +13402,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             )}
           </div>
 
-          <div className="p-6 bg-zinc-50 border-t border-zinc-100 space-y-4 rounded-b-[2rem]">
-            <div className="space-y-2">
+          <div className="p-4 sm:p-6 bg-zinc-50 border-t border-zinc-100 space-y-3 sm:space-y-4 rounded-b-[2rem]">
+            <div className="space-y-1.5 sm:space-y-2">
               <div className="flex justify-between text-xs text-zinc-500">
                 <span>Subtotal</span>
                 <span className="font-bold text-zinc-700">{selectedCurrencyCode} {((subtotal || 0) / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
@@ -13399,7 +13418,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 <span>Imposto ({defaultTax ? `${defaultTax.percentage}%` : (user?.fiscal_regime === 'exclusao' ? '0%' : '14%')})</span>
                 <span className="font-bold text-zinc-700">{selectedCurrencyCode} {((tax || 0) / currentExchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              <div className="flex justify-between text-xl font-black pt-3 border-t border-zinc-200 text-zinc-900">
+              <div className="flex justify-between text-lg sm:text-xl font-black pt-2 sm:pt-3 border-t border-zinc-200 text-zinc-900">
                 <span>Total</span>
                 <span className={cn("transition-colors duration-350", themeText)}>{selectedCurrencyCode} {totalInSelectedCurrency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
@@ -13408,10 +13427,10 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               <button 
                 onClick={() => setIsProformaModalOpen(true)}
                 disabled={cart.length === 0 || !hasPermission(user, 'pos_sell')}
-                className="flex-1 bg-zinc-100 text-zinc-600 py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 hover:bg-zinc-200 disabled:opacity-50 transition-all active:scale-[0.98]"
+                className="flex-1 bg-zinc-100 text-zinc-700 py-3 sm:py-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 hover:bg-zinc-200 disabled:opacity-50 transition-all active:scale-[0.98]"
               >
-                <FileText size={18} />
-                Proforma
+                <FileText size={16} />
+                <span className="truncate">Proforma</span>
               </button>
               <button 
                 onClick={() => {
@@ -13425,22 +13444,22 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   setIsFormalInvoiceModalOpen(true);
                 }}
                 disabled={cart.length === 0 || !hasPermission(user, 'pos_sell')}
-                className="flex-1 bg-zinc-100 text-zinc-600 py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 hover:bg-zinc-200 disabled:opacity-50 transition-all active:scale-[0.98]"
+                className="flex-1 bg-zinc-100 text-zinc-700 py-3 sm:py-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 hover:bg-zinc-200 disabled:opacity-50 transition-all active:scale-[0.98]"
               >
-                <FileText size={18} />
-                Fatura
+                <FileText size={16} />
+                <span className="truncate">Fatura</span>
               </button>
               <button 
                 onClick={handleCheckout}
                 disabled={cart.length === 0 || isProcessing || hasActiveSession === false || !hasPermission(user, 'pos_sell')}
-                className={cn("flex-[2] text-white py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed transition-all shadow-lg active:scale-[0.98]", themeBg, themeBgHover, themeShadow)}
+                className={cn("flex-[2] text-white py-3 sm:py-4 rounded-2xl font-black text-sm sm:text-base flex items-center justify-center gap-1.5 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed transition-all shadow-lg active:scale-[0.98]", themeBg, themeBgHover, themeShadow)}
               >
-                {isProcessing ? 'Processando...' : 'Vender agora'}
-                <ChevronRight size={20} />
+                <span>{isProcessing ? 'Processando...' : 'Vender'}</span>
+                <ChevronRight size={18} />
               </button>
             </div>
             {hasActiveSession === false && (
-              <p className="text-rose-500 text-[10px] font-bold mt-2 text-center animate-pulse">
+              <p className="text-rose-500 text-[10px] font-bold mt-1 text-center animate-pulse">
                 CAIXA FECHADO. ABRA O CAIXA NO DASHBOARD DO VENDEDOR.
               </p>
             )}
@@ -13685,7 +13704,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 placeholder="Ex: João Silva"
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <div>
                 <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF</label>
                 <input 
@@ -13944,7 +13963,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
 
           <div className="pt-4 border-t border-zinc-100">
             <p className="text-xs font-bold text-zinc-500 uppercase mb-3">Ou inserir manualmente</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <input 
                 type="text"
                 placeholder="Nome do Cliente"
@@ -13982,11 +14001,11 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         title="Nova Fatura Recibo"
         maxWidth="max-w-4xl"
       >
-        <form onSubmit={handleCreateFormalInvoice} className="space-y-8 p-4">
-          <div className="grid grid-cols-2 gap-8">
-            <div className="space-y-6">
+        <form onSubmit={handleCreateFormalInvoice} className="space-y-6 sm:space-y-8 p-2 sm:p-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+            <div className="space-y-4 sm:space-y-6">
               <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-100 pb-2">Dados do Cliente</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">NIF do Cliente</label>
                   <input 
@@ -14018,7 +14037,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-black font-bold text-sm"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">País</label>
                   <input 
@@ -14044,7 +14063,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
               </div>
             </div>
 
-            <div className="space-y-6">
+            <div className="space-y-4 sm:space-y-6">
               <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-100 pb-2">Dados do Documento</h3>
               <div className="grid grid-cols-1 gap-4">
                 <div className="space-y-2">
@@ -14070,15 +14089,15 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   className="w-full px-4 py-3 bg-zinc-100 border border-zinc-200 rounded-xl outline-none cursor-not-allowed font-bold text-sm text-zinc-500"
                 />
               </div>
-              <div className="p-6 bg-zinc-900 rounded-3xl text-white">
-                <div className="flex justify-between items-center mb-4">
+              <div className="p-4 sm:p-6 bg-zinc-900 rounded-3xl text-white">
+                <div className="flex justify-between items-center mb-3 sm:mb-4">
                   <span className="text-[10px] font-black uppercase tracking-widest opacity-50">Total da Fatura</span>
                   <span className="px-3 py-1 bg-white/10 rounded-full text-[10px] font-black uppercase tracking-widest">{formalInvoiceForm.currency}</span>
                 </div>
-                <div className="text-4xl font-black tracking-tighter">
+                <div className="text-2xl sm:text-4xl font-black tracking-tighter">
                   {formalInvoiceForm.currency} {formalInvoiceAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
-                <div className="mt-4 pt-4 border-t border-white/10 flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-50">
+                <div className="mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-white/10 flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-50">
                   <span>Itens no Carrinho</span>
                   <span>{cart.length} Artigos</span>
                 </div>
@@ -14086,18 +14105,18 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             </div>
           </div>
 
-          <div className="flex gap-4 pt-6">
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 pt-4 sm:pt-6">
             <button 
               type="button"
               onClick={() => setIsCancelConfirmOpen(true)}
-              className="flex-1 px-8 py-4 bg-rose-50 text-rose-600 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-rose-100 transition-all"
+              className="flex-1 px-6 py-3.5 sm:py-4 bg-rose-50 text-rose-600 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-rose-100 transition-all"
             >
               Cancelar Venda
             </button>
             <button 
               type="submit"
               disabled={isProcessing}
-              className="flex-[2] px-8 py-4 bg-black text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all shadow-xl shadow-black/20 disabled:opacity-50"
+              className="flex-[2] px-6 py-3.5 sm:py-4 bg-black text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all shadow-xl shadow-black/20 disabled:opacity-50"
             >
               {isProcessing ? 'Processando...' : 'Emitir Fatura Recibo'}
             </button>
@@ -14976,25 +14995,27 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       </Modal>
 
       {/* Mobile Cart FAB */}
-      <div className="lg:hidden fixed bottom-6 right-6 z-40">
-        <button
-          onClick={() => setShowCartMobile(!showCartMobile)}
-          className={cn(
-            "flex items-center gap-3 px-6 py-4 rounded-full font-black text-sm shadow-2xl transition-all active:scale-95 border-2 border-white",
-            cart.length > 0 ? "bg-orange-600 text-white" : "bg-zinc-800 text-white"
-          )}
-        >
-          <div className="relative">
-            <ShoppingCart size={20} />
-            {cart.length > 0 && (
-              <span className="absolute -top-3 -right-3 w-5 h-5 bg-white text-orange-600 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm">
-                {cart.reduce((acc, item) => acc + item.quantity, 0)}
-              </span>
+      {!showCartMobile && (
+        <div className={cn("lg:hidden fixed right-4 sm:right-6 z-40 transition-all", user.role === 'seller' ? "bottom-20 sm:bottom-22" : "bottom-6")}>
+          <button
+            onClick={() => setShowCartMobile(true)}
+            className={cn(
+              "flex items-center gap-2.5 sm:gap-3 px-5 sm:px-6 py-3.5 sm:py-4 rounded-full font-black text-xs sm:text-sm shadow-2xl transition-all active:scale-95 border-2 border-white",
+              cart.length > 0 ? "bg-orange-600 text-white hover:bg-orange-700" : "bg-zinc-900 text-white hover:bg-zinc-800"
             )}
-          </div>
-          <span>{selectedCurrencyCode} {totalInSelectedCurrency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-        </button>
-      </div>
+          >
+            <div className="relative">
+              <ShoppingCart size={20} />
+              {cart.length > 0 && (
+                <span className="absolute -top-2.5 -right-2.5 w-5 h-5 bg-white text-orange-600 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm">
+                  {cart.reduce((acc, item) => acc + item.quantity, 0)}
+                </span>
+              )}
+            </div>
+            <span>{selectedCurrencyCode} {totalInSelectedCurrency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 };

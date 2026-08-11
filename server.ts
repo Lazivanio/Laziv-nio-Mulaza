@@ -8367,7 +8367,7 @@ function formatDateToIso(dateStr?: string) {
     // We want all attendance for users belonging to these establishments
     // OR attendance where the user_id is the owner themselves or their staff
     const attendance = db.prepare(`
-      SELECT a.*, u.name as employee_name, st.name as establishment_name
+      SELECT a.*, u.name as employee_name, u.email as employee_email, u.role as employee_role, u.username as employee_username, st.name as establishment_name
       FROM hr_attendance a
       JOIN users u ON a.user_id = u.id
       LEFT JOIN establishments st ON a.establishment_id = st.id

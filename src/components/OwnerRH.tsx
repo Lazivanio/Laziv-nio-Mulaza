@@ -51,6 +51,7 @@ import { WarningsTab } from './rh/WarningsTab';
 import { ResignationsTab } from './rh/ResignationsTab';
 import { ReportsTab } from './rh/ReportsTab';
 import { OrganogramTab } from './rh/OrganogramTab';
+import { SystemPresencesTab } from './rh/SystemPresencesTab';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -588,7 +589,7 @@ export const OwnerRH = ({ user }: { user: User }) => {
   const tabs = [
     { id: 'employees', label: 'Funcionários', icon: Users },
     { id: 'roles', label: 'Cargos', icon: ShieldCheck },
-    { id: 'attendance', label: 'Marcar Faltas & Presenças', icon: Clock },
+    { id: 'system_presences', label: 'Entradas no Sistema (Presenças)', icon: UserCheck },
     { id: 'salaries', label: 'Pagar Salários', icon: DollarSign },
   ];
 
@@ -1060,97 +1061,14 @@ export const OwnerRH = ({ user }: { user: User }) => {
             </div>
           )}
 
-          {/* Attendance Tab */}
-          {activeTab === 'attendance' && (
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="font-bold text-lg">Registo de Presenças</h3>
-                <button 
-                  onClick={() => {
-                    setAttendanceForm({ 
-                      user_id: '', 
-                      establishment_id: establishments.length === 1 ? establishments[0].id.toString() : '', 
-                      entry_time: '', exit_time: '', status: 'present', 
-                      date: new Date().toISOString().split('T')[0], notes: '' 
-                    });
-                    setIsAttendanceModalOpen(true);
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
-                >
-                  <Plus size={18} />
-                  Registar Presença
-                </button>
-              </div>
-
-              <Card>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-zinc-50 border-b border-zinc-100">
-                        <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Data</th>
-                        <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Tipo</th>
-                        <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Funcionário</th>
-                        <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Estabelecimento</th>
-                        <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Horário</th>
-                        <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-wider">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-100">
-                      {attendance.map(att => (
-                        <tr key={att.id} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="px-6 py-4">
-                            <p className="text-sm font-bold text-zinc-900">{new Date(att.date).toLocaleDateString()}</p>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={cn(
-                              "px-2 py-0.5 rounded text-[9px] font-bold uppercase",
-                              att.type === 'system' ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"
-                            )}>
-                              {att.type === 'system' ? 'Acesso' : 'Manual'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <p className="text-sm font-bold text-zinc-900">{att.employee_name}</p>
-                          </td>
-                          <td className="px-6 py-4">
-                            <p className="text-xs text-zinc-500">{att.establishment_name}</p>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="flex flex-col">
-                              <div className="text-xs font-bold text-zinc-900">
-                                {att.type === 'system' ? (
-                                  <>
-                                    {new Date(att.entry_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                    {' - '}
-                                    {att.exit_time ? new Date(att.exit_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (
-                                      <span className="text-emerald-600">Ativa</span>
-                                    )}
-                                  </>
-                                ) : (
-                                  `${att.entry_time} - ${att.exit_time || '--:--'}`
-                                )}
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={cn(
-                              "px-2 py-1 rounded-lg text-[10px] font-bold uppercase",
-                              att.status === 'present' ? "bg-emerald-100 text-emerald-700" :
-                              att.status === 'late' ? "bg-amber-100 text-amber-700" :
-                              att.status === 'absent' ? "bg-rose-100 text-rose-700" : "bg-zinc-100 text-zinc-700"
-                            )}>
-                              {att.status === 'present' ? 'Presente' :
-                               att.status === 'late' ? 'Atraso' :
-                               att.status === 'absent' ? 'Falta' : 'Meio Dia'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            </div>
+          {/* System Presences Tab */}
+          {activeTab === 'system_presences' && (
+            <SystemPresencesTab 
+              attendance={attendance}
+              establishments={establishments}
+              employees={employees}
+              onRefresh={fetchData}
+            />
           )}
 
           {/* Departments Tab */}

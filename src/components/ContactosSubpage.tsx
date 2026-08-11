@@ -22,22 +22,34 @@ export const ContactosSubpage: React.FC<ContactosSubpageProps> = ({
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subject || subject === '-- Qual é o assunto? --') {
       alert('Por favor, selecione o assunto.');
       return;
     }
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      await fetch('/api/public/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name || 'Visitante',
+          email: email,
+          phone: '',
+          message: `[Assunto: ${subject}] ${message}`
+        })
+      });
       setIsSubmitted(true);
-      // Reset fields
       setSubject('');
       setName('');
       setEmail('');
       setMessage('');
-    }, 1000);
+    } catch (err) {
+      console.error("Error submitting contact form:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const scrollToForm = () => {
@@ -93,24 +105,24 @@ export const ContactosSubpage: React.FC<ContactosSubpageProps> = ({
             Fale connosco através do chat, telefone ou e-mail com a nossa equipa de suporte ao cliente.
           </p>
 
-          <div className="pt-6 flex flex-wrap justify-center gap-3">
+          <div className="pt-6 flex flex-col sm:flex-row flex-wrap justify-center items-stretch sm:items-center gap-3">
             <button 
               onClick={onInitiateChat}
-              className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 px-5 py-3 rounded-xl text-xs font-extrabold text-white shadow-lg transition-transform hover:scale-[1.02] cursor-pointer"
+              className="flex items-center justify-center gap-2 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 px-5 py-3 rounded-xl text-xs font-extrabold text-white shadow-lg transition-transform hover:scale-[1.02] cursor-pointer w-full sm:w-auto"
             >
               <MessageSquare size={16} />
               Iniciar uma Conversa
             </button>
             <button 
               onClick={scrollToForm}
-              className="flex items-center gap-2 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 px-5 py-3 rounded-xl text-xs font-extrabold text-slate-300 transition-colors cursor-pointer"
+              className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 px-5 py-3 rounded-xl text-xs font-extrabold text-slate-300 transition-colors cursor-pointer w-full sm:w-auto"
             >
               <Mail size={16} />
               Enviar Email
             </button>
-            <div className="flex items-center gap-2 bg-slate-900/55 border border-slate-900 px-5 py-3 rounded-xl text-xs font-mono text-slate-300">
+            <div className="flex items-center justify-center gap-2 bg-slate-900/55 border border-slate-900 px-5 py-3 rounded-xl text-xs font-mono text-slate-300 w-full sm:w-auto">
               <Phone size={16} className="text-orange-500" />
-              <span>+244 22 244 04 48</span>
+              <span>+244 923 019 047</span>
             </div>
           </div>
         </div>
@@ -134,38 +146,22 @@ export const ContactosSubpage: React.FC<ContactosSubpageProps> = ({
               </div>
 
               <div className="space-y-3 pt-2 text-xs font-medium text-slate-300 leading-relaxed">
-                <p className="font-bold text-white text-sm">Loanda Towers – Torre B - Piso 21º, Escritório Nº2</p>
-                <p className="text-slate-400 font-mono text-[11px]">Rua Gamal Abdel Nasser, Luanda, Angola</p>
+                <p className="font-bold text-white text-base">onde você precisar</p>
+                <p className="text-slate-400 text-xs">Atendimento presencial e online em todo o território nacional.</p>
               </div>
 
               {/* Minimal Dark Map Visualization */}
-              <div className="w-full h-44 rounded-xl overflow-hidden border border-slate-800 bg-slate-950 relative flex items-center justify-center">
-                {/* Simulated Grid Maps Visual */}
+              <div className="w-full h-44 rounded-xl overflow-hidden border border-slate-800 bg-slate-950 relative flex items-center justify-center p-4">
                 <div className="absolute inset-0 bg-grid-white/[0.03] pointer-events-none" />
-                
-                {/* Simulated Roads/Paths using CSS vectors */}
-                <div className="absolute inset-10 border border-indigo-500/10 rounded-full pointer-events-none" />
-                <div className="absolute inset-20 border border-orange-500/10 rounded-full pointer-events-none" />
-                <div className="absolute w-[1px] h-full bg-slate-900/40 rotate-[35deg]" />
-                <div className="absolute w-[1px] h-full bg-slate-900/40 rotate-[-45deg]" />
-                <div className="absolute h-[1px] w-full bg-slate-900/40 top-[40%]" />
-                <div className="absolute h-[1px] w-full bg-slate-900/40 top-[75%]" />
-
-                {/* City Elements */}
-                <div className="absolute top-[25%] left-[20%] text-[8px] font-mono text-slate-600 font-bold tracking-widest uppercase">KILAMBA</div>
-                <div className="absolute bottom-[20%] right-[15%] text-[8px] font-mono text-slate-600 font-bold tracking-widest uppercase">ILHA DE LUANDA</div>
-
-                {/* Glowing Marker */}
-                <div className="relative z-10 flex flex-col items-center">
-                  <div className="absolute -top-10 bg-slate-900 border border-slate-800 px-2 py-1 rounded text-[9px] font-bold text-white whitespace-nowrap shadow-xl">
-                    Loanda Towers, Torre B
-                  </div>
-                  <span className="flex h-4 w-4 relative">
+                <div className="relative z-10 text-center space-y-2">
+                  <span className="flex h-5 w-5 mx-auto relative justify-center items-center">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-4 w-4 bg-orange-500 border-2 border-white items-center justify-center">
                       <span className="w-1.5 h-1.5 rounded-full bg-white block" />
                     </span>
                   </span>
+                  <p className="text-sm font-black text-white">onde você precisar</p>
+                  <p className="text-[10px] text-slate-400 uppercase tracking-wider font-mono">Suporte Global & Local</p>
                 </div>
               </div>
             </div>

@@ -116,6 +116,9 @@ export interface HRAttendance {
   notes?: string;
   type?: 'manual' | 'system';
   employee_name?: string;
+  employee_email?: string;
+  employee_role?: string;
+  employee_username?: string;
   establishment_name?: string;
 }
 
