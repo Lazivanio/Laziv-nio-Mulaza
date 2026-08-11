@@ -17,7 +17,6 @@ import {
   MoreVertical,
   ChevronRight,
   PieChart as PieChartIcon,
-  Download,
   FileText,
   Coins,
   FileBarChart
@@ -865,15 +864,11 @@ export const OwnerFinance: React.FC<OwnerFinanceProps> = ({ user, defaultTab = '
               ))}
             </div>
           )}
-          <button className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors">
-            <Download className="w-4 h-4" />
-            Exportar Relatório
-          </button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl w-fit overflow-x-auto">
+      <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl w-full max-w-full overflow-x-auto scrollbar-none">
         <TabButton active={activeTab === 'summary'} onClick={() => setActiveTab('summary')} icon={LayoutDashboard} label="Resumo" />
         <TabButton active={activeTab === 'incomes'} onClick={() => setActiveTab('incomes')} icon={TrendingUp} label="Entradas" />
         <TabButton active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} icon={TrendingDown} label="Saídas" />
@@ -1091,13 +1086,13 @@ const StatCard: React.FC<{ title: string; value: string; icon: any; color: strin
 const TabButton: React.FC<{ active: boolean; onClick: () => void; icon: any; label: string }> = ({ active, onClick, icon: Icon, label }) => (
   <button
     onClick={onClick}
-    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 whitespace-nowrap ${
       active 
         ? 'bg-white text-indigo-600 shadow-sm' 
         : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
     }`}
   >
-    <Icon className="w-4 h-4" />
+    <Icon className="w-4 h-4 shrink-0" />
     {label}
   </button>
 );
