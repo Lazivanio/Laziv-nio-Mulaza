@@ -731,9 +731,6 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               <span className="text-3xl font-black tracking-tight text-slate-900">
                 Fatu<span className="text-orange-500">-R</span>
               </span>
-              <span className="ml-1 px-2 py-0.5 bg-slate-100 text-slate-500 text-[9px] font-black tracking-widest rounded-md uppercase border border-slate-200">
-                AO
-              </span>
             </div>
 
             {/* Desktop Links */}

@@ -1002,6 +1002,57 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
   const [publicFilter, setPublicFilter] = useState('open');
 
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('fatur_admin_read_notifications') || '[]');
+    } catch {
+      return [];
+    }
+  });
+
+  const [openedSupportMap, setOpenedSupportMap] = useState<Record<string, number>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('fatur_admin_opened_support') || '{}');
+    } catch {
+      return {};
+    }
+  });
+
+  const markSupportAsOpened = (key: string) => {
+    setOpenedSupportMap((prev) => {
+      if (prev[key]) return prev;
+      const updated = { ...prev, [key]: Date.now() };
+      localStorage.setItem('fatur_admin_opened_support', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const isSupportExpired = (key: string) => {
+    const openedAt = openedSupportMap[key];
+    if (!openedAt) return false;
+    return Date.now() - openedAt >= 24 * 60 * 60 * 1000;
+  };
+
+  const getRemainingSupportTime = (key: string) => {
+    const openedAt = openedSupportMap[key];
+    if (!openedAt) return null;
+    const elapsed = Date.now() - openedAt;
+    const remainingMs = 24 * 60 * 60 * 1000 - elapsed;
+    if (remainingMs <= 0) return '0m';
+    const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+    const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  };
+
+  const markNotificationAsRead = (id: string) => {
+    setReadNotificationIds((prev) => {
+      if (prev.includes(id)) return prev;
+      const updated = [...prev, id];
+      localStorage.setItem('fatur_admin_read_notifications', JSON.stringify(updated));
+      return updated;
+    });
+  };
 
   // Helper to calculate days active for free/trial accounts
   const getDaysOld = (createdAtStr: string) => {
@@ -1022,8 +1073,8 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
 
   // Notifications calculation
   const pendingApprovalsCount = licenses.filter((l: any) => l.status === 'pending_approval').length;
-  const pendingSupportCount = tickets.filter((t: any) => t.status === 'open').length;
-  const pendingPublicCount = publicMessages.filter((m: any) => m.status === 'open').length;
+  const pendingSupportCount = tickets.filter((t: any) => t.status === 'open' && !isSupportExpired(`ticket-${t.id}`)).length;
+  const pendingPublicCount = publicMessages.filter((m: any) => m.status === 'open' && !isSupportExpired(`public-${m.id}`)).length;
   const expiredCount = licenses.filter((l: any) => l.status === 'expired').length;
 
   const totalNotifications = pendingApprovalsCount + pendingSupportCount + pendingPublicCount + expiredCount;
@@ -1043,7 +1094,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
         setIsNotificationsOpen(false);
       }
     })),
-    ...tickets.filter((t: any) => t.status === 'open').map((t: any) => ({
+    ...tickets.filter((t: any) => t.status === 'open' && !isSupportExpired(`ticket-${t.id}`)).map((t: any) => ({
       id: `ticket-${t.id}`,
       title: 'Novo Chamado de Suporte',
       description: `Cliente "${t.company_name || t.user_name || 'Cliente'}": "${t.subject || t.message || 'Atendimento'}"`,
@@ -1054,10 +1105,13 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       onClick: () => {
         setActiveTab('support');
         setSupportSubTab('private');
+        setSelectedTicket(t);
+        markSupportAsOpened(`ticket-${t.id}`);
+        fetchTicketMessages(t.id);
         setIsNotificationsOpen(false);
       }
     })),
-    ...publicMessages.filter((m: any) => m.status === 'open').map((m: any) => ({
+    ...publicMessages.filter((m: any) => m.status === 'open' && !isSupportExpired(`public-${m.id}`)).map((m: any) => ({
       id: `pub-${m.id}`,
       title: 'Mensagem Pública do Site',
       description: `Contacto de ${m.name || 'Visitante'}: "${m.message?.substring(0, 50)}..."`,
@@ -1068,6 +1122,9 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       onClick: () => {
         setActiveTab('support');
         setSupportSubTab('public');
+        setSelectedPublicMsg(m);
+        markSupportAsOpened(`public-${m.id}`);
+        setPublicReplyText(m.reply || '');
         setIsNotificationsOpen(false);
       }
     })),
@@ -1102,6 +1159,17 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
       };
     })
   ];
+
+  const unreadNotificationsCount = adminNotificationsList.filter((item) => !readNotificationIds.includes(item.id)).length;
+
+  const markAllNotificationsAsRead = () => {
+    const allIds = adminNotificationsList.map((n) => n.id);
+    setReadNotificationIds((prev) => {
+      const combined = Array.from(new Set([...prev, ...allIds]));
+      localStorage.setItem('fatur_admin_read_notifications', JSON.stringify(combined));
+      return combined;
+    });
+  };
 
   // New states for client management
   const [selectedClient, setSelectedClient] = useState<any>(null);
@@ -1958,10 +2026,10 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                 )}
                 title="Notificações e Avisos do Administrador"
               >
-                <Bell size={20} className={totalNotifications > 0 ? "animate-pulse text-amber-500" : ""} />
-                {totalNotifications > 0 && (
+                <Bell size={20} className={unreadNotificationsCount > 0 ? "animate-pulse text-amber-500" : ""} />
+                {unreadNotificationsCount > 0 && (
                   <span className="absolute -top-1 -right-1 bg-rose-600 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm">
-                    {totalNotifications > 99 ? '99+' : totalNotifications}
+                    {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
                   </span>
                 )}
               </button>
@@ -1991,16 +2059,27 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                           <div>
                             <h3 className="font-black text-sm text-white">Central de Notificações</h3>
                             <p className="text-[10px] text-zinc-400 font-bold">
-                              {totalNotifications} pendência(s) • {freeAccountsCount} conta(s) grátis
+                              {unreadNotificationsCount} não lida(s) • {totalNotifications} total
                             </p>
                           </div>
                         </div>
-                        <button 
-                          onClick={() => setIsNotificationsOpen(false)}
-                          className="p-1.5 hover:bg-white/10 rounded-xl text-zinc-400 hover:text-white transition-colors"
-                        >
-                          <X size={16} />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {unreadNotificationsCount > 0 && (
+                            <button 
+                              onClick={markAllNotificationsAsRead}
+                              className="text-[10px] font-bold text-amber-400 hover:text-amber-300 transition-colors shrink-0 border border-amber-400/30 px-2 py-1 rounded-lg bg-white/5"
+                              title="Marcar todas como lidas"
+                            >
+                              Marcar lidas
+                            </button>
+                          )}
+                          <button 
+                            onClick={() => setIsNotificationsOpen(false)}
+                            className="p-1.5 hover:bg-white/10 rounded-xl text-zinc-400 hover:text-white transition-colors"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
                       </div>
 
                       {/* Summary Badges */}
@@ -2049,18 +2128,33 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                         ) : (
                           adminNotificationsList.map((item) => {
                             const IconComponent = item.icon || Bell;
+                            const isRead = readNotificationIds.includes(item.id);
                             return (
                               <div 
                                 key={item.id}
-                                onClick={item.onClick}
-                                className="pt-2 first:pt-0 pb-2 p-2.5 hover:bg-zinc-50 rounded-2xl transition-all cursor-pointer group flex items-start gap-3 border border-transparent hover:border-zinc-200"
+                                onClick={() => {
+                                  markNotificationAsRead(item.id);
+                                  item.onClick();
+                                }}
+                                className={cn(
+                                  "pt-2 first:pt-0 pb-2 p-2.5 rounded-2xl transition-all cursor-pointer group flex items-start gap-3 border",
+                                  isRead 
+                                    ? "opacity-65 bg-white hover:bg-zinc-50 border-transparent hover:border-zinc-200" 
+                                    : "bg-amber-50/50 hover:bg-amber-50/90 border-amber-200/70 shadow-sm"
+                                )}
                               >
-                                <div className="p-2.5 bg-zinc-100 group-hover:bg-black group-hover:text-white text-zinc-700 rounded-2xl transition-colors shrink-0 mt-0.5">
+                                <div className={cn(
+                                  "p-2.5 rounded-2xl transition-colors shrink-0 mt-0.5",
+                                  isRead ? "bg-zinc-100 group-hover:bg-black group-hover:text-white text-zinc-500" : "bg-amber-100 text-amber-900 font-bold"
+                                )}>
                                   <IconComponent size={16} />
                                 </div>
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center justify-between gap-1 mb-0.5">
-                                    <span className="text-xs font-black text-zinc-900 truncate group-hover:text-blue-600 transition-colors">
+                                    <span className="text-xs font-black text-zinc-900 truncate group-hover:text-blue-600 transition-colors flex items-center gap-1.5">
+                                      {!isRead && (
+                                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 inline-block" title="Não lida" />
+                                      )}
                                       {item.title}
                                     </span>
                                     <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full border uppercase shrink-0", item.badgeColor)}>
@@ -2070,9 +2164,16 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                                   <p className="text-[11px] text-zinc-600 line-clamp-2 leading-tight">
                                     {item.description}
                                   </p>
-                                  <p className="text-[9px] text-zinc-400 font-bold mt-1">
-                                    {item.time}
-                                  </p>
+                                  <div className="flex items-center justify-between mt-1">
+                                    <span className="text-[9px] text-zinc-400 font-bold">
+                                      {item.time}
+                                    </span>
+                                    {isRead ? (
+                                      <span className="text-[9px] font-semibold text-zinc-400 italic">Lida</span>
+                                    ) : (
+                                      <span className="text-[9px] font-extrabold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-md">Nova</span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             );
@@ -3275,36 +3376,51 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     </div>
 
                     <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar min-h-[400px] lg:min-h-0">
-                      {tickets.filter(t => t.status === supportFilter).map((ticket: any) => (
-                        <Card 
-                          key={`ticket-${ticket.id}`} 
-                          onClick={() => {
-                            setSelectedTicket(ticket);
-                            fetchTicketMessages(ticket.id);
-                          }}
-                          className={cn(
-                            "p-4 cursor-pointer transition-all border-l-4",
-                            selectedTicket?.id === ticket.id ? "border-black bg-zinc-50" : "border-transparent hover:bg-zinc-50",
-                            ticket.priority === 'high' ? "border-l-rose-500" : ticket.priority === 'medium' ? "border-l-amber-500" : "border-l-emerald-500"
-                          )}
-                        >
-                          <div className="flex justify-between items-start mb-2">
-                            <h4 className="font-bold text-sm truncate flex-1 mr-2">{ticket.subject}</h4>
-                            <span className={cn(
-                              "px-1.5 py-0.5 rounded text-[8px] font-black uppercase",
-                              ticket.priority === 'high' ? "bg-rose-100 text-rose-700" : ticket.priority === 'medium' ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
-                            )}>
-                              {ticket.priority}
-                            </span>
-                          </div>
-                          <p className="text-xs text-zinc-500 line-clamp-1 mb-2">{ticket.description}</p>
-                          <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-bold text-zinc-400">{ticket.client_name}</span>
-                            <span className="text-[10px] text-zinc-400">{new Date(ticket.created_at).toLocaleDateString()}</span>
-                          </div>
-                        </Card>
-                      ))}
-                      {tickets.filter(t => t.status === supportFilter).length === 0 && (
+                      {tickets
+                        .filter(t => t.status === supportFilter && !isSupportExpired(`ticket-${t.id}`))
+                        .map((ticket: any) => {
+                          const isOpened = !!openedSupportMap[`ticket-${ticket.id}`];
+                          const remainingTime = getRemainingSupportTime(`ticket-${ticket.id}`);
+                          return (
+                            <Card 
+                              key={`ticket-${ticket.id}`} 
+                              onClick={() => {
+                                setSelectedTicket(ticket);
+                                markSupportAsOpened(`ticket-${ticket.id}`);
+                                markNotificationAsRead(`ticket-${ticket.id}`);
+                                fetchTicketMessages(ticket.id);
+                              }}
+                              className={cn(
+                                "p-4 cursor-pointer transition-all border-l-4",
+                                selectedTicket?.id === ticket.id ? "border-black bg-zinc-50" : "border-transparent hover:bg-zinc-50",
+                                ticket.priority === 'high' ? "border-l-rose-500" : ticket.priority === 'medium' ? "border-l-amber-500" : "border-l-emerald-500"
+                              )}
+                            >
+                              <div className="flex justify-between items-start mb-2">
+                                <h4 className="font-bold text-sm truncate flex-1 mr-2">{ticket.subject}</h4>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {isOpened && (
+                                    <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-amber-100 text-amber-800 border border-amber-200" title="Auto-elimina em 24h após ser aberta">
+                                      ⏱️ {remainingTime}
+                                    </span>
+                                  )}
+                                  <span className={cn(
+                                    "px-1.5 py-0.5 rounded text-[8px] font-black uppercase",
+                                    ticket.priority === 'high' ? "bg-rose-100 text-rose-700" : ticket.priority === 'medium' ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+                                  )}>
+                                    {ticket.priority}
+                                  </span>
+                                </div>
+                              </div>
+                              <p className="text-xs text-zinc-500 line-clamp-1 mb-2">{ticket.description}</p>
+                              <div className="flex justify-between items-center">
+                                <span className="text-[10px] font-bold text-zinc-400">{ticket.client_name}</span>
+                                <span className="text-[10px] text-zinc-400">{new Date(ticket.created_at).toLocaleDateString()}</span>
+                              </div>
+                            </Card>
+                          );
+                        })}
+                      {tickets.filter(t => t.status === supportFilter && !isSupportExpired(`ticket-${t.id}`)).length === 0 && (
                         <div className="text-center py-12">
                           <LifeBuoy className="mx-auto text-zinc-200 mb-4" size={48} />
                           <p className="text-zinc-400 font-bold">Sem tickets {supportFilter}</p>
@@ -3448,36 +3564,51 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                     </div>
 
                     <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar min-h-[400px] lg:min-h-0">
-                      {publicMessages.filter(m => m.status === publicFilter).map((msg: any) => (
-                        <Card 
-                          key={`public-msg-${msg.id}`} 
-                          onClick={() => {
-                            setSelectedPublicMsg(msg);
-                            setPublicReplyText(msg.reply || '');
-                          }}
-                          className={cn(
-                            "p-4 cursor-pointer transition-all border-l-4",
-                            selectedPublicMsg?.id === msg.id ? "border-black bg-zinc-50" : "border-transparent hover:bg-zinc-50",
-                            msg.status === 'open' ? "border-l-orange-500" : "border-l-emerald-500"
-                          )}
-                        >
-                          <div className="flex justify-between items-start mb-2">
-                            <h4 className="font-bold text-sm truncate flex-1 mr-2">{msg.name}</h4>
-                            <span className={cn(
-                              "px-1.5 py-0.5 rounded text-[8px] font-black uppercase",
-                              msg.status === 'open' ? "bg-orange-100 text-orange-700" : "bg-emerald-100 text-emerald-700"
-                            )}>
-                              {msg.status === 'open' ? 'aberta' : 'respondida'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-zinc-500 line-clamp-1 mb-2">{msg.message}</p>
-                          <div className="flex justify-between items-center text-[10px] text-zinc-400">
-                            <span className="truncate max-w-[120px]">{msg.email}</span>
-                            <span>{new Date(msg.created_at).toLocaleDateString()}</span>
-                          </div>
-                        </Card>
-                      ))}
-                      {publicMessages.filter(m => m.status === publicFilter).length === 0 && (
+                      {publicMessages
+                        .filter(m => m.status === publicFilter && !isSupportExpired(`public-${m.id}`))
+                        .map((msg: any) => {
+                          const isOpened = !!openedSupportMap[`public-${msg.id}`];
+                          const remainingTime = getRemainingSupportTime(`public-${msg.id}`);
+                          return (
+                            <Card 
+                              key={`public-msg-${msg.id}`} 
+                              onClick={() => {
+                                setSelectedPublicMsg(msg);
+                                markSupportAsOpened(`public-${msg.id}`);
+                                markNotificationAsRead(`pub-${msg.id}`);
+                                setPublicReplyText(msg.reply || '');
+                              }}
+                              className={cn(
+                                "p-4 cursor-pointer transition-all border-l-4",
+                                selectedPublicMsg?.id === msg.id ? "border-black bg-zinc-50" : "border-transparent hover:bg-zinc-50",
+                                msg.status === 'open' ? "border-l-orange-500" : "border-l-emerald-500"
+                              )}
+                            >
+                              <div className="flex justify-between items-start mb-2">
+                                <h4 className="font-bold text-sm truncate flex-1 mr-2">{msg.name}</h4>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {isOpened && (
+                                    <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-amber-100 text-amber-800 border border-amber-200" title="Auto-elimina em 24h após ser aberta">
+                                      ⏱️ {remainingTime}
+                                    </span>
+                                  )}
+                                  <span className={cn(
+                                    "px-1.5 py-0.5 rounded text-[8px] font-black uppercase",
+                                    msg.status === 'open' ? "bg-orange-100 text-orange-700" : "bg-emerald-100 text-emerald-700"
+                                  )}>
+                                    {msg.status === 'open' ? 'aberta' : 'respondida'}
+                                  </span>
+                                </div>
+                              </div>
+                              <p className="text-xs text-zinc-500 line-clamp-1 mb-2">{msg.message}</p>
+                              <div className="flex justify-between items-center text-[10px] text-zinc-400">
+                                <span className="truncate max-w-[120px]">{msg.email}</span>
+                                <span>{new Date(msg.created_at).toLocaleDateString()}</span>
+                              </div>
+                            </Card>
+                          );
+                        })}
+                      {publicMessages.filter(m => m.status === publicFilter && !isSupportExpired(`public-${m.id}`)).length === 0 && (
                         <div className="text-center py-12">
                           <LifeBuoy className="mx-auto text-zinc-200 mb-4" size={48} />
                           <p className="text-zinc-400 font-bold">Sem mensagens públicas {publicFilter === 'open' ? 'abertas' : 'respondidas'}</p>
@@ -6186,6 +6317,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
 
   const handleSelectTicket = (ticket: any) => {
     setSelectedTicket(ticket);
+    markSupportAsOpened(`ticket-${ticket.id}`);
     fetchMessages(ticket.id);
   };
 
@@ -9222,10 +9354,10 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                   </button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                  {supportTickets.length === 0 ? (
+                  {supportTickets.filter(t => !isSupportExpired(`ticket-${t.id}`)).length === 0 ? (
                     <p className="text-sm text-zinc-400 text-center py-8">Nenhum ticket aberto.</p>
                   ) : (
-                    supportTickets.map(ticket => (
+                    supportTickets.filter(t => !isSupportExpired(`ticket-${t.id}`)).map(ticket => (
                       <button
                         key={ticket.id}
                         onClick={() => handleSelectTicket(ticket)}
