@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Establishment } from '../types';
+import { HardwareTerminalSettingsView } from './HardwareTerminalSettingsView';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -911,99 +912,8 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
 
   const renderPrintingTab = () => {
     return (
-      <div className="space-y-6 max-w-2xl">
-        <div>
-          <h2 className="text-xl font-black text-zinc-900 uppercase tracking-tight">Configurações de Impressão</h2>
-          <p className="text-sm text-zinc-500">Defina o comportamento das impressoras após a conclusão de vendas.</p>
-        </div>
-
-        <Card className="p-6 space-y-8">
-          <div className="space-y-4">
-            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Impressão Automática</h3>
-            <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
-              <div>
-                <p className="font-bold text-zinc-900">Ativar no PDV / Caixa</p>
-                <p className="text-[10px] text-zinc-500">Imprimir automaticamente na frente de caixa por padrão.</p>
-              </div>
-              <button 
-                onClick={() => setPrintConfig({...printConfig, autoPrintPos: !printConfig.autoPrintPos})}
-                className={cn(
-                  "w-12 h-6 rounded-full transition-all relative",
-                  printConfig.autoPrintPos ? "bg-emerald-500" : "bg-zinc-200"
-                )}
-              >
-                <div className={cn(
-                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                  printConfig.autoPrintPos ? "right-1" : "left-1"
-                )} />
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
-              <div>
-                <p className="font-bold text-zinc-900">Ativar na Administração</p>
-                <p className="text-[10px] text-zinc-500">Imprimir automaticamente no backoffice por padrão.</p>
-              </div>
-              <button 
-                onClick={() => setPrintConfig({...printConfig, autoPrintBackoffice: !printConfig.autoPrintBackoffice})}
-                className={cn(
-                  "w-12 h-6 rounded-full transition-all relative",
-                  printConfig.autoPrintBackoffice ? "bg-emerald-500" : "bg-zinc-200"
-                )}
-              >
-                <div className={cn(
-                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                  printConfig.autoPrintBackoffice ? "right-1" : "left-1"
-                )} />
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Formato e Impressora</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-2">Tipo Padrão</label>
-                <select 
-                  value={printConfig.defaultFormat}
-                  onChange={(e) => setPrintConfig({...printConfig, defaultFormat: e.target.value as 'ticket' | 'a4'})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none font-bold text-sm"
-                >
-                  <option value="ticket">Ticket Térmico (58mm/80mm)</option>
-                  <option value="a4">Documento A4</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-2">Impressora Padrão</label>
-                <input 
-                  type="text"
-                  placeholder="Nome da impressora (opcional)"
-                  value={printConfig.defaultPrinter}
-                  onChange={(e) => setPrintConfig({...printConfig, defaultPrinter: e.target.value})}
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none text-sm font-medium"
-                />
-              </div>
-            </div>
-          </div>
-
-          <button 
-            onClick={handleSavePrintSettings}
-            disabled={isSaving}
-            className="w-full py-4 bg-black text-white rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-800 transition-all disabled:opacity-50"
-          >
-            {isSaving ? 'A GUARDAR...' : 'GUARDAR CONFIGURAÇÕES DE IMPRESSÃO'}
-          </button>
-        </Card>
-
-        <div className="p-6 bg-blue-50 border border-blue-100 rounded-2xl flex gap-3">
-          <Info className="text-blue-500 shrink-0" size={20} />
-          <div>
-            <h4 className="font-black text-blue-900 text-xs uppercase tracking-tight mb-1">Dica de Configuração</h4>
-            <p className="text-[11px] text-blue-800 leading-relaxed">
-              O sistema utiliza a API de impressão do navegador. Para uma melhor experiência de "impressão silenciosa" no PDV, certifique-se de configurar a impressora padrão no seu sistema operativo e desativar os cabeçalhos/rodapés nas definições de impressão do navegador.
-            </p>
-          </div>
-        </div>
+      <div className="space-y-6 max-w-4xl">
+        <HardwareTerminalSettingsView user={user} />
       </div>
     );
   };
@@ -1096,11 +1006,12 @@ export const OwnerSettings = ({ user, onUpdateUser }: { user: User, onUpdateUser
             <button 
               onClick={() => setActiveTab('printing')}
               className={cn(
-                "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shrink-0",
+                "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shrink-0 flex items-center gap-1.5",
                 activeTab === 'printing' ? "bg-white text-black shadow-sm" : "text-zinc-400 hover:text-zinc-600"
               )}
             >
-              Impressão
+              <Printer size={13} />
+              Hardware & Terminal
             </button>
             <button 
               onClick={() => setIsAboutModalOpen(true)}

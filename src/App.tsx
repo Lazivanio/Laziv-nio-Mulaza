@@ -115,6 +115,7 @@ import { OwnerOverview } from './components/OwnerOverview';
 import { MyEstablishments } from './components/MyEstablishments';
 import { OwnerReports } from './components/OwnerReports';
 import { OwnerSettings } from './components/OwnerSettings';
+import { HardwareTerminalSettingsView } from './components/HardwareTerminalSettingsView';
 import { OwnerCurrencies } from './components/OwnerCurrencies';
 import { OwnerWarehouses } from './components/OwnerWarehouses';
 import { OwnerFinance } from './components/OwnerFinance';
@@ -5580,6 +5581,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
   const [invoiceTypeFilter, setInvoiceTypeFilter] = useState('ALL');
   const [startDateFilter, setStartDateFilter] = useState('');
   const [endDateFilter, setEndDateFilter] = useState('');
+  const [adminSettingsTab, setAdminSettingsTab] = useState<'general' | 'hardware' | 'system'>('general');
 
   const [purchases, setPurchases] = useState<any[]>([]);
   const [purchaseReturns, setPurchaseReturns] = useState<any[]>([]);
@@ -8739,230 +8741,305 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
           )}
 
           {activeTab === 'settings' && (
-            <div className="flex-1 overflow-y-auto pr-2">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <Card className="lg:col-span-2">
-                <div className="p-6 border-b border-zinc-100">
-                  <h3 className="font-bold">Configurações do Estabelecimento</h3>
+            <div className="flex-1 overflow-y-auto pr-2 space-y-6">
+              {/* Settings Subtabs */}
+              <div className="flex border-b border-zinc-200 p-1 bg-zinc-100 rounded-2xl overflow-x-auto no-scrollbar">
+                <button
+                  type="button"
+                  onClick={() => setAdminSettingsTab('general')}
+                  className={cn(
+                    "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shrink-0 flex items-center gap-2",
+                    adminSettingsTab === 'general' ? "bg-white text-black shadow-sm" : "text-zinc-500 hover:text-zinc-800"
+                  )}
+                >
+                  <Store size={15} />
+                  <span>Estabelecimento & Dados Fiscais</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdminSettingsTab('hardware')}
+                  className={cn(
+                    "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shrink-0 flex items-center gap-2",
+                    adminSettingsTab === 'hardware' ? "bg-white text-black shadow-sm" : "text-zinc-500 hover:text-zinc-800"
+                  )}
+                >
+                  <Printer size={15} />
+                  <span>Hardware, Impressoras & Terminal (ESC/POS & Gaveta)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdminSettingsTab('system')}
+                  className={cn(
+                    "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shrink-0 flex items-center gap-2",
+                    adminSettingsTab === 'system' ? "bg-white text-black shadow-sm" : "text-zinc-500 hover:text-zinc-800"
+                  )}
+                >
+                  <Settings2 size={15} />
+                  <span>Estado & Manutenção</span>
+                </button>
+              </div>
+
+              {adminSettingsTab === 'hardware' && (
+                <div className="max-w-4xl">
+                  <HardwareTerminalSettingsView user={user} establishmentInfo={settingsForm} />
                 </div>
-                <form onSubmit={handleUpdateSettings} className="p-4 md:p-6 space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                    <div>
-                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Estabelecimento</label>
-                      <input 
-                        type="text" 
-                        value={settingsForm.name}
-                        onChange={e => setSettingsForm({...settingsForm, name: e.target.value})}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
-                      />
+              )}
+
+              {adminSettingsTab === 'general' && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <Card className="lg:col-span-2">
+                    <div className="p-6 border-b border-zinc-100">
+                      <h3 className="font-bold">Configurações do Estabelecimento</h3>
                     </div>
-                    <div>
-                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF da Empresa</label>
-                      <input 
-                        type="text" 
-                        value={settingsForm.nif}
-                        onChange={e => setSettingsForm({...settingsForm, nif: e.target.value})}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Telefone de Contacto</label>
-                      <input 
-                        type="text" 
-                        value={settingsForm.phone}
-                        onChange={e => setSettingsForm({...settingsForm, phone: e.target.value})}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email do Estabelecimento (Opcional)</label>
-                      <input 
-                        type="email" 
-                        value={settingsForm.email}
-                        onChange={e => setSettingsForm({...settingsForm, email: e.target.value})}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
-                      <input 
-                        type="text" 
-                        value={settingsForm.address}
-                        onChange={e => setSettingsForm({...settingsForm, address: e.target.value})}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
-                      />
-                    </div>
-                    <div className="col-span-full">
-                      <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Logotipo do Estabelecimento</label>
-                      <div className="flex flex-col md:flex-row gap-4">
-                        <div className="flex-1 space-y-2">
+                    <form onSubmit={handleUpdateSettings} className="p-4 md:p-6 space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                        <div>
+                          <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Nome do Estabelecimento</label>
                           <input 
                             type="text" 
-                            value={settingsForm.logo_url}
-                            onChange={e => setSettingsForm({...settingsForm, logo_url: e.target.value})}
+                            value={settingsForm.name}
+                            onChange={e => setSettingsForm({...settingsForm, name: e.target.value})}
                             className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
-                            placeholder="URL da imagem (https://...)"
                           />
-                          <div className="relative">
-                            <input 
-                              type="file"
-                              accept="image/*"
-                              onChange={async (e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  try {
-                                    const base64 = await fileToBase64(file);
-                                    setSettingsForm({...settingsForm, logo_url: base64});
-                                  } catch (err) {
-                                    console.error("Error converting file to base64", err);
-                                  }
-                                }
-                              }}
-                              className="hidden"
-                              id="settings-logo-upload"
-                            />
-                            <label 
-                              htmlFor="settings-logo-upload"
-                              className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-white border-2 border-dashed border-zinc-200 rounded-xl cursor-pointer hover:border-black hover:bg-zinc-50 transition-all text-sm font-bold text-zinc-600"
-                            >
-                              <Upload size={18} /> Carregar Imagem Local
-                            </label>
-                          </div>
                         </div>
-                        {settingsForm.logo_url && (
-                          <div className="w-24 h-24 bg-zinc-100 rounded-2xl overflow-hidden border border-zinc-200 shrink-0">
-                            <img src={settingsForm.logo_url} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="col-span-full space-y-4">
-                      <div className="flex items-center justify-between">
-                        <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest">Coordenadas Bancárias</label>
-                        <button 
-                          type="button"
-                          onClick={addBankAccount}
-                          className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
-                        >
-                          <Plus size={14} /> Adicionar Conta
-                        </button>
-                      </div>
-                      
-                      <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                        {settingsForm.bank_accounts.map((account, index) => (
-                          <div key={`bank-account-set-${index}`} className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-4 relative group">
-                            <button 
-                              type="button"
-                              onClick={() => removeBankAccount(index)}
-                              className="absolute top-2 right-2 p-1 text-zinc-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
-                            >
-                              <X size={16} />
-                            </button>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              <div>
-                                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Nome do Banco</label>
+                        <div>
+                          <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">NIF da Empresa</label>
+                          <input 
+                            type="text" 
+                            value={settingsForm.nif}
+                            onChange={e => setSettingsForm({...settingsForm, nif: e.target.value})}
+                            className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Telefone de Contacto</label>
+                          <input 
+                            type="text" 
+                            value={settingsForm.phone}
+                            onChange={e => setSettingsForm({...settingsForm, phone: e.target.value})}
+                            className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Email do Estabelecimento (Opcional)</label>
+                          <input 
+                            type="email" 
+                            value={settingsForm.email}
+                            onChange={e => setSettingsForm({...settingsForm, email: e.target.value})}
+                            className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Endereço</label>
+                          <input 
+                            type="text" 
+                            value={settingsForm.address}
+                            onChange={e => setSettingsForm({...settingsForm, address: e.target.value})}
+                            className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
+                          />
+                        </div>
+                        <div className="col-span-full">
+                          <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Logotipo do Estabelecimento</label>
+                          <div className="flex flex-col md:flex-row gap-4">
+                            <div className="flex-1 space-y-2">
+                              <input 
+                                type="text" 
+                                value={settingsForm.logo_url}
+                                onChange={e => setSettingsForm({...settingsForm, logo_url: e.target.value})}
+                                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:border-black transition-all text-sm" 
+                                placeholder="URL da imagem (https://...)"
+                              />
+                              <div className="relative">
                                 <input 
-                                  type="text"
-                                  value={account.bank_name}
-                                  onChange={e => updateBankAccount(index, 'bank_name', e.target.value)}
-                                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
-                                  placeholder="Ex: BFA, BAI..."
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      try {
+                                        const base64 = await fileToBase64(file);
+                                        setSettingsForm({...settingsForm, logo_url: base64});
+                                      } catch (err) {
+                                        console.error("Error converting file to base64", err);
+                                      }
+                                    }
+                                  }}
+                                  className="hidden"
+                                  id="settings-logo-upload"
                                 />
-                              </div>
-                              <div>
-                                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">IBAN</label>
-                                <input 
-                                  type="text"
-                                  value={account.iban}
-                                  onChange={e => updateBankAccount(index, 'iban', e.target.value)}
-                                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
-                                  placeholder="AO06..."
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Titular da Conta</label>
-                                <input 
-                                  type="text"
-                                  value={account.holder}
-                                  onChange={e => updateBankAccount(index, 'holder', e.target.value)}
-                                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Número da Conta</label>
-                                <input 
-                                  type="text"
-                                  value={account.account_number}
-                                  onChange={e => updateBankAccount(index, 'account_number', e.target.value)}
-                                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
-                                />
+                                <label 
+                                  htmlFor="settings-logo-upload"
+                                  className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-white border-2 border-dashed border-zinc-200 rounded-xl cursor-pointer hover:border-black hover:bg-zinc-50 transition-all text-sm font-bold text-zinc-600"
+                                >
+                                  <Upload size={18} /> Carregar Imagem Local
+                                </label>
                               </div>
                             </div>
+                            {settingsForm.logo_url && (
+                              <div className="w-24 h-24 bg-zinc-100 rounded-2xl overflow-hidden border border-zinc-200 shrink-0">
+                                <img src={settingsForm.logo_url} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              </div>
+                            )}
                           </div>
-                        ))}
-                        
-                        {settingsForm.bank_accounts.length === 0 && (
-                          <div className="text-center py-6 border-2 border-dashed border-zinc-100 rounded-xl">
-                            <p className="text-xs text-zinc-400">Nenhuma coordenada bancária configurada.</p>
+                        </div>
+
+                        <div className="col-span-full space-y-4">
+                          <div className="flex items-center justify-between">
+                            <label className="block text-[10px] md:text-xs font-bold text-zinc-500 uppercase tracking-widest">Coordenadas Bancárias</label>
+                            <button 
+                              type="button"
+                              onClick={addBankAccount}
+                              className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                            >
+                              <Plus size={14} /> Adicionar Conta
+                            </button>
                           </div>
-                        )}
+                          
+                          <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                            {settingsForm.bank_accounts.map((account, index) => (
+                              <div key={`bank-account-set-${index}`} className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-4 relative group">
+                                <button 
+                                  type="button"
+                                  onClick={() => removeBankAccount(index)}
+                                  className="absolute top-2 right-2 p-1 text-zinc-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                                >
+                                  <X size={16} />
+                                </button>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  <div>
+                                    <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Nome do Banco</label>
+                                    <input 
+                                      type="text"
+                                      value={account.bank_name}
+                                      onChange={e => updateBankAccount(index, 'bank_name', e.target.value)}
+                                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
+                                      placeholder="Ex: BFA, BAI..."
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">IBAN</label>
+                                    <input 
+                                      type="text"
+                                      value={account.iban}
+                                      onChange={e => updateBankAccount(index, 'iban', e.target.value)}
+                                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
+                                      placeholder="AO06..."
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Titular da Conta</label>
+                                    <input 
+                                      type="text"
+                                      value={account.holder}
+                                      onChange={e => updateBankAccount(index, 'holder', e.target.value)}
+                                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Número da Conta</label>
+                                    <input 
+                                      type="text"
+                                      value={account.account_number}
+                                      onChange={e => updateBankAccount(index, 'account_number', e.target.value)}
+                                      className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-lg outline-none focus:border-black text-sm"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                            
+                            {settingsForm.bank_accounts.length === 0 && (
+                              <div className="text-center py-6 border-2 border-dashed border-zinc-100 rounded-xl">
+                                <p className="text-xs text-zinc-400">Nenhuma coordenada bancária configurada.</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="pt-4 border-t border-zinc-100 flex justify-end">
+                        <button type="submit" className="w-full md:w-auto bg-black text-white px-8 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95">
+                          Guardar Alterações
+                        </button>
+                      </div>
+                    </form>
+                  </Card>
+
+                  <div className="space-y-6">
+                    <Card>
+                      <div className="p-6 border-b border-zinc-100">
+                        <h3 className="font-bold">Estado da Unidade</h3>
+                      </div>
+                      <div className="p-6 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-bold text-sm">Operacional</p>
+                            <p className="text-xs text-zinc-500">Permitir vendas nesta unidade.</p>
+                          </div>
+                          <button 
+                            onClick={() => setSettingsForm({...settingsForm, status: settingsForm.status === 'active' ? 'inactive' : 'active'})}
+                            className={cn(
+                              "w-12 h-6 rounded-full transition-all relative",
+                              settingsForm.status === 'active' ? "bg-emerald-500" : "bg-zinc-200"
+                            )}
+                          >
+                            <div className={cn(
+                              "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm",
+                              settingsForm.status === 'active' ? "right-1" : "left-1"
+                            )} />
+                          </button>
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+                </div>
+              )}
+
+              {adminSettingsTab === 'system' && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <Card>
+                    <div className="p-6 border-b border-zinc-100">
+                      <h3 className="font-bold">Estado da Unidade</h3>
+                    </div>
+                    <div className="p-6 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-sm">Operacional</p>
+                          <p className="text-xs text-zinc-500">Permitir vendas nesta unidade.</p>
+                        </div>
+                        <button 
+                          onClick={() => setSettingsForm({...settingsForm, status: settingsForm.status === 'active' ? 'inactive' : 'active'})}
+                          className={cn(
+                            "w-12 h-6 rounded-full transition-all relative",
+                            settingsForm.status === 'active' ? "bg-emerald-500" : "bg-zinc-200"
+                          )}
+                        >
+                          <div className={cn(
+                            "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm",
+                            settingsForm.status === 'active' ? "right-1" : "left-1"
+                          )} />
+                        </button>
                       </div>
                     </div>
-                  </div>
-                  <div className="pt-4 border-t border-zinc-100 flex justify-end">
-                    <button type="submit" className="w-full md:w-auto bg-black text-white px-8 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all active:scale-95">
-                      Guardar Alterações
-                    </button>
-                  </div>
-                </form>
-              </Card>
+                  </Card>
 
-              <div className="space-y-6">
-                <Card>
-                  <div className="p-6 border-b border-zinc-100">
-                    <h3 className="font-bold">Estado da Unidade</h3>
-                  </div>
-                  <div className="p-6 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-bold text-sm">Operacional</p>
-                        <p className="text-xs text-zinc-500">Permitir vendas nesta unidade.</p>
-                      </div>
-                      <button 
-                        onClick={() => setSettingsForm({...settingsForm, status: settingsForm.status === 'active' ? 'inactive' : 'active'})}
-                        className={cn(
-                          "w-12 h-6 rounded-full transition-all relative",
-                          settingsForm.status === 'active' ? "bg-emerald-500" : "bg-zinc-200"
-                        )}
-                      >
-                        <div className={cn(
-                          "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm",
-                          settingsForm.status === 'active' ? "right-1" : "left-1"
-                        )} />
+                  <Card className="border-rose-100 bg-rose-50/10">
+                    <div className="p-6 border-b border-rose-100">
+                      <h3 className="font-bold text-rose-600">Zona de Perigo</h3>
+                    </div>
+                    <div className="p-6 space-y-4">
+                      <p className="text-xs text-zinc-500">
+                        Eliminar um estabelecimento é uma acção irreversível. Todos os dados de produtos, vendas e colaboradores serão perdidos.
+                      </p>
+                      <button className="w-full flex items-center justify-center gap-2 py-3 text-rose-600 font-bold hover:bg-rose-100 rounded-xl transition-colors border border-rose-200">
+                        <Trash2 size={18} />
+                        Eliminar Estabelecimento Permanentemente
                       </button>
                     </div>
-                  </div>
-                </Card>
-
-                <Card className="border-rose-100 bg-rose-50/10">
-                  <div className="p-6 border-b border-rose-100">
-                    <h3 className="font-bold text-rose-600">Zona de Perigo</h3>
-                  </div>
-                  <div className="p-6 space-y-4">
-                    <p className="text-xs text-zinc-500">
-                      Eliminar um estabelecimento é uma acção irreversível. Todos os dados de produtos, vendas e colaboradores serão perdidos.
-                    </p>
-                    <button className="w-full flex items-center justify-center gap-2 py-3 text-rose-600 font-bold hover:bg-rose-100 rounded-xl transition-colors border border-rose-200">
-                      <Trash2 size={18} />
-                      Eliminar Estabelecimento Permanentemente
-                    </button>
-                  </div>
-                </Card>
-              </div>
+                  </Card>
+                </div>
+              )}
             </div>
-          </div>
           )}
           
           {activeTab === 'cash-registers' && (
@@ -13321,10 +13398,16 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   <p className={cn("text-xs sm:text-sm opacity-85", isPharmacy ? "text-emerald-100" : "text-orange-100")}>Terminal: {user.cash_register_name || 'Caixa'}</p>
                   <button 
                     onClick={() => setIsTerminalSettingsOpen(true)}
-                    className={cn("p-1 rounded-lg transition-colors", isPharmacy ? "hover:bg-emerald-500/30 text-emerald-100" : "hover:bg-orange-400/30 text-orange-100")}
-                    title="Configurações do Terminal"
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 shadow-sm border cursor-pointer font-bold text-[10px] uppercase tracking-wider",
+                      isPharmacy 
+                        ? "bg-emerald-700/60 hover:bg-emerald-700 text-emerald-100 border-emerald-500/40" 
+                        : "bg-orange-650/60 hover:bg-orange-600 text-orange-100 border-orange-400/40"
+                    )}
+                    title="Configurações de Hardware, Impressoras e Terminal"
                   >
-                    <Settings size={14} />
+                    <Printer size={13} />
+                    <span>Hardware & Impressão</span>
                   </button>
                   <button 
                     onClick={() => triggerCashDrawerOpen(true)}
@@ -14496,704 +14579,15 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       <Modal 
         isOpen={isTerminalSettingsOpen} 
         onClose={() => setIsTerminalSettingsOpen(false)} 
-        title="Configuração de Hardware & Impressão do PDV"
+        title="Hardware & Terminal POS (ESC/POS, Impressoras e Gaveta)"
+        maxWidth="max-w-3xl"
       >
-        <div className="space-y-6 max-h-[85vh] overflow-y-auto pr-1 custom-scrollbar">
-          
-          {/* Tabs Selector Navigation */}
-          <div className="flex border-b border-zinc-100 p-1 bg-zinc-100/60 rounded-xl">
-            <button
-              onClick={() => setActiveHardwareTab('devices')}
-              type="button"
-              className={cn(
-                "flex-1 py-1.5 text-center text-[10px] font-black uppercase tracking-widest rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5",
-                activeHardwareTab === 'devices' 
-                  ? "bg-white text-black shadow-sm border border-zinc-250/20" 
-                  : "text-zinc-500 hover:text-zinc-800"
-              )}
-            >
-              <Printer size={13} /> Periféricos
-            </button>
-            <button
-              onClick={() => setActiveHardwareTab('agent')}
-              type="button"
-              className={cn(
-                "flex-1 py-1.5 text-center text-[10px] font-black uppercase tracking-widest rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5",
-                activeHardwareTab === 'agent' 
-                  ? "bg-white text-black shadow-sm border border-zinc-250/20" 
-                  : "text-zinc-500 hover:text-zinc-800"
-              )}
-            >
-              <Cpu size={13} /> Instalador & Token
-            </button>
-            <button
-              onClick={() => setActiveHardwareTab('logs')}
-              type="button"
-              className={cn(
-                "flex-1 py-1.5 text-center text-[10px] font-black uppercase tracking-widest rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5",
-                activeHardwareTab === 'logs' 
-                  ? "bg-white text-black shadow-sm border border-zinc-250/20" 
-                  : "text-zinc-500 hover:text-zinc-800"
-              )}
-            >
-              <Activity size={13} /> Fila & Logs
-            </button>
-          </div>
-
-          {activeHardwareTab === 'devices' && (
-            <div className="space-y-5 animate-in fade-in duration-200">
-              {/* Impressora e Papel */}
-              <div className="space-y-3">
-                <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
-                  <Printer size={14} className="text-zinc-650" /> Dispositivo de Impressão Térmica
-                </h3>
-                
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 text-left">Preset de Hardware & Calibração Automática</label>
-                    <select
-                      value={printConfig.printerPreset || 'Generic 80mm'}
-                      onChange={e => {
-                        const val = e.target.value;
-                        const size = val.includes('58mm') ? '58mm' : '80mm';
-                        setPrintConfig({
-                          ...printConfig,
-                          printerPreset: val,
-                          defaultFormat: 'ticket',
-                          ticketSize: size
-                        });
-                      }}
-                      className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-1 focus:ring-black outline-none text-xs font-bold cursor-pointer"
-                    >
-                      <option value="Epson TM-T20">Epson TM-T20 [Oficial Português PC860 / Gaveta 120ms]</option>
-                      <option value="XPrinter XP-80">XPrinter XP-80 [Oficial PC850 / Gaveta 150ms]</option>
-                      <option value="Elgin I9">Elgin I9 [Oficial PC850 / Gaveta 100ms]</option>
-                      <option value="Bematech MP-4200">Bematech MP-4200 [Oficial PC850 / Gaveta 200ms]</option>
-                      <option value="Generic 80mm">Bobina Genérica de 80mm [Standard ESC/POS]</option>
-                      <option value="Generic 58mm">Bobina Genérica de 58mm [Compacta Standard]</option>
-                    </select>
-                    <p className="text-[8px] text-zinc-500 mt-1">
-                      ⚠️ Cada preset calibra automaticamente as tabelas de caracteres acentuados nacionais (PC850 ou PC860 Iberia) e o tempo elétrico em milissegundos para não aquecer o solenóide de retorno da gaveta.
-                    </p>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="block text-[9px] font-black text-zinc-400 uppercase tracking-widest text-left">Selecionar Dispositivo de Saída (Windows Spooler / TCP)</label>
-                      <button
-                        type="button"
-                        onClick={() => fetchDetectedPrinters()}
-                        disabled={isDetectingPrinters}
-                        className="text-[9px] font-bold text-zinc-600 hover:text-black flex items-center gap-1 cursor-pointer"
-                      >
-                        <RefreshCw size={10} className={isDetectingPrinters ? "animate-spin" : ""} />
-                        {isDetectingPrinters ? "Detectando..." : "Atualizar Impressoras"}
-                      </button>
-                    </div>
-
-                    {detectedPrinters.length > 0 ? (
-                      <div className="space-y-2">
-                        <select
-                          value={printConfig.defaultPrinter}
-                          onChange={e => setPrintConfig({...printConfig, defaultPrinter: e.target.value})}
-                          className="w-full px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-1 focus:ring-black outline-none text-xs font-bold cursor-pointer text-left"
-                        >
-                          <option value="">Selecione a impressora física detectada...</option>
-                          {detectedPrinters.map((p, idx) => {
-                            const pName = typeof p === 'string' ? p : (p.name || p.printerName);
-                            const isDef = p.isDefault ? ' (Padrão Windows)' : '';
-                            return (
-                              <option key={idx} value={pName}>
-                                🖨️ {pName}{isDef}
-                              </option>
-                            );
-                          })}
-                        </select>
-                        <input 
-                          type="text"
-                          placeholder="Ou digite o nome personalizado / IP (ex: 192.168.1.200)"
-                          value={printConfig.defaultPrinter}
-                          onChange={e => setPrintConfig({...printConfig, defaultPrinter: e.target.value})}
-                          className="w-full px-3 py-1.5 bg-zinc-50/50 border border-zinc-200 rounded-lg outline-none text-[11px] font-medium"
-                        />
-                      </div>
-                    ) : (
-                      <div className="relative">
-                        <Printer className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-                        <input 
-                          type="text"
-                          placeholder="Nome exato da impressora no Windows (ex: EPSON TM-T20 ou IP:Porta)"
-                          value={printConfig.defaultPrinter}
-                          onChange={e => setPrintConfig({...printConfig, defaultPrinter: e.target.value})}
-                          className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-1 focus:ring-black outline-none text-xs font-bold"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1.5 text-left">Formato de Saída (Papel)</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { id: '58mm', label: 'Ticket 58mm' },
-                        { id: '80mm', label: 'Ticket 80mm' },
-                        { id: 'a4', label: 'Folha A4' }
-                      ].map(opt => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => {
-                            if (opt.id === 'a4') {
-                              setPrintConfig({...printConfig, defaultFormat: 'a4'});
-                            } else {
-                              setPrintConfig({...printConfig, defaultFormat: 'ticket', ticketSize: opt.id as '58mm' | '80mm'});
-                            }
-                          }}
-                          className={cn(
-                            "py-2 rounded-lg text-[9px] font-black uppercase tracking-wider border transition-all",
-                            (printConfig.defaultFormat === 'a4' && opt.id === 'a4') || (printConfig.defaultFormat === 'ticket' && printConfig.ticketSize === opt.id)
-                              ? "bg-black text-white border-black"
-                              : "bg-white text-zinc-650 border-zinc-200 hover:border-zinc-350 cursor-pointer text-center"
-                          )}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
-                    <label className="flex items-center gap-2.5 p-2.5 bg-zinc-50 rounded-xl border border-zinc-250/30 cursor-pointer hover:bg-zinc-100 transition-colors">
-                      <input 
-                        type="checkbox"
-                        checked={printConfig.autoPrintPos}
-                        onChange={e => setPrintConfig({...printConfig, autoPrintPos: e.target.checked})}
-                        className="w-4 h-4 rounded accent-black"
-                      />
-                      <div className="text-left">
-                        <p className="text-[11px] font-bold text-zinc-900 leading-none">Impressão Automática</p>
-                        <p className="text-[9px] text-zinc-550 mt-1">Imprime logo ao fechar a venda no terminal.</p>
-                      </div>
-                    </label>
-
-                    <label className="flex items-center gap-2.5 p-2.5 bg-zinc-50 rounded-xl border border-zinc-250/30 cursor-pointer hover:bg-zinc-100 transition-colors">
-                      <input 
-                        type="checkbox"
-                        checked={printConfig.printSecondCopy}
-                        onChange={e => setPrintConfig({...printConfig, printSecondCopy: e.target.checked})}
-                        className="w-4 h-4 rounded accent-black"
-                      />
-                      <div className="text-left">
-                        <p className="text-[11px] font-bold text-zinc-900 leading-none">Via de Backoffice</p>
-                        <p className="text-[9px] text-zinc-550 mt-1">Imprime vias duplicadas para arquivo administrativo.</p>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              {/* Gaveta de Dinheiro */}
-              <div className="space-y-3 pt-3 border-t border-zinc-100">
-                <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
-                  <Coins size={14} className="text-zinc-650" /> Gaveta de Moedas & Notas (RJ11 / Solonóide)
-                </h3>
-
-                <div className="space-y-3">
-                  <label className="flex items-center gap-2.5 p-2.5 bg-zinc-50 rounded-xl border border-zinc-250/30 cursor-pointer hover:bg-zinc-100 transition-colors">
-                    <input 
-                      type="checkbox"
-                      checked={printConfig.openDrawerOnCashPay}
-                      onChange={e => setPrintConfig({...printConfig, openDrawerOnCashPay: e.target.checked})}
-                      className="w-4 h-4 rounded accent-black"
-                    />
-                    <div className="text-left">
-                      <p className="text-[11px] font-bold text-zinc-900 leading-none">Abertura Automática em Cash</p>
-                      <p className="text-[9px] text-zinc-550 mt-1">Dispara pulso elétrico ao liquidar faturas em Dinheiro.</p>
-                    </div>
-                  </label>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                    <div>
-                      <label className="block text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 text-left">Interface da Gaveta</label>
-                      <select 
-                        value={printConfig.drawerInterface}
-                        onChange={e => setPrintConfig({...printConfig, drawerInterface: e.target.value as any})}
-                        className="w-full px-2.5 py-2 bg-zinc-50 border border-zinc-200 rounded-lg outline-none focus:ring-1 focus:ring-black text-xs font-bold"
-                      >
-                        <option value="printer">Via Porta Impressora 24V RJ11</option>
-                        <option value="webusb">Via WebUSB Cabo Direto</option>
-                        <option value="webserial">Via Série COM / Virtual</option>
-                      </select>
-                    </div>
-
-                    {printConfig.drawerInterface === 'printer' && (
-                      <div>
-                        <label className="block text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 text-left">Pino Tracionador RJ11</label>
-                        <select 
-                          value={printConfig.printerDrawerPin}
-                          onChange={e => setPrintConfig({...printConfig, printerDrawerPin: e.target.value as any})}
-                          className="w-full px-2.5 py-2 bg-zinc-50 border border-zinc-200 rounded-lg outline-none focus:ring-1 focus:ring-black text-xs font-bold"
-                        >
-                          <option value="pin2">Pino 2 (EPSON / XPrinter Padrão)</option>
-                          <option value="pin5">Pino 5 (Star Micronics)</option>
-                        </select>
-                      </div>
-                    )}
-                  </div>
-
-                  <button 
-                    type="button"
-                    onClick={() => triggerCashDrawerOpen(true)}
-                    className="w-full py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 border border-zinc-250/60 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all cursor-pointer"
-                  >
-                    ⚡ Testar Pulso Escoamento da Gaveta
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeHardwareTab === 'agent' && (
-            <div className="space-y-4 animate-in fade-in duration-200">
-              {/* Switch de Ativação do Agente */}
-              <div className="p-3.5 bg-zinc-50 rounded-2xl border border-zinc-200 space-y-3">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <Cpu className="text-zinc-950 animate-pulse animate-duration-[3000ms]" size={18} />
-                    <div className="text-left">
-                      <h4 className="text-xs font-black text-zinc-900 uppercase tracking-widest">Ativar Agente de Impressão Local</h4>
-                      <p className="text-[9px] text-zinc-500 mt-0.5">Comunicação profissional direta em bypass ao sandbox do browser.</p>
-                    </div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      checked={printConfig.useLocalAgent}
-                      onChange={e => setPrintConfig({...printConfig, useLocalAgent: e.target.checked})}
-                      className="sr-only peer" 
-                    />
-                    <div className="w-9 h-5 bg-zinc-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-black"></div>
-                  </label>
-                </div>
-
-                {printConfig.useLocalAgent && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2.5 border-t border-zinc-200/60">
-                    <div className="text-left">
-                      <label className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider mb-1">URL do Serviço Local</label>
-                      <input 
-                        type="text"
-                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded-lg outline-none focus:ring-1 focus:ring-black text-[11px] font-mono font-bold"
-                        value={printConfig.localAgentUrl}
-                        onChange={e => setPrintConfig({...printConfig, localAgentUrl: e.target.value})}
-                        placeholder="http://localhost:9100"
-                      />
-                    </div>
-                    <div className="text-left">
-                      <label className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider mb-1">Estado de Ligação</label>
-                      <div className="flex items-center gap-1.5 h-[28px]">
-                        {agentHealthStatus === 'connected' ? (
-                          <span className="flex-1 px-2.5 py-1 bg-emerald-50 border border-emerald-150 rounded text-emerald-700 text-[10px] font-bold flex items-center gap-1 leading-none text-left">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping shrink-0" /> Ativo
-                          </span>
-                        ) : agentHealthStatus === 'checking' ? (
-                          <span className="flex-1 px-2.5 py-1 bg-amber-50 border border-amber-150 rounded text-amber-700 text-[10px] font-bold flex items-center gap-1 leading-none text-left">
-                            <RefreshCw className="animate-spin text-amber-600 shrink-0" size={10} /> Verificando...
-                          </span>
-                        ) : (
-                          <span className="flex-1 px-2.5 py-1 bg-rose-50 border border-rose-150 rounded text-rose-700 text-[10px] font-bold flex items-center gap-1 leading-none text-left">
-                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" /> Offline (Fallback)
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => checkAgentHealth()}
-                          className="p-1 px-2 bg-white hover:bg-zinc-100 border border-zinc-250 rounded text-zinc-650 transition-colors cursor-pointer text-[10px] font-bold flex items-center gap-1"
-                          title="Check status"
-                        >
-                          <RefreshCw size={10} className={agentHealthStatus === 'checking' ? 'animate-spin' : ''} /> Testar
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {printConfig.useLocalAgent && (
-                <>
-                  {/* Emparelhamento Seguro com Código Dinâmico */}
-                  <div className="p-3.5 bg-zinc-50 rounded-2xl border border-zinc-200 space-y-2.5">
-                    <div className="flex items-center gap-2 text-zinc-900 border-b border-zinc-100 pb-2">
-                      <Shield className="text-zinc-900" size={15} />
-                      <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-900 font-sans">Emparelhamento de Terminal (Código de 6 Dígitos)</h4>
-                    </div>
-                    <p className="text-[10px] text-zinc-500 leading-normal text-left">
-                      Introduza o código gerado no arranque do Agente de Hardware para autenticar e vincular este terminal com chaves criptográficas por dispositivo.
-                    </p>
-                    <div className="text-left space-y-2">
-                      <label className="block text-[8px] font-black text-zinc-400 uppercase tracking-widest text-left">Código de Emparelhamento (Ex: 8X2K9P)</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          maxLength={6}
-                          placeholder="Ex: 8X2K9P"
-                          value={pairingCodeInput}
-                          onChange={e => setPairingCodeInput(e.target.value.toUpperCase())}
-                          className="w-32 px-3 py-1.5 bg-white border border-zinc-300 rounded-lg font-mono text-center text-xs font-black tracking-widest outline-none focus:ring-1 focus:ring-black uppercase"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handlePairWithAgent()}
-                          disabled={isPairingDevice || !pairingCodeInput.trim()}
-                          className="px-4 bg-black hover:bg-zinc-800 disabled:opacity-50 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors"
-                        >
-                          {isPairingDevice ? "Emparelhando..." : "Emparelhar Agente"}
-                        </button>
-                      </div>
-                      {pairedDeviceInfo && (
-                        <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-[9px] font-medium flex items-center gap-1.5">
-                          <Check size={12} className="text-emerald-600 shrink-0" />
-                          <span>Dispositivo {pairedDeviceInfo.device_id?.slice(0, 8)}... emparelhado com sucesso!</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Windows Background Service Installer */}
-                  <div className="p-4 bg-zinc-950 text-white rounded-2xl space-y-3.5 font-sans">
-                    <div className="flex justify-between items-center pb-2 border-b border-zinc-850">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-orange-500 animate-ping" />
-                        <p className="font-bold text-xs text-orange-450 uppercase tracking-wider">Instalador Automático (Windows Service OS)</p>
-                      </div>
-                      <span className="text-[8px] bg-zinc-800 px-1.5 py-0.5 rounded uppercase font-black tracking-widest text-zinc-400">v1.0.0 Stable</span>
-                    </div>
-
-                    <p className="text-[10px] text-zinc-300 leading-relaxed text-left">
-                      Transforme o Agente num **serviço nativo do Windows** que arranca de forma invisível junto com o sistema operacional, ignorando permissões do utilizador ou interrupções de firewall.
-                    </p>
-
-                    <div className="space-y-2">
-                      <p className="font-black text-[9px] text-zinc-400 uppercase tracking-widest mb-1 text-left">Método 1: Comando de Instalador Rápido PowerShell (Recomendado)</p>
-                      <p className="text-[10px] text-zinc-400 leading-relaxed text-left">
-                        Abra o PowerShell como **Administrador** no Windows do cliente e execute o comando abaixo. Ele instala o NodeJS se necessário, cria a pasta de produção `C:\\Program Files\\FaturAgent`, instala as dependências de hardware e regista o boot service de arranque automático do Windows.
-                      </p>
-                      
-                      <div className="bg-zinc-900 border border-zinc-850 p-2.5 rounded-lg font-mono text-[9px] leading-relaxed break-all select-all text-amber-200 max-h-[80px] overflow-y-auto text-left">
-                        {`Set-ExecutionPolicy Bypass -Scope Process -Force; iex ((New-Object System.Net.WebClient).DownloadString('${window.location.origin}/agent/fatur_setup.ps1'))`}
-                      </div>
-
-                      <div className="space-y-2 pt-1">
-                        <a
-                          href={`${window.location.origin}/agent/fatur_installer.bat`}
-                          download="fatur_installer.bat"
-                          className="w-full py-2.5 bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-zinc-950 font-black uppercase text-[10px] tracking-widest rounded-xl text-center flex items-center justify-center gap-1.5 shadow-md shrink-0 transition-all cursor-pointer"
-                        >
-                          📥 Descarregar Instalador Industrial 1-Clique (.BAT)
-                        </a>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2 pt-1 text-left">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const cmd = `Set-ExecutionPolicy Bypass -Scope Process -Force; iex ((New-Object System.Net.WebClient).DownloadString('${window.location.origin}/agent/fatur_setup.ps1'))`;
-                            navigator.clipboard.writeText(cmd);
-                            const toast = document.createElement("div");
-                            toast.className = "fixed bottom-5 right-5 z-[99999] bg-amber-500 text-black text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg";
-                            toast.innerText = "Script copiado com sucesso! Execute no PowerShell do Windows como Administrador.";
-                            document.body.appendChild(toast);
-                            setTimeout(() => toast.remove(), 4000);
-                          }}
-                          className="flex-1 py-1.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-white text-[9px] uppercase tracking-widest font-black rounded-lg cursor-pointer transition-colors"
-                        >
-                          Copiar Script PowerShell
-                        </button>
-                        <a
-                          href={`${window.location.origin}/agent/fatur_setup.ps1`}
-                          download="fatur_setup.ps1"
-                          className="py-1.5 px-3 bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 text-zinc-350 text-[9px] uppercase tracking-widest font-black rounded-lg text-center flex items-center justify-center gap-1 cursor-pointer"
-                        >
-                          <Download size={11} /> Descarregar .PS1
-                        </a>
-                      </div>
-                    </div>
-
-                    <div className="pt-2.5 border-t border-zinc-850 space-y-1 text-[9px] text-zinc-400 text-left">
-                      <p className="font-extrabold uppercase text-zinc-300 tracking-wider">Benefícios do Serviço Nativo de Produção:</p>
-                      <ul className="list-disc list-inside space-y-0.5 pl-1">
-                        <li>Início automático mesmo com o ecrã bloqueado no boot/arranque</li>
-                        <li>Gestão automática de memória e auto-retentativa em crash</li>
-                        <li>Comandos de log físicos integrados a canais de auditoria</li>
-                      </ul>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {activeHardwareTab === 'logs' && (
-            <div className="space-y-4 animate-in fade-in duration-200">
-              
-              {/* Painel da Fila de Impressão */}
-              <div className="space-y-2.5">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-[10px] font-black text-zinc-450 uppercase tracking-widest flex items-center gap-2">
-                    <Activity size={14} className="text-zinc-650" /> Fila Crítica de Impressão (Spooler local)
-                  </h3>
-                  <span className="text-[8px] bg-zinc-150 border border-zinc-200 py-0.5 px-2 rounded-full uppercase font-black text-zinc-500">
-                    Processador Síncrono
-                  </span>
-                </div>
-
-                <div className="bg-zinc-50 border border-zinc-200 rounded-2xl overflow-hidden text-left">
-                  {localAgentJobs.length === 0 ? (
-                    <div className="p-4 text-center text-zinc-400 text-[10px]">
-                      Nenhum trabalho de impressão na fila local de momento.
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-zinc-200/60 max-h-[140px] overflow-y-auto custom-scrollbar">
-                      {localAgentJobs.map((job) => (
-                        <div key={job.id} className="p-2.5 flex items-center justify-between text-[10px]">
-                          <div className="space-y-0.5 text-left">
-                            <span className="font-mono font-bold text-zinc-850 shrink-0">{job.id}</span>
-                            <div className="text-[9px] text-zinc-500 flex items-center gap-1">
-                              <span>{job.doc_type} • Fatura {job.invoice_number}</span>
-                              <span>• via: "{job.printer_name}"</span>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[8px] text-zinc-400 font-mono">
-                              {job.created_at ? new Date(job.created_at).toLocaleTimeString() : ''}
-                            </span>
-                            {job.status === 'success' && (
-                              <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 text-[8px] font-black rounded uppercase">Sucesso</span>
-                            )}
-                            {job.status === 'pending' && (
-                              <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 text-[8px] font-black rounded uppercase animate-pulse">Na Fila</span>
-                            )}
-                            {job.status === 'sending' && (
-                              <span className="px-1.5 py-0.5 bg-blue-50 text-blue-700 text-[8px] font-black rounded uppercase animate-bounce">Sgpoolando</span>
-                            )}
-                            {job.status === 'failed' && (
-                              <span className="px-1.5 py-0.5 bg-rose-50 text-rose-700 text-[8px] font-black rounded uppercase">Falhou</span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Registro de Telemetria / Observabilidade do POS Agent */}
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-[10px] font-black text-zinc-450 uppercase tracking-widest flex items-center gap-2">
-                    <Info size={14} className="text-zinc-650" /> Histórico de Telemetria (Local Agent Diagnostics)
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      fetchAgentLogsAndJobs();
-                      const toast = document.createElement("div");
-                      toast.className = "fixed bottom-5 right-5 z-[99999] bg-zinc-950 text-white text-[10px] uppercase font-bold tracking-widest px-4 py-2.5 rounded-xl shadow-lg border border-zinc-800";
-                      toast.innerText = "Logs de telemetria atualizados diretamente do Fatu-R Agent.";
-                      document.body.appendChild(toast);
-                      setTimeout(() => toast.remove(), 2500);
-                    }}
-                    className="text-[9px] font-extrabold uppercase text-black hover:underline cursor-pointer flex items-center gap-1"
-                  >
-                    <RefreshCw size={10} /> Atualizar Logs
-                  </button>
-                </div>
-
-                <div className="bg-zinc-950 p-3 rounded-2xl font-mono text-[10px] space-y-1.5 max-h-[160px] overflow-y-auto text-zinc-300 custom-scrollbar leading-relaxed text-left">
-                  {localAgentLogs.map((log, index) => (
-                    <div key={index} className="flex gap-2 items-start hover:bg-zinc-900 p-0.5 rounded text-left">
-                      <span className="text-zinc-550 shrink-0 select-none">
-                        [{log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}]
-                      </span>
-                      <span className={cn(
-                        "font-bold uppercase tracking-wider shrink-0 text-[8px] px-1 rounded",
-                        log.level === 'SYSTEM' || log.level === 'INIT_SUCCESS' ? "bg-amber-950 text-amber-405" :
-                        log.level === 'ERROR' || log.level === 'WARN' ? "bg-rose-950 text-rose-405" :
-                        "bg-zinc-800 text-zinc-300"
-                      )}>
-                        {log.level}
-                      </span>
-                      <span className="text-zinc-500 shrink-0 font-bold">
-                        [{log.component || 'AGENT'}]
-                      </span>
-                      <span className="text-zinc-200">
-                        {log.message}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* CENTRAL DE AUTO-REPARAÇÃO & DIAGNÓSTICO DE HARDWARE */}
-              <div className="pt-2 border-t border-zinc-100 space-y-3">
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => runAgentDiagnostics()}
-                    disabled={isCheckingDiagnostics}
-                    className="flex-1 py-2 bg-zinc-100 hover:bg-zinc-200 border border-zinc-250/60 text-zinc-900 font-bold text-[10px] uppercase tracking-wide rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-55"
-                  >
-                    <ShieldCheck size={12} className={isCheckingDiagnostics ? "animate-pulse" : ""} />
-                    {isCheckingDiagnostics ? 'Analisando...' : 'Scanner Diagnóstico'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => triggerAgentUpdate()}
-                    disabled={isUpdatingAgent}
-                    className="flex-1 py-2 bg-black text-white hover:bg-zinc-800 font-bold text-[10px] uppercase tracking-wide rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-55 shadow-sm"
-                  >
-                    <RefreshCw size={12} className={isUpdatingAgent ? "animate-spin" : ""} />
-                    {isUpdatingAgent ? 'Atualizando...' : 'Auto-Update Agente'}
-                  </button>
-                </div>
-
-                {isUpdatingAgent && (
-                  <div className="p-3 bg-amber-50 border border-amber-150 rounded-xl space-y-1.5 text-left animate-in slide-in-from-top-1">
-                    <p className="text-[10px] font-black text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
-                      <RefreshCw size={12} className="animate-spin text-amber-600" /> Sistema de Atualização Silenciosa Ativo
-                    </p>
-                    <p className="text-[9px] font-mono text-zinc-650 leading-relaxed">
-                      {agentUpdateMessage}
-                    </p>
-                    <div className="w-full bg-zinc-200/80 h-1.5 rounded-full overflow-hidden">
-                      <div className="bg-amber-500 h-full rounded-full animate-[loading_4s_infinite]" style={{ width: '45%' }}></div>
-                    </div>
-                  </div>
-                )}
-
-                {agentDiagnostics && (
-                  <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-2xl text-left space-y-2 animate-in fade-in duration-250">
-                    <div className="flex justify-between items-center border-b border-zinc-200/60 pb-1.5">
-                      <p className="text-[10px] font-black uppercase tracking-wider text-zinc-900 flex items-center gap-1.5">
-                        <Activity size={12} className="text-zinc-650" /> Telemetria de Barramento Físico
-                      </p>
-                      <span className={cn(
-                        "text-[8px] font-black py-0.5 px-1.5 rounded uppercase",
-                        agentDiagnostics.success !== false ? "bg-emerald-100 text-emerald-800" : "bg-orange-100 text-orange-850"
-                      )}>
-                        {agentDiagnostics.success !== false ? 'PDV Saudável' : 'Atenção Requerida'}
-                      </span>
-                    </div>
-
-                    {agentDiagnostics.success === false ? (
-                      <div className="space-y-2">
-                        <div className="p-2 bg-amber-50 border border-amber-150 rounded-xl">
-                          <p className="text-[10px] font-bold text-amber-900">{agentDiagnostics.remedy}</p>
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-[8px] font-black text-zinc-450 uppercase tracking-widest leading-none">Auto-Repair Wizard - Passos Recomendados:</p>
-                          <ul className="space-y-1 pl-0.5 mt-1.5">
-                            {agentDiagnostics.steps.map((step: string, idx: number) => (
-                              <li key={idx} className="text-[9px] text-zinc-650 flex items-start gap-1 leading-normal">
-                                <span className="font-black text-zinc-950 shrink-0">{idx + 1}.</span>
-                                <span>{step}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-2 gap-2 text-[9px] text-zinc-650">
-                        <div className="space-y-0.5">
-                          <p className="text-zinc-400 font-bold uppercase text-[7px] tracking-wider leading-none">Canal Spooler USB</p>
-                          <p className="font-mono font-bold text-zinc-850">{agentDiagnostics.hardware_barracks?.usb_spoolers || 'ONLINE / PRONT'}</p>
-                        </div>
-                        <div className="space-y-0.5">
-                          <p className="text-zinc-400 font-bold uppercase text-[7px] tracking-wider leading-none">Spooler Windows OS</p>
-                          <p className="font-mono font-semibold text-zinc-850">Scheduler: {agentDiagnostics.hardware_barracks?.windows_spooler_scheduler || 'ACTIVE'}</p>
-                        </div>
-                        <div className="space-y-0.5">
-                          <p className="text-zinc-400 font-bold uppercase text-[7px] tracking-wider leading-none">Portas COM Mapeadas</p>
-                          <p className="font-mono text-zinc-850">{agentDiagnostics.hardware_barracks?.virtual_com_ports?.join(', ') || 'Nenhuma'}</p>
-                        </div>
-                        <div className="space-y-0.5">
-                          <p className="text-zinc-400 font-bold uppercase text-[7px] tracking-wider leading-none">Versão Firmware</p>
-                          <p className="font-mono text-zinc-850">v{agentDiagnostics.agent_version || '1.1.0'} on {agentDiagnostics.node_version}</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Botão de Injeção de Comando de Diagnóstico (Teste rápido para simular o circuito) */}
-              <button
-                type="button"
-                onClick={async () => {
-                  const payload = {
-                    id: 'JOB-MOCK-' + Math.floor(1000 + Math.random() * 9000),
-                    printer_name: printConfig.defaultPrinter || 'XPrinter Direct',
-                    invoice_number: 'DIAG-MOCK-001',
-                    copies: 1,
-                    status: 'pending',
-                    created_at: new Date().toISOString()
-                  };
-                  
-                  if (agentHealthStatus === 'connected') {
-                    await fetch(`${printConfig.localAgentUrl || 'http://localhost:9100'}/api/print/test`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'X-Terminal-Token': printConfig.terminalToken || 'FATUR-TERM-7389-9A2E'
-                      },
-                      body: JSON.stringify({ printer: printConfig.defaultPrinter || 'XPrinter Direct' })
-                    });
-                  } else {
-                    // Local feedback simulating synchronization
-                    setLocalAgentJobs(prev => [payload, ...prev]);
-                    setLocalAgentLogs(prev => [
-                      { timestamp: new Date().toISOString(), level: 'INFO', component: 'DIAG', message: 'Iniciada simulação de hardware local para auto-retentativa em buffer local.' },
-                      { timestamp: new Date(Date.now() + 400).toISOString(), level: 'SYSTEM', component: 'DIAG', message: 'Mapeando rota física na COM 4 virtual.' },
-                      { timestamp: new Date(Date.now() + 850).toISOString(), level: 'SUCCESS', component: 'DIAG', message: 'Documento impresso e gaveta RJ11 aberta sem concorrência de filas.' },
-                      ...prev
-                    ]);
-                  }
-                  
-                  // Auto refresh
-                  setTimeout(() => fetchAgentLogsAndJobs(), 1000);
-                }}
-                className="w-full py-2 bg-zinc-900 border border-zinc-800 text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-zinc-850 transition-all cursor-pointer"
-              >
-                ⚙️ Injetar Trabalho e Testar Conciliação de Fila
-              </button>
-            </div>
-          )}
-
-          {/* NOTA SOBRE CAMADAS */}
-          <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-150/40 flex items-start gap-2.5">
-            <Info size={14} className="text-zinc-500 shrink-0 mt-0.5" />
-            <p className="text-[9px] text-zinc-500 leading-normal text-left">
-              **Fatu-R Hardware Resilience Standards:** Todas as portas, buffers e filas locais são assíncronas. Quando o agente está indisponível, as rotas físicas entram em redundância instantânea de PDF e navegação nativa, evitando qualquer bloqueio ao operador do caixa do PDV.
-            </p>
-          </div>
-
-          <div className="flex gap-2 pt-4 border-t border-zinc-100">
-            <button 
-              onClick={handleTestPrint}
-              type="button"
-              className="flex-1 py-3.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <Printer size={13} /> Testar Impressão
-            </button>
-            <button 
-              onClick={handleSaveTerminalSettings}
-              disabled={isSavingTerminalSettings}
-              type="button"
-              className="flex-[2] py-3.5 bg-black text-white rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-zinc-800 transition-all shadow-lg shadow-black/10 disabled:opacity-50 cursor-pointer"
-            >
-              {isSavingTerminalSettings ? 'A GUARDAR SEGURO...' : 'SALVAR PREFERÊNCIAS DE PDV'}
-            </button>
-          </div>
-        </div>
+        <HardwareTerminalSettingsView 
+          user={user} 
+          establishmentInfo={establishmentInfo} 
+          onConfigChange={(newCfg) => setPrintConfig(newCfg)}
+          isModal={true} 
+        />
       </Modal>
 
       {/* Print Status Fallback Modal */}
