@@ -1,16 +1,22 @@
 {
-  "name": "fatur-print-agent",
-  "version": "1.0.0",
-  "description": "Fatu-R Enterprise Hardware Integration Agent - Windows background printer & cash drawer cue service",
+  "name": "fatur-pos-hardware-agent",
+  "version": "2.0.0",
+  "description": "Fatu-R Enterprise POS Hardware & ESC/POS Physical Printer Spooler Agent",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "test": "node test/run-all-tests.js",
     "install-service": "node install_service.js",
     "uninstall-service": "node uninstall_service.js"
   },
   "dependencies": {
+    "better-sqlite3": "^12.4.1",
     "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "node-windows": "^1.0.0-beta.6"
+    "express": "^4.21.2",
+    "node-windows": "^1.0.0-beta.6",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0"
   }
 }

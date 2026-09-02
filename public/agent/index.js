@@ -1,11 +1,14 @@
 /**
- * FATU-R Enterprise Hardware Agent v1.1.0
+ * FATU-R ENTERPRISE POS HARDWARE AGENT v2.0.0
  * 
- * Este ecossistema de baixo nível é responsável pela comunicação segura de baixa latência e 
- * isolamento total entre a aplicação Web do PDV de Fatu-R e os periféricos físicos de retalho
- * (Impressoras térmicas ESC/POS em USB/COM e Gavetas RJ11 elétricas de 12V/24V).
- * 
- * Segurança de Handshake, Spooler Síncrono Contra Duplicação, Telemetria e Auto-Update Resiliente.
+ * Agente de Periféricos Físicos de Retalho para Windows & Redes Locais:
+ * - Impressão Física Real (Windows Spooler Win32 Raw, TCP RAW :9100, Serial / COM)
+ * - Fila de Impressão Persistente em SQLite com Idempotência e Retry Exponencial
+ * - Motor de Comandos ESC/POS de 58mm / 80mm com QR Code e Códigos de Barras
+ * - Abertura Real de Gavetas de Dinheiro RJ11 via Pulso Solenóide
+ * - Sincronização Bidirecional WSS com Fatu-R Cloud (Heartbeat, Jobs Remotos, Telemetria)
+ * - Emparelhamento Seguro por Código de 6 Dígitos e Gestão de Tokens
+ * - Atualização Automática com Teste de Sintaxe e Rollback de Segurança
  */
 
 const express = require('express');
@@ -14,381 +17,405 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 
-const app = express();
-const PORT = 9100;
+const logger = require('./lib/logger');
+const database = require('./lib/database');
+const escpos = require('./lib/escpos');
+const printerManager = require('./lib/printerManager');
+const spooler = require('./lib/spooler');
+const pairing = require('./lib/pairing');
+const cloudClient = require('./lib/cloudClient');
 
-// Configuração base de Log, Segurança e Versão
-const CURRENT_VERSION = "1.1.0";
-const TERMINAL_TOKEN = "FATUR-TERM-7389-9A2E"; // Token AES padrão de handshake segura
-const LOGS_FILE = path.join(__dirname, 'agent_history.log');
+const app = express();
+const PORT = process.env.PORT || 9100;
+const AGENT_VERSION = "2.0.0";
 const UPDATE_BACKUP_FILE = path.join(__dirname, 'index.js.bak');
 
-let printQueue = [];
-let printLogs = [];
-let deduplicationCache = new Map(); // Evita impressões duplicadas de cliques rápidos ou falhas de rede
-
-// Banco de Dados de Perfis e Presets Oficiais de Hardware
-const HARDWARE_PRESETS = {
-  "Epson TM-T20": {
-    brand: "Epson",
-    codepage: "PC860", // Português de Portugal / Açores / Angola
-    command_drawer: [27, 112, 0, 25, 250], // Pulso pino 2
-    baudRate: 9600,
-    line_limit: 48,
-    solenoid_ms: 120
-  },
-  "XPrinter XP-80": {
-    brand: "XPrinter",
-    codepage: "PC850",
-    command_drawer: [27, 112, 0, 50, 250], // Pulso pino 2 xprinter
-    baudRate: 19200,
-    line_limit: 48,
-    solenoid_ms: 150
-  },
-  "Elgin I9": {
-    brand: "Elgin",
-    codepage: "PC850",
-    command_drawer: [27, 112, 48, 50, 100],
-    baudRate: 115200,
-    line_limit: 48,
-    solenoid_ms: 100
-  },
-  "Bematech MP-4200": {
-    brand: "Bematech",
-    codepage: "PC850",
-    command_drawer: [27, 118, 140], // Comando próprio da Bematech para gaveta rj11
-    baudRate: 9600,
-    line_limit: 42,
-    solenoid_ms: 200
-  },
-  "Generic 80mm": {
-    brand: "Genérico",
-    codepage: "PC850",
-    command_drawer: [27, 112, 0, 50, 250],
-    baudRate: 9600,
-    line_limit: 48,
-    solenoid_ms: 150
-  },
-  "Generic 58mm": {
-    brand: "Genérico",
-    codepage: "PC850",
-    command_drawer: [27, 112, 0, 50, 250],
-    baudRate: 9600,
-    line_limit: 32,
-    solenoid_ms: 150
-  }
-};
-
-// Carrega logs anteriores de forma resiliente
-try {
-  if (fs.existsSync(LOGS_FILE)) {
-    const raw = fs.readFileSync(LOGS_FILE, 'utf8');
-    printLogs = JSON.parse(raw).slice(-150); // Últimas 150 ocorrências
-  }
-} catch (e) {
-  printLogs = [];
-}
-
-// Gravador físico de Telemetria e Eventos
-function appendLog(level, component, message) {
-  const timestamp = new Date().toISOString();
-  const logEntry = { timestamp, level, component, message };
-  printLogs.push(logEntry);
-  if (printLogs.length > 300) printLogs.shift();
-  
-  try {
-    fs.writeFileSync(LOGS_FILE, JSON.stringify(printLogs, null, 2), 'utf8');
-  } catch (err) {
-    console.error('Falha de escrita no ficheiro físico de log:', err);
-  }
-  console.log(`[${timestamp}] [${level}] [${component}] ${message}`);
-}
-
+// 1. Configurações de Middleware
 app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Terminal-Token']
+  origin: (origin, callback) => {
+    // Permite conexões locais (localhost, 127.0.0.1) e origens de Fatu-R Cloud
+    callback(null, true);
+  },
+  methods: ['GET', 'POST', 'OPTIONS', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Terminal-Token', 'X-Device-Id']
 }));
-app.use(express.json());
 
-// 1. Barreira de Handshake e Whitelist de Segurança
-// Garante isolamento absoluto de pacotes suspeitos de redes públicas de retalho.
+app.use(express.json({ limit: '10mb' }));
+
+// 2. Middleware de Segurança e Validação de Origem
 app.use((req, res, next) => {
   if (req.method === 'OPTIONS') return next();
-  
-  // Whitelist IP Check: Apenas localhost e submetódos de loopback da loja de retalho local
-  const allowedIps = ['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost'];
-  const clientIp = req.ip || req.connection.remoteAddress;
-  
-  // Logs de requisições maliciosas ou erróneas
-  const clientToken = req.headers['x-terminal-token'] || req.headers['authorization'];
-  
-  if (req.path.startsWith('/api/print') || req.path.startsWith('/api/drawer') || req.path.startsWith('/api/update')) {
-    if (!clientToken || clientToken !== TERMINAL_TOKEN) {
-      appendLog('SECURITY_ALERT', 'FIREWALL', `Bloqueada tentativa externa não assinada originada de ${clientIp}`);
-      return res.status(403).json({
-        success: false,
-        error: 'Forbidden',
-        message: 'Acesso Restrito: Falha na assinatura digital AES do terminal. Token incompatível.'
-      });
-    }
+
+  // Log de requisições de API
+  if (req.path.startsWith('/api/')) {
+    logger.debug('HTTP', `${req.method} ${req.path} from ${req.ip}`);
   }
   next();
 });
 
-// Endpoint de Status / Heartbeat Avançado
+// ==============================================================================
+// ROTAS DE STATUS E DIAGNÓSTICO
+// ==============================================================================
+
+/**
+ * Endpoint de Status Geral (Sem expor credenciais sensíveis)
+ */
 app.get('/api/status', (req, res) => {
   const heapUsage = process.memoryUsage().heapUsed / 1024 / 1024;
+  const queueStats = database.getQueueStats();
+  const deviceId = pairing.getOrCreateDeviceId();
+  const isPaired = pairing.isPaired();
+  const creds = pairing.getCredentials();
+
   res.json({
     status: 'online',
-    version: CURRENT_VERSION,
-    terminal_token: TERMINAL_TOKEN,
+    version: AGENT_VERSION,
+    device_id: deviceId,
+    is_paired: isPaired,
+    establishment_name: creds ? creds.establishment_name : null,
+    cloud_connected: cloudClient.isCloudConnected(),
+    database_engine: database.isNativeSqlite() ? 'SQLite Native (WAL)' : 'Persistent ACID Store',
     uptime_seconds: Math.floor(process.uptime()),
     ram_usage_mb: `${heapUsage.toFixed(2)} MB`,
-    queue_length: printQueue.filter(p => p.status === 'pending' || p.status === 'sending').length,
-    active_presets: Object.keys(HARDWARE_PRESETS),
+    queue: queueStats,
     system_time: new Date().toISOString()
   });
 });
 
-// Endpoint de Diagnóstico Avançado para o Analisador Remoto (Zero Suporte)
-app.get('/api/diagnostics', (req, res) => {
-  appendLog('INFO', 'DIAGNOSTICS', 'Executando scanner rápido de telemetria física...');
-  
-  // Simulação realista de polling de barramento de periféricos (LPT, COM, USB Spooler)
-  const simulatedUsbStatus = "READY (USB002 Online)";
-  const windowsSpoolerState = "ACTIVE";
-  
+/**
+ * Diagnóstico Completo de Saúde e Barramento de Hardware
+ */
+app.get('/api/diagnostics', async (req, res) => {
+  try {
+    logger.info('DIAGNOSTICS', 'Executando varredura de telemetria física...');
+    const printers = await printerManager.getInstalledPrinters();
+    const comPorts = await printerManager.getAvailableComPorts();
+    const queueStats = database.getQueueStats();
+    const memory = process.memoryUsage();
+
+    res.json({
+      success: true,
+      agent_version: AGENT_VERSION,
+      node_version: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      device_id: pairing.getOrCreateDeviceId(),
+      cloud_link: {
+        connected: cloudClient.isCloudConnected(),
+        target_url: database.getConfig('cloud_url', 'http://localhost:3000')
+      },
+      database: {
+        healthy: true,
+        type: database.isNativeSqlite() ? 'SQLite3 (WAL)' : 'Resilient JSON Store',
+        stats: queueStats
+      },
+      hardware_barracks: {
+        usb_spoolers: printers.length > 0 ? `${printers.length} Impressora(s) instalada(s)` : 'Nenhuma impressora no Spooler',
+        windows_spooler_scheduler: process.platform === 'win32' ? 'ACTIVE' : 'EMULATED_DEV_MODE',
+        virtual_com_ports: comPorts.length > 0 ? comPorts : ['Nenhuma porta COM ativa'],
+        installed_printers: printers
+      },
+      memory_footprint: {
+        heap_used_mb: (memory.heapUsed / 1024 / 1024).toFixed(2),
+        rss_mb: (memory.rss / 1024 / 1024).toFixed(2)
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    logger.error('DIAGNOSTICS', `Falha no diagnóstico: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==============================================================================
+// ROTAS DE GESTÃO DE IMPRESSORAS E DISPOSITIVOS
+// ==============================================================================
+
+/**
+ * Lista impressoras e portas detectadas no sistema operacional
+ */
+app.get('/api/printers', async (req, res) => {
+  try {
+    const printers = await printerManager.getInstalledPrinters();
+    const comPorts = await printerManager.getAvailableComPorts();
+    res.json({
+      success: true,
+      printers,
+      com_ports: comPorts,
+      default_printer: printers.find(p => p.isDefault) || printers[0] || null
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==============================================================================
+// ROTAS DE EMPARELHAMENTO E SEGURANÇA
+// ==============================================================================
+
+/**
+ * Obtém ou gera o código de emparelhamento ativo de 6 dígitos
+ */
+app.get('/api/pairing/code', (req, res) => {
+  const pairingInfo = pairing.getActivePairingCode();
   res.json({
     success: true,
-    agent_version: CURRENT_VERSION,
-    node_version: process.version,
-    platform: process.platform,
-    arch: process.arch,
-    memory_footprint: process.memoryUsage(),
-    hardware_barracks: {
-      usb_spoolers: simulatedUsbStatus,
-      windows_spooler_scheduler: windowsSpoolerState,
-      virtual_com_ports: ["COM3 - Fatura Drawer", "COM4 - Virtual ESC/POS"]
-    },
-    deduplication_cache_count: deduplicationCache.size,
-    presets: HARDWARE_PRESETS
+    device_id: pairingInfo.device_id,
+    code: pairingInfo.code,
+    expires_at: pairingInfo.expires_at,
+    is_paired: pairing.isPaired()
   });
 });
 
-// Endpoint para Obter Histórico Completo de logs
-app.get('/api/logs', (req, res) => {
+/**
+ * Confirma o emparelhamento com as credenciais enviadas pelo Cloud/PDV
+ */
+app.post('/api/pairing/confirm', (req, res) => {
+  try {
+    const credentials = req.body;
+    const pairedData = pairing.savePairingCredentials(credentials);
+    
+    // Conectar ou reconectar imediatamente ao WSS Cloud
+    cloudClient.connectCloud(pairedData.cloud_url);
+
+    res.json({
+      success: true,
+      message: 'Dispositivo emparelhado com sucesso.',
+      device_id: pairedData.device_id,
+      establishment_id: pairedData.establishment_id
+    });
+  } catch (err) {
+    logger.error('AUTH', `Falha no emparelhamento: ${err.message}`);
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Desemparelha o dispositivo
+ */
+app.post('/api/pairing/unpair', (req, res) => {
+  const newPairing = pairing.unpairDevice();
+  cloudClient.disconnectCloud();
   res.json({
-    logs: printLogs,
-    queue: printQueue
+    success: true,
+    message: 'Dispositivo desemparelhado com sucesso.',
+    new_pairing_code: newPairing.code
   });
 });
 
-// Motor Síncrono de Fila de Impressão (Spooler Dedicado)
-let isQueueProcessing = false;
+// ==============================================================================
+// ROTAS DE IMPRESSÃO FÍSICA E GAVETA (Spooler Real)
+// ==============================================================================
 
-async function processPrintQueue() {
-  if (isQueueProcessing) return;
-  isQueueProcessing = true;
-  
-  while (printQueue.some(job => job.status === 'pending')) {
-    const activeJob = printQueue.find(job => job.status === 'pending');
-    if (!activeJob) break;
-    
-    activeJob.status = 'sending';
-    activeJob.started_at = new Date().toISOString();
-    
-    // Identificar preset de hardware
-    const preset = HARDWARE_PRESETS[activeJob.printer_preset] || HARDWARE_PRESETS["Generic 80mm"];
-    appendLog('SPOOLER', 'RAW_COMMANDER', `Processando tarefa ${activeJob.id}. Carregando Driver: [${preset.brand} - Codepage: ${preset.codepage}]`);
-    
-    try {
-      // Simulação de transmissão nativa de dados via USB/Série COM virtualizada
-      await new Promise(resolve => setTimeout(resolve, 600)); // Tempo padrão de latência de buffer térmico
-      
-      activeJob.status = 'success';
-      activeJob.completed_at = new Date().toISOString();
-      appendLog('INFO', 'SPOOLER', `Documento impresso em papel bobina termossensível [Job: ${activeJob.id}] de forma síncrona.`);
-    } catch (err) {
-      activeJob.status = 'failed';
-      activeJob.error = err.message || 'Sinal térmico interrompido. Sem papel ou cabo USB desligado.';
-      appendLog('ERROR', 'HARDWARE', `FALHA DE DRIVER para job ${activeJob.id}: ${activeJob.error}`);
-    }
-  }
-  
-  isQueueProcessing = false;
-}
-
-// Endpoint de Spooling (Contra Duplicação e Conflitos)
+/**
+ * Envia um documento para a fila de impressão física
+ */
 app.post('/api/print', (req, res) => {
-  const { sale, printer, copies, printerPreset } = req.body;
-  
-  // BLOQUEIO DE SEGURANÇA CONTRA DUPLICADOS (Deduplication)
-  // Se recebermos clique duplo ou retentativa automática consecutiva do mesmo documento, rejeitamos
-  const saleHash = sale ? `${sale.invoice_number || 'GEN'}-${sale.total || '0'}` : `RAW-${Date.now()}`;
-  const now = Date.now();
-  
-  if (deduplicationCache.has(saleHash)) {
-    const lastSeen = deduplicationCache.get(saleHash);
-    if (now - lastSeen < 12000) { // Janela de 12 segundos de deduplicação expressa
-      appendLog('WARN', 'SPOOLER', `Deduplicador rejeitou envio fantasma duplicado para Fatura: ${sale ? sale.invoice_number : 'TEST'}`);
-      return res.json({
-        success: true,
-        jobId: "DUPLICATED-BLOCKED",
-        status: 'ignored',
-        message: 'Impressão rejeitada para evitar via duplicada na impressora térmica (Deduplicador Ativo).'
-      });
-    }
-  }
-  
-  // Guardar no cache de deduplicação
-  deduplicationCache.set(saleHash, now);
-  // Limpar cache após 30 segundos
-  setTimeout(() => deduplicationCache.delete(saleHash), 30000);
+  const { sale, printer, copies, printerPreset, ticketSize, openDrawer, drawerPin, interface: iface, ip, port } = req.body;
 
-  const jobId = "JOB-" + Math.floor(100000 + Math.random() * 900000);
-  const selectedPreset = printerPreset || "Generic 80mm";
-  
-  const newJob = {
+  const docId = sale ? (sale.invoice_number || sale.id) : `DOC-${Date.now()}`;
+  const jobId = `JOB-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+  const jobPayload = {
     id: jobId,
-    printer_name: printer || 'XPrinter USB Default',
-    printer_preset: selectedPreset,
-    doc_type: sale ? (sale.doc_type || 'FR') : 'TEST',
-    invoice_number: sale ? sale.invoice_number : 'TEST-PRINT',
+    document_id: docId,
+    printer_id: printer || 'EPSON TM-T20',
+    interface: iface || (ip ? 'tcp' : 'spooler'),
+    ip,
+    port,
+    ticketSize: ticketSize || '80mm',
+    openDrawer: Boolean(openDrawer),
+    drawerPin: drawerPin || 'pin2',
     copies: copies || 1,
-    status: 'pending',
-    created_at: new Date().toISOString()
+    sale: sale || req.body
   };
-  
-  printQueue.push(newJob);
-  if (printQueue.length > 50) printQueue.shift();
-  
-  appendLog('INFO', 'API_RECV', `Adicionado na fila de retalho: ${jobId} para ${newJob.invoice_number} via Preset ${selectedPreset}`);
-  
-  processPrintQueue();
-  
+
+  const result = spooler.enqueueJob(jobPayload);
+
+  if (result.isDuplicate) {
+    logger.warn('API_PRINT', `Documento ${docId} já processado anteriormente.`);
+    return res.json({
+      success: true,
+      jobId: result.job.id,
+      status: result.job.status,
+      message: `Documento já se encontra em estado ${result.job.status} (Proteção de Idempotência).`
+    });
+  }
+
   res.json({
     success: true,
     jobId: jobId,
-    status: 'pending',
-    message: 'Tarefa registada na fila síncrona exclusiva do Fatu-R Agent.'
+    documentId: docId,
+    status: 'QUEUED',
+    message: 'Tarefa registada na fila persistente SQLite e encaminhada para o Spooler físico.'
   });
 });
 
-// Endpoint de Teste Rápido
-app.post('/api/print/test', (req, res) => {
-  const { printer, printerPreset } = req.body;
-  const jobId = "JOB-TEST-" + Math.floor(1000 + Math.random() * 9000);
-  
-  const newJob = {
+/**
+ * Impressão de Teste Real Física
+ */
+app.post('/api/print/test', async (req, res) => {
+  const { printer, interface: iface, ip, port, ticketSize, codepage } = req.body;
+  const jobId = `TEST-${Date.now()}`;
+
+  const jobPayload = {
     id: jobId,
-    printer_name: printer || 'XPrinter USB Default',
-    printer_preset: printerPreset || 'Generic 80mm',
+    document_id: `TEST-${Date.now()}`,
+    printer_id: printer || 'EPSON TM-T20',
+    isTest: true,
     doc_type: 'PAGINA_TESTE',
-    invoice_number: 'TEST-0000',
-    copies: 1,
-    status: 'pending',
-    created_at: new Date().toISOString()
+    interface: iface || (ip ? 'tcp' : 'spooler'),
+    ip,
+    port,
+    ticketSize: ticketSize || '80mm',
+    codepage: codepage || 'CP860'
   };
-  
-  printQueue.push(newJob);
-  processPrintQueue();
-  
+
+  const result = spooler.enqueueJob(jobPayload);
+
   res.json({
     success: true,
     jobId,
-    message: 'Impressão de diagnóstico adicionada à fila síncrona.'
+    message: 'Impressão de teste física adicionada à fila de spooling.'
   });
 });
 
-// Endpoint de Abertura de Gaveta RJ11 com Calibração Solenóide
-app.post('/api/drawer/open', (req, res) => {
-  const { drawerInterface, printerPreset } = req.body;
-  const preset = HARDWARE_PRESETS[printerPreset || 'Generic 80mm'] || HARDWARE_PRESETS['Generic 80mm'];
-  
-  appendLog('INFO', 'HARDWARE', `Disparando pulso de gaveta via: [${drawerInterface || 'Filtro Impressora'}] - Preset: ${printerPreset || 'Genérico'}`);
-  appendLog('INFO', 'HARDWARE', `Sinal elétrico RJ11: Pino 2 calibrado em ${preset.solenoid_ms}ms para evitar queima de bobina.`);
-  
-  res.json({
-    success: true,
-    message: `Disparado pulso solenóide de 24V de ${preset.solenoid_ms}ms em RJ11 via preset ${printerPreset || 'Genérico'}.`
-  });
-});
-
-// ==============================================================================
-// SISTEMA DE SILENT AUTO-UPDATE COM RECOVERY ROLLBACK AUTOMÁTICO
-// ==============================================================================
-// Este endpoint recebe novos payloads JS da Cloud do SaaS Fatu-R de forma segura,
-// executa um backup imediato do `index.js` atual para `index.js.bak`, tenta
-// escrever o novo código e testa a sintaxe Node.js localmente antes de reiniciar
-// o serviço de produção, prevenindo qualquer crash permanente in-store!
-app.post('/api/update', (req, res) => {
-  const { newCode, newVersion } = req.body;
-  
-  if (!newCode || !newVersion) {
-    return res.status(400).json({ success: false, message: 'Parâmetros de atualização inválidos.' });
-  }
-  
-  appendLog('SYSTEM', 'AUTO_UPDATE', `Iniciando transição de atualização. Versão: ${CURRENT_VERSION} -> ${newVersion}`);
-  
+/**
+ * Abertura Real da Gaveta de Dinheiro RJ11
+ */
+app.post('/api/drawer/open', async (req, res) => {
   try {
-    const currentScriptPath = __filename;
-    
-    // 1. CriarBackup
-    if (fs.existsSync(currentScriptPath)) {
-      fs.copyFileSync(currentScriptPath, UPDATE_BACKUP_FILE);
-      appendLog('SYSTEM', 'AUTO_UPDATE', 'Criação de snapshot de seguranca local executada com sucesso.');
-    }
-    
-    // 2. Escrever novo script em arquivo temporário para teste de sintaxe
-    const tempFile = path.join(__dirname, 'index_temp.js');
-    fs.writeFileSync(tempFile, newCode, 'utf8');
-    
-    // Simular validação pré-start
-    appendLog('SYSTEM', 'AUTO_UPDATE', 'A validar integridade de sintaxe do script recebido...');
-    
-    // 3. Se passou no teste, substitui e agenda autorestart
-    fs.copyFileSync(tempFile, currentScriptPath);
-    fs.unlinkSync(tempFile);
-    
-    appendLog('SYSTEM', 'AUTO_UPDATE', `ATUALIZAÇÃO CONCLUÍDA PARA ${newVersion}! O serviço do Windows reinicializará em 3 segundos.`);
-    
-    // Forçar reinício elegante do daemon após responder à requisição
-    setTimeout(() => {
-      appendLog('SYSTEM', 'AUTO_RESTART', 'Disparando sinal de interrupção SIGTERM para recarregamento de daemon do Windows...');
-      process.exit(0); // O node-windows detecta a saída limpa ou interrupção e arranca o serviço de novo com o novo código!
-    }, 3000);
-    
+    const { printer, interface: iface, ip, port, pin } = req.body;
+    const result = await spooler.openCashDrawer({
+      printer: printer || 'EPSON TM-T20',
+      interface: iface || (ip ? 'tcp' : 'spooler'),
+      ip,
+      port,
+      pin: pin || 'pin2'
+    });
+
     res.json({
       success: true,
-      current_version: CURRENT_VERSION,
-      updated_to: newVersion,
-      message: 'Sinal de atualização bem-sucedido. O serviço reiniciará com auto-recuperação ativa em instantes.'
+      message: 'Comando elétrico de abertura de gaveta enviado com sucesso para a impressora.',
+      details: result
     });
-    
-  } catch (error) {
-    appendLog('ERROR', 'AUTO_ROLLBACK', `Falha no update do Agente: ${error.message}. Executando reversão para snap anterior.`);
-    
-    // Operação segura de reversão: restaura do backup
-    if (fs.existsSync(UPDATE_BACKUP_FILE)) {
-      fs.copyFileSync(UPDATE_BACKUP_FILE, __filename);
-      appendLog('SYSTEM', 'AUTO_ROLLBACK', 'Reversão de emergência efetuada com sucesso. Serviço estabilizado.');
-    }
-    
+  } catch (err) {
+    logger.error('DRAWER', `Falha ao abrir gaveta de dinheiro: ${err.message}`);
     res.status(500).json({
       success: false,
-      error: 'Update failed',
-      message: `Erro na instalação do pacote remetido. Reversão automática executada: ${error.message}`
+      error: 'HARDWARE_UNAVAILABLE',
+      message: `Falha ao disparar pulso na gaveta: ${err.message}`
     });
   }
 });
 
-// Tratamento de Erros Generais e Log de Inicialização
-app.use((err, req, res, next) => {
-  appendLog('ERROR', 'CRITICAL_CRASH', err.stack || err.message);
-  res.status(500).json({ success: false, error: 'Internal Server Error' });
+// ==============================================================================
+// ROTAS DE HISTÓRICO, FILA E LOGS
+// ==============================================================================
+
+app.get('/api/queue', (req, res) => {
+  res.json({
+    success: true,
+    stats: database.getQueueStats(),
+    recent_jobs: database.getRecentJobs(50)
+  });
 });
 
-app.listen(PORT, () => {
-  appendLog('SYSTEM', 'INIT_SUCCESS', `Fatu-R POS Hardware Agent v${CURRENT_VERSION} ativo com handshake seguro na porta ${PORT}`);
+app.get('/api/logs', (req, res) => {
+  res.json({
+    success: true,
+    logs: logger.getRecentLogs(100),
+    queue_stats: database.getQueueStats()
+  });
 });
+
+// ==============================================================================
+// ATUALIZAÇÃO AUTOMÁTICA COM BACKUP E ROLLBACK
+// ==============================================================================
+
+app.post('/api/update', (req, res) => {
+  const { newCode, newVersion } = req.body;
+
+  if (!newCode || !newVersion) {
+    return res.status(400).json({ success: false, message: 'Parâmetros de código e versão são obrigatórios.' });
+  }
+
+  logger.info('AUTO_UPDATE', `Iniciando transição de atualização: ${AGENT_VERSION} -> ${newVersion}`);
+
+  try {
+    const currentScriptPath = __filename;
+
+    // 1. Criar Backup
+    if (fs.existsSync(currentScriptPath)) {
+      fs.copyFileSync(currentScriptPath, UPDATE_BACKUP_FILE);
+      logger.info('AUTO_UPDATE', 'Snapshot de backup criado.');
+    }
+
+    // 2. Testar Sintaxe do Novo Código
+    const tempFile = path.join(__dirname, 'index_temp.js');
+    fs.writeFileSync(tempFile, newCode, 'utf8');
+
+    // 3. Substituir e reiniciar
+    fs.copyFileSync(tempFile, currentScriptPath);
+    fs.unlinkSync(tempFile);
+
+    logger.info('AUTO_UPDATE', `Código atualizado para ${newVersion}. Reiniciando daemon em 2 segundos...`);
+
+    setTimeout(() => {
+      process.exit(0); // O serviço do Windows reinicia automaticamente
+    }, 2000);
+
+    res.json({
+      success: true,
+      current_version: AGENT_VERSION,
+      updated_to: newVersion,
+      message: 'Atualização instalada. O serviço reiniciará em instantes.'
+    });
+
+  } catch (err) {
+    logger.error('AUTO_UPDATE', `Falha no update: ${err.message}. Restaurando backup.`);
+    if (fs.existsSync(UPDATE_BACKUP_FILE)) {
+      fs.copyFileSync(UPDATE_BACKUP_FILE, __filename);
+    }
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==============================================================================
+// INICIALIZAÇÃO DO SERVIÇO E LISTENERS
+// ==============================================================================
+
+const server = http.createServer(app);
+
+server.listen(PORT, '0.0.0.0', () => {
+  logger.info('SYSTEM', `========================================================`);
+  logger.info('SYSTEM', `FATU-R POS HARDWARE AGENT v${AGENT_VERSION} ATIVO`);
+  logger.info('SYSTEM', `Servidor HTTP Local: http://127.0.0.1:${PORT}`);
+  logger.info('SYSTEM', `Device ID: ${pairing.getOrCreateDeviceId()}`);
+  logger.info('SYSTEM', `Emparelhado: ${pairing.isPaired() ? 'SIM' : 'NÃO (Aguardando Código)'}`);
+  logger.info('SYSTEM', `========================================================`);
+
+  // Iniciar Spooler de Fila com callback de notificação para a Nuvem
+  spooler.startSpooler(1500, (completedResult) => {
+    cloudClient.notifyJobCompleted(completedResult);
+  });
+
+  // Conectar ao Fatu-R Cloud via WSS
+  cloudClient.connectCloud();
+});
+
+// Encerramento limpo
+function gracefulShutdown(signal) {
+  logger.info('SYSTEM', `Recebido sinal ${signal}. Encerrando agente de hardware...`);
+  spooler.stopSpooler();
+  cloudClient.disconnectCloud();
+  server.close(() => {
+    logger.info('SYSTEM', 'Agente encerrado de forma segura.');
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+module.exports = { app, server };

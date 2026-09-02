@@ -1,4 +1,6 @@
 import express from "express";
+import http from "http";
+import { WebSocketServer, WebSocket } from "ws";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import * as XLSX from "xlsx";
@@ -12,6 +14,9 @@ import { PassThrough } from "stream";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Mapa de Dispositivos de Hardware Conectados em Tempo Real via WSS
+const connectedHardwareDevices = new Map<string, { ws: WebSocket; deviceId: string; establishmentId?: number }>();
 
 const logServerError = (context: string, err: any) => {
   try {
@@ -1691,6 +1696,27 @@ function initializeDatabase() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(establishment_id) REFERENCES establishments(id),
         FOREIGN KEY(service_id) REFERENCES services(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS hardware_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT UNIQUE,
+        owner_id INTEGER,
+        establishment_id INTEGER,
+        pos_id TEXT,
+        name TEXT,
+        pairing_code TEXT,
+        pairing_expires_at DATETIME,
+        access_token TEXT,
+        refresh_token TEXT,
+        status TEXT DEFAULT 'offline',
+        printers_info TEXT,
+        queue_stats TEXT,
+        last_heartbeat DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(establishment_id) REFERENCES establishments(id),
+        FOREIGN KEY(owner_id) REFERENCES users(id)
       );
 
       CREATE TABLE IF NOT EXISTS suppliers (
@@ -11657,6 +11683,165 @@ function formatDateToIso(dateStr?: string) {
     res.json(products);
   });
 
+  // ==============================================================================
+  // ROTAS DE GESTÃO DE DISPOSITIVOS E AGENTE DE HARDWARE FISICO (FATU-R CLOUD)
+  // ==============================================================================
+
+  // Listar Dispositivos de Hardware associados
+  app.get("/api/hardware/devices", (req, res) => {
+    try {
+      const establishmentId = req.query.establishmentId ? Number(req.query.establishmentId) : null;
+      const ownerId = req.query.ownerId ? Number(req.query.ownerId) : null;
+      
+      let rows: any[];
+      if (establishmentId) {
+        rows = db.prepare(`SELECT id, device_id, owner_id, establishment_id, pos_id, name, status, printers_info, queue_stats, last_heartbeat, created_at FROM hardware_devices WHERE establishment_id = ? ORDER BY id DESC`).all(establishmentId);
+      } else if (ownerId) {
+        rows = db.prepare(`SELECT id, device_id, owner_id, establishment_id, pos_id, name, status, printers_info, queue_stats, last_heartbeat, created_at FROM hardware_devices WHERE owner_id = ? ORDER BY id DESC`).all(ownerId);
+      } else {
+        rows = db.prepare(`SELECT id, device_id, owner_id, establishment_id, pos_id, name, status, printers_info, queue_stats, last_heartbeat, created_at FROM hardware_devices ORDER BY id DESC`).all();
+      }
+
+      const devices = rows.map((r: any) => ({
+        ...r,
+        is_online: connectedHardwareDevices.has(r.device_id),
+        printers_info: r.printers_info ? JSON.parse(r.printers_info) : null,
+        queue_stats: r.queue_stats ? JSON.parse(r.queue_stats) : null
+      }));
+
+      res.json({ success: true, devices });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Emparelhamento com Código de 6 Caracteres
+  app.post("/api/hardware/pair", (req, res) => {
+    try {
+      const { pairing_code, establishment_id, owner_id, pos_id, name, device_id } = req.body;
+      if (!pairing_code && !device_id) {
+        return res.status(400).json({ success: false, error: "Código de emparelhamento ou Device ID é obrigatório." });
+      }
+
+      const token = `FATUR_DEV_KEY_${crypto.randomBytes(16).toString("hex")}`;
+      const devId = device_id || `FATUR-DEV-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
+      const devName = name || `Terminal POS ${pos_id || 'Principal'}`;
+
+      const existing = db.prepare(`SELECT * FROM hardware_devices WHERE device_id = ? OR pairing_code = ?`).get(devId, pairing_code) as any;
+      if (existing) {
+        db.prepare(`
+          UPDATE hardware_devices
+          SET establishment_id = ?, owner_id = ?, pos_id = ?, name = ?, access_token = ?, status = 'online', updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(establishment_id, owner_id, pos_id, devName, token, existing.id);
+      } else {
+        db.prepare(`
+          INSERT INTO hardware_devices (device_id, owner_id, establishment_id, pos_id, name, pairing_code, access_token, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'online')
+        `).run(devId, owner_id, establishment_id, pos_id, devName, pairing_code, token);
+      }
+
+      res.json({
+        success: true,
+        device_id: devId,
+        access_token: token,
+        message: "Dispositivo emparelhado com sucesso ao Estabelecimento."
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Desemparelhar Dispositivo
+  app.delete("/api/hardware/devices/:id", (req, res) => {
+    try {
+      const { id } = req.params;
+      const dev = db.prepare(`SELECT device_id FROM hardware_devices WHERE id = ?`).get(id) as any;
+      if (dev && connectedHardwareDevices.has(dev.device_id)) {
+        const client = connectedHardwareDevices.get(dev.device_id);
+        client?.ws.close();
+        connectedHardwareDevices.delete(dev.device_id);
+      }
+      db.prepare(`DELETE FROM hardware_devices WHERE id = ?`).run(id);
+      res.json({ success: true, message: "Dispositivo desemparelhado com sucesso." });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Disparo Remoto de Impressão via WSS ou fallback
+  app.post("/api/hardware/print", (req, res) => {
+    try {
+      const { device_id, establishment_id, sale, printer, ticketSize, openDrawer, drawerPin } = req.body;
+      
+      let targetDeviceId = device_id;
+      if (!targetDeviceId && establishment_id) {
+        const dev = db.prepare(`SELECT device_id FROM hardware_devices WHERE establishment_id = ? AND status = 'online' LIMIT 1`).get(establishment_id) as any;
+        if (dev) targetDeviceId = dev.device_id;
+      }
+
+      const connection = targetDeviceId ? connectedHardwareDevices.get(targetDeviceId) : null;
+
+      if (connection && connection.ws.readyState === WebSocket.OPEN) {
+        const jobId = `JOB-REMOTE-${Date.now()}`;
+        connection.ws.send(JSON.stringify({
+          type: 'print_job',
+          job_id: jobId,
+          document_id: sale?.invoice_number || `DOC-${Date.now()}`,
+          printer_id: printer,
+          payload: {
+            sale,
+            ticketSize: ticketSize || '80mm',
+            openDrawer: Boolean(openDrawer),
+            drawerPin: drawerPin || 'pin2'
+          }
+        }));
+
+        return res.json({
+          success: true,
+          job_id: jobId,
+          delivered_via: 'WSS_DIRECT',
+          status: 'SENT_TO_AGENT',
+          message: 'Ordem de impressão transmitida diretamente via canal WSS seguro para o Agente de Hardware.'
+        });
+      }
+
+      res.json({
+        success: true,
+        delivered_via: 'LOCAL_HTTP_FALLBACK',
+        message: 'Agente em modo de escuta local (HTTP :9100).'
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Disparo Remoto de Gaveta de Dinheiro
+  app.post("/api/hardware/drawer", (req, res) => {
+    try {
+      const { device_id, establishment_id, pin, printer } = req.body;
+      let targetDeviceId = device_id;
+      if (!targetDeviceId && establishment_id) {
+        const dev = db.prepare(`SELECT device_id FROM hardware_devices WHERE establishment_id = ? AND status = 'online' LIMIT 1`).get(establishment_id) as any;
+        if (dev) targetDeviceId = dev.device_id;
+      }
+
+      const connection = targetDeviceId ? connectedHardwareDevices.get(targetDeviceId) : null;
+      if (connection && connection.ws.readyState === WebSocket.OPEN) {
+        connection.ws.send(JSON.stringify({
+          type: 'drawer_open',
+          request_id: `REQ-DRAWER-${Date.now()}`,
+          options: { pin: pin || 'pin2', printer }
+        }));
+        return res.json({ success: true, message: 'Comando elétrico de abertura de gaveta enviado via WSS.' });
+      }
+
+      res.json({ success: true, message: 'Gaveta acionada via HTTP Local.' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.all("/api/*", (req, res) => {
     res.status(404).json({ error: `Rota API não encontrada: ${req.method} ${req.originalUrl}` });
   });
@@ -11706,7 +11891,90 @@ function formatDateToIso(dateStr?: string) {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  // Criar Servidor HTTP com suporte nativo a WebSocket
+  const server = http.createServer(app);
+
+  const wss = new WebSocketServer({ noServer: true });
+
+  wss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
+    let currentDeviceId: string | null = null;
+
+    ws.on('message', (data: any) => {
+      try {
+        const msg = JSON.parse(data.toString());
+
+        if (msg.type === 'device_auth') {
+          currentDeviceId = msg.device_id;
+          if (currentDeviceId) {
+            connectedHardwareDevices.set(currentDeviceId, {
+              ws,
+              deviceId: currentDeviceId
+            });
+
+            db.prepare(`
+              UPDATE hardware_devices
+              SET status = 'online', last_heartbeat = CURRENT_TIMESTAMP
+              WHERE device_id = ?
+            `).run(currentDeviceId);
+
+            ws.send(JSON.stringify({
+              type: 'auth_success',
+              device_id: currentDeviceId,
+              timestamp: new Date().toISOString()
+            }));
+            console.log(`[WSS_SERVER] Dispositivo autenticado: ${currentDeviceId}`);
+          }
+        } else if (msg.type === 'heartbeat') {
+          if (msg.device_id) {
+            db.prepare(`
+              UPDATE hardware_devices
+              SET status = 'online',
+                  queue_stats = ?,
+                  last_heartbeat = CURRENT_TIMESTAMP
+              WHERE device_id = ?
+            `).run(JSON.stringify(msg.queue || {}), msg.device_id);
+          }
+        } else if (msg.type === 'status_report') {
+          if (msg.device_id) {
+            db.prepare(`
+              UPDATE hardware_devices
+              SET status = 'online',
+                  printers_info = ?,
+                  last_heartbeat = CURRENT_TIMESTAMP
+              WHERE device_id = ?
+            `).run(JSON.stringify({ printers: msg.printers, com_ports: msg.com_ports }), msg.device_id);
+          }
+        }
+      } catch (e: any) {
+        console.error('[WSS_SERVER] Erro ao tratar mensagem:', e.message);
+      }
+    });
+
+    ws.on('close', () => {
+      if (currentDeviceId) {
+        connectedHardwareDevices.delete(currentDeviceId);
+        db.prepare(`UPDATE hardware_devices SET status = 'offline' WHERE device_id = ?`).run(currentDeviceId);
+        console.log(`[WSS_SERVER] Dispositivo desconectado: ${currentDeviceId}`);
+      }
+    });
+
+    ws.on('error', (err) => {
+      console.error('[WSS_SERVER] Erro no socket do dispositivo:', err.message);
+    });
+  });
+
+  server.on('upgrade', (request, socket, head) => {
+    const parsedUrl = new URL(request.url || '', `http://${request.headers.host}`);
+    if (parsedUrl.pathname === '/ws/device' || parsedUrl.pathname === '/device') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
+
+  server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

@@ -139,6 +139,54 @@ function hasRHModule(user: User | null): boolean {
   return true;
 }
 
+export function getOpenedSupportMap(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem('fatur_admin_opened_support') || '{}');
+  } catch {
+    return {};
+  }
+}
+
+export function markSupportAsOpened(key: string): void {
+  try {
+    const current = getOpenedSupportMap();
+    if (current[key]) return;
+    const updated = { ...current, [key]: Date.now() };
+    localStorage.setItem('fatur_admin_opened_support', JSON.stringify(updated));
+    window.dispatchEvent(new Event('fatur_support_opened_change'));
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+export function isSupportExpired(key: string): boolean {
+  try {
+    const map = getOpenedSupportMap();
+    const openedAt = map[key];
+    if (!openedAt) return false;
+    return Date.now() - openedAt >= 24 * 60 * 60 * 1000;
+  } catch {
+    return false;
+  }
+}
+
+export function getRemainingSupportTime(key: string): string | null {
+  try {
+    const map = getOpenedSupportMap();
+    const openedAt = map[key];
+    if (!openedAt) return null;
+    const elapsed = Date.now() - openedAt;
+    const remainingMs = 24 * 60 * 60 * 1000 - elapsed;
+    if (remainingMs <= 0) return '0m';
+    const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+    const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  } catch {
+    return null;
+  }
+}
+
 // --- Components ---
 
 const AdminReliability = () => {
@@ -11649,6 +11697,81 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const [localAgentJobs, setLocalAgentJobs] = useState<any[]>([]);
   const [agentHealthStatus, setAgentHealthStatus] = useState<'checking' | 'connected' | 'disconnected'>('disconnected');
   const [showAgentSetupGuide, setShowAgentSetupGuide] = useState(false);
+  const [detectedPrinters, setDetectedPrinters] = useState<any[]>([]);
+  const [detectedComPorts, setDetectedComPorts] = useState<string[]>([]);
+  const [isDetectingPrinters, setIsDetectingPrinters] = useState(false);
+  const [pairingCodeInput, setPairingCodeInput] = useState('');
+  const [isPairingDevice, setIsPairingDevice] = useState(false);
+  const [pairedDeviceInfo, setPairedDeviceInfo] = useState<any>(null);
+
+  const fetchDetectedPrinters = async () => {
+    setIsDetectingPrinters(true);
+    const url = printConfig.localAgentUrl || 'http://localhost:9100';
+    try {
+      const res = await fetch(`${url}/api/printers`);
+      if (res.ok) {
+        const data = await res.json();
+        setDetectedPrinters(data.printers || []);
+        setDetectedComPorts(data.com_ports || []);
+        if (data.default_printer && !printConfig.defaultPrinter) {
+          setPrintConfig(prev => ({ ...prev, defaultPrinter: data.default_printer.name || data.default_printer }));
+        }
+      }
+    } catch (e) {
+      console.warn("Could not fetch detected printers from agent:", e);
+    } finally {
+      setIsDetectingPrinters(false);
+    }
+  };
+
+  const handlePairWithAgent = async () => {
+    if (!pairingCodeInput.trim()) {
+      alert("Por favor insira o código de emparelhamento de 6 caracteres gerado pelo Agente.");
+      return;
+    }
+    setIsPairingDevice(true);
+    try {
+      const res = await fetch('/api/hardware/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pairing_code: pairingCodeInput.trim().toUpperCase(),
+          establishment_id: establishmentInfo?.id || user.establishment_id || 1,
+          owner_id: user.owner_id || user.id,
+          pos_id: user.cash_register_name || 'POS-01',
+          name: `Terminal ${user.cash_register_name || 'Principal'}`
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        try {
+          await fetch(`${printConfig.localAgentUrl || 'http://localhost:9100'}/api/pairing/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              access_token: data.access_token,
+              device_id: data.device_id,
+              establishment_id: establishmentInfo?.id || user.establishment_id,
+              establishment_name: establishmentInfo?.name || establishmentInfo?.company_name,
+              cloud_url: window.location.origin
+            })
+          });
+        } catch (agentErr) {
+          console.warn("Notice: Local agent direct confirm deferred to background sync.");
+        }
+        setPairedDeviceInfo(data);
+        setPairingCodeInput('');
+        checkAgentHealth();
+        alert("🎉 Terminal e Agente de Hardware emparelhados com sucesso!");
+      } else {
+        alert(`Erro no emparelhamento: ${data.error || 'Código inválido ou expirado.'}`);
+      }
+    } catch (err: any) {
+      alert(`Falha no emparelhamento: ${err.message}`);
+    } finally {
+      setIsPairingDevice(false);
+    }
+  };
 
   const fetchAgentLogsAndJobs = async () => {
     const url = printConfig.localAgentUrl || 'http://localhost:9100';
@@ -11691,6 +11814,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       if (res.ok) {
         setAgentHealthStatus('connected');
         fetchAgentLogsAndJobs();
+        fetchDetectedPrinters();
         return;
       }
     } catch (e) {
@@ -14454,17 +14578,57 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   </div>
 
                   <div>
-                    <label className="block text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 text-left">Selecionar Dispositivo de Saída (Windows Spooler)</label>
-                    <div className="relative">
-                      <Printer className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-                      <input 
-                        type="text"
-                        placeholder="Nome exato da impressora no SO (ex: Epson TM-T20)"
-                        value={printConfig.defaultPrinter}
-                        onChange={e => setPrintConfig({...printConfig, defaultPrinter: e.target.value})}
-                        className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-1 focus:ring-black outline-none text-xs font-bold"
-                      />
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-[9px] font-black text-zinc-400 uppercase tracking-widest text-left">Selecionar Dispositivo de Saída (Windows Spooler / TCP)</label>
+                      <button
+                        type="button"
+                        onClick={() => fetchDetectedPrinters()}
+                        disabled={isDetectingPrinters}
+                        className="text-[9px] font-bold text-zinc-600 hover:text-black flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw size={10} className={isDetectingPrinters ? "animate-spin" : ""} />
+                        {isDetectingPrinters ? "Detectando..." : "Atualizar Impressoras"}
+                      </button>
                     </div>
+
+                    {detectedPrinters.length > 0 ? (
+                      <div className="space-y-2">
+                        <select
+                          value={printConfig.defaultPrinter}
+                          onChange={e => setPrintConfig({...printConfig, defaultPrinter: e.target.value})}
+                          className="w-full px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-1 focus:ring-black outline-none text-xs font-bold cursor-pointer text-left"
+                        >
+                          <option value="">Selecione a impressora física detectada...</option>
+                          {detectedPrinters.map((p, idx) => {
+                            const pName = typeof p === 'string' ? p : (p.name || p.printerName);
+                            const isDef = p.isDefault ? ' (Padrão Windows)' : '';
+                            return (
+                              <option key={idx} value={pName}>
+                                🖨️ {pName}{isDef}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <input 
+                          type="text"
+                          placeholder="Ou digite o nome personalizado / IP (ex: 192.168.1.200)"
+                          value={printConfig.defaultPrinter}
+                          onChange={e => setPrintConfig({...printConfig, defaultPrinter: e.target.value})}
+                          className="w-full px-3 py-1.5 bg-zinc-50/50 border border-zinc-200 rounded-lg outline-none text-[11px] font-medium"
+                        />
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <Printer className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+                        <input 
+                          type="text"
+                          placeholder="Nome exato da impressora no Windows (ex: EPSON TM-T20 ou IP:Porta)"
+                          value={printConfig.defaultPrinter}
+                          onChange={e => setPrintConfig({...printConfig, defaultPrinter: e.target.value})}
+                          className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-1 focus:ring-black outline-none text-xs font-bold"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -14656,39 +14820,41 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
 
               {printConfig.useLocalAgent && (
                 <>
-                  {/* Assinatura Handshake Segura */}
+                  {/* Emparelhamento Seguro com Código Dinâmico */}
                   <div className="p-3.5 bg-zinc-50 rounded-2xl border border-zinc-200 space-y-2.5">
                     <div className="flex items-center gap-2 text-zinc-900 border-b border-zinc-100 pb-2">
                       <Shield className="text-zinc-900" size={15} />
-                      <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-900 font-sans">Handshake & Assinatura Segura</h4>
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-900 font-sans">Emparelhamento de Terminal (Código de 6 Dígitos)</h4>
                     </div>
                     <p className="text-[10px] text-zinc-500 leading-normal text-left">
-                      Para evitar chamadas não autorizadas de browsers maliciosos ou scripts externos na rede local da loja, todas as chamadas de hardware transmitem em assinatura encriptada pelo token único do terminal de retalho.
+                      Introduza o código gerado no arranque do Agente de Hardware para autenticar e vincular este terminal com chaves criptográficas por dispositivo.
                     </p>
-                    <div className="text-left">
-                      <label className="block text-[8px] font-black text-zinc-400 uppercase tracking-widest mb-1 text-left">Chave Secura de Handshake (AES Signature Token)</label>
+                    <div className="text-left space-y-2">
+                      <label className="block text-[8px] font-black text-zinc-400 uppercase tracking-widest text-left">Código de Emparelhamento (Ex: 8X2K9P)</label>
                       <div className="flex gap-2">
                         <input
                           type="text"
-                          readOnly
-                          value={printConfig.terminalToken || 'FATUR-TERM-7389-9A2E'}
-                          className="flex-1 px-3 py-1.5 bg-zinc-100 border border-zinc-200 rounded font-mono text-[10px] font-bold text-zinc-650 select-all outline-none"
+                          maxLength={6}
+                          placeholder="Ex: 8X2K9P"
+                          value={pairingCodeInput}
+                          onChange={e => setPairingCodeInput(e.target.value.toUpperCase())}
+                          className="w-32 px-3 py-1.5 bg-white border border-zinc-300 rounded-lg font-mono text-center text-xs font-black tracking-widest outline-none focus:ring-1 focus:ring-black uppercase"
                         />
                         <button
                           type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(printConfig.terminalToken || 'FATUR-TERM-7389-9A2E');
-                            const toast = document.createElement("div");
-                            toast.className = "fixed bottom-5 right-5 z-[99999] bg-black text-white text-xs px-4 py-2.5 rounded-xl font-bold animate-pulse";
-                            toast.innerText = "Token copiado para a área de transferência!";
-                            document.body.appendChild(toast);
-                            setTimeout(() => toast.remove(), 2500);
-                          }}
-                          className="px-3 bg-white hover:bg-zinc-100 border border-zinc-200 text-zinc-700 text-[10px] font-bold rounded cursor-pointer"
+                          onClick={() => handlePairWithAgent()}
+                          disabled={isPairingDevice || !pairingCodeInput.trim()}
+                          className="px-4 bg-black hover:bg-zinc-800 disabled:opacity-50 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors"
                         >
-                          Copiar
+                          {isPairingDevice ? "Emparelhando..." : "Emparelhar Agente"}
                         </button>
                       </div>
+                      {pairedDeviceInfo && (
+                        <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-[9px] font-medium flex items-center gap-1.5">
+                          <Check size={12} className="text-emerald-600 shrink-0" />
+                          <span>Dispositivo {pairedDeviceInfo.device_id?.slice(0, 8)}... emparelhado com sucesso!</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
