@@ -128,6 +128,46 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function optimizeProductImage(file: File, maxDim = 600, quality = 0.85): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxDim) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          }
+        } else {
+          if (height > maxDim) {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(event.target?.result as string);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(event.target?.result as string);
+    };
+    reader.onerror = (err) => reject(err);
+  });
+}
+
 function hasPermission(user: User | null, permissionId: string): boolean {
   if (!user) return false;
   if (user.role === 'admin' || user.role === 'owner') return true;
@@ -10227,44 +10267,87 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">Imagem do Produto</label>
-            <div className="flex items-center gap-4">
-              {productForm.image_url && (
-                <div className="w-16 h-16 bg-zinc-100 rounded-xl overflow-hidden border border-zinc-200 shrink-0">
-                  <img src={productForm.image_url} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Imagem do Produto (Enquadramento 1:1)</label>
+              <span className="text-[10px] text-zinc-400 font-medium">Alinhamento estrito para o PDV</span>
+            </div>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3.5 p-3.5 bg-zinc-50 border border-zinc-200/80 rounded-2xl">
+              {productForm.image_url ? (
+                <div className="relative w-20 h-20 sm:w-24 sm:h-24 aspect-square bg-zinc-100 rounded-xl overflow-hidden border border-zinc-300 shrink-0 shadow-xs group">
+                  <img 
+                    src={productForm.image_url} 
+                    alt="Preview" 
+                    className="w-full h-full object-cover" 
+                    referrerPolicy="no-referrer" 
+                  />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setProductForm({ ...productForm, image_url: '' })}
+                      className="p-1.5 bg-rose-600 text-white rounded-lg shadow-sm hover:bg-rose-700 transition-colors"
+                      title="Remover Imagem"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div className="absolute bottom-1 right-1 bg-black/75 text-white text-[8px] font-black px-1 py-0.5 rounded leading-none">
+                    1:1
+                  </div>
+                </div>
+              ) : (
+                <div className="w-20 h-20 sm:w-24 sm:h-24 aspect-square bg-zinc-100/80 rounded-xl border-2 border-dashed border-zinc-200 flex flex-col items-center justify-center text-zinc-400 shrink-0 p-2 text-center">
+                  <ImageIcon size={22} className="stroke-[1.5] mb-1 opacity-50" />
+                  <span className="text-[9px] font-semibold text-zinc-400 leading-tight">Sem Imagem</span>
                 </div>
               )}
-              <div className="flex-1 flex gap-2">
-                <input 
-                  type="text"
-                  value={productForm.image_url}
-                  onChange={e => setProductForm({...productForm, image_url: e.target.value})}
-                  className="flex-1 px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none text-xs" 
-                  placeholder="URL da imagem..."
-                />
-                <input 
-                  type="file"
-                  accept="image/*"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      try {
-                        const base64 = await fileToBase64(file);
-                        setProductForm({...productForm, image_url: base64});
-                      } catch (err) {
-                        console.error("Error converting file to base64", err);
+              <div className="flex-1 w-full space-y-2">
+                <div className="flex gap-2">
+                  <input 
+                    type="text"
+                    value={productForm.image_url}
+                    onChange={e => setProductForm({...productForm, image_url: e.target.value})}
+                    className="flex-1 px-3.5 py-2 bg-white border border-zinc-200 rounded-xl outline-none text-xs focus:ring-1 focus:ring-zinc-400" 
+                    placeholder="URL direta da foto (https://...)"
+                  />
+                  <input 
+                    type="file"
+                    accept="image/*"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        try {
+                          const optimized = await optimizeProductImage(file, 600, 0.85);
+                          setProductForm({...productForm, image_url: optimized});
+                        } catch (err) {
+                          console.error("Error optimizing image", err);
+                          const base64 = await fileToBase64(file);
+                          setProductForm({...productForm, image_url: base64});
+                        }
                       }
-                    }
-                  }}
-                  className="hidden"
-                  id="product-image-upload"
-                />
-                <label 
-                  htmlFor="product-image-upload"
-                  className="px-4 py-2 bg-white border border-zinc-200 rounded-xl cursor-pointer hover:bg-zinc-50 transition-all text-[10px] font-bold text-zinc-600 flex items-center gap-1"
-                >
-                  <Upload size={14} /> Local
-                </label>
+                    }}
+                    className="hidden"
+                    id="product-image-upload"
+                  />
+                  <label 
+                    htmlFor="product-image-upload"
+                    className="px-3.5 py-2 bg-white border border-zinc-200 rounded-xl cursor-pointer hover:bg-zinc-100 transition-all text-xs font-bold text-zinc-700 flex items-center gap-1.5 shadow-xs shrink-0 active:scale-95"
+                  >
+                    <Upload size={14} /> Carregar
+                  </label>
+                  {productForm.image_url && (
+                    <button
+                      type="button"
+                      onClick={() => setProductForm({ ...productForm, image_url: '' })}
+                      className="px-2.5 py-2 text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-xl transition-all text-xs font-bold"
+                      title="Limpar Imagem"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-zinc-500 leading-relaxed">
+                  Fotos carregadas são redimensionadas para um padrão uniforme 1:1 (máx. 600x600 px), mantendo alinhamento estrito nas grelhas do PDV mesmo com centenas de itens.
+                </p>
               </div>
             </div>
           </div>
@@ -11730,6 +11813,7 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     items: [] as any[]
   });
   const [establishmentInfo, setEstablishmentInfo] = useState<any>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string, name: string } | null>(null);
   
   // Payment states
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -13383,35 +13467,35 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const themeShadow = isPharmacy ? "shadow-emerald-500/20" : "shadow-orange-500/20";
 
   return (
-    <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-0 p-4 md:p-6 pb-24 lg:pb-6 relative">
+    <div className="flex-1 flex flex-col lg:flex-row gap-4 sm:gap-6 min-h-0 p-3 sm:p-4 md:p-6 pb-24 lg:pb-6 relative w-full overflow-hidden">
       {/* Product Selection */}
       <div className={cn(
         "flex-1 flex flex-col min-w-0 min-h-0 transition-all",
         showCartMobile ? "hidden lg:flex" : "flex"
       )}>
-        <div className="mb-4 sm:mb-6 space-y-4 sm:space-y-6">
-          <div className={cn("-mx-4 -mt-4 p-4 sm:-mx-6 sm:-mt-6 sm:p-6 text-white rounded-b-[2rem] shadow-lg transition-colors duration-350", themeBg)}>
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
+        <div className="mb-3 sm:mb-5 space-y-3 sm:space-y-4">
+          <div className={cn("-mx-3 -mt-3 sm:-mx-4 sm:-mt-4 md:-mx-6 md:-mt-6 p-3.5 sm:p-5 md:p-6 text-white rounded-b-2xl sm:rounded-b-[2rem] shadow-md transition-colors duration-350", themeBg)}>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3 sm:mb-4">
               <div>
-                <h2 className="text-xl sm:text-2xl font-bold tracking-tight">PDV - Estabelecimento</h2>
-                <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                <h2 className="text-lg sm:text-2xl font-bold tracking-tight">PDV - Estabelecimento</h2>
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mt-0.5">
                   <p className={cn("text-xs sm:text-sm opacity-85", isPharmacy ? "text-emerald-100" : "text-orange-100")}>Terminal: {user.cash_register_name || 'Caixa'}</p>
                   <button 
                     onClick={() => setIsTerminalSettingsOpen(true)}
                     className={cn(
-                      "px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 shadow-sm border cursor-pointer font-bold text-[10px] uppercase tracking-wider",
+                      "px-2 sm:px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 shadow-xs border cursor-pointer font-bold text-[10px] uppercase tracking-wider",
                       isPharmacy 
                         ? "bg-emerald-700/60 hover:bg-emerald-700 text-emerald-100 border-emerald-500/40" 
                         : "bg-orange-650/60 hover:bg-orange-600 text-orange-100 border-orange-400/40"
                     )}
                     title="Configurações de Hardware, Impressoras e Terminal"
                   >
-                    <Printer size={13} />
+                    <Printer size={12} />
                     <span>Hardware & Impressão</span>
                   </button>
                   <button 
                     onClick={() => triggerCashDrawerOpen(true)}
-                    className={cn("p-1 px-2 py-1 rounded-lg transition-all flex items-center gap-1.5 shadow-sm border cursor-pointer", isPharmacy ? "bg-emerald-700/40 hover:bg-emerald-700/85 text-emerald-100 border-emerald-500/20" : "bg-orange-650/40 hover:bg-orange-600/80 text-orange-100 border-orange-400/20")}
+                    className={cn("p-1 px-2 py-1 rounded-lg transition-all flex items-center gap-1.5 shadow-xs border cursor-pointer", isPharmacy ? "bg-emerald-700/40 hover:bg-emerald-700/85 text-emerald-100 border-emerald-500/20" : "bg-orange-650/40 hover:bg-orange-600/80 text-orange-100 border-orange-400/20")}
                     title="Comandar Abertura da Gaveta de Dinheiro 🔓"
                   >
                     <Coins size={12} className={cn("animate-pulse", isPharmacy ? "text-emerald-200" : "text-orange-200")} />
@@ -13419,47 +13503,46 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   </button>
                 </div>
               </div>
-              <div className={cn("flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold self-start sm:self-auto", isPharmacy ? "bg-emerald-500/30" : "bg-orange-400/30")}>
+              <div className={cn("flex items-center gap-2 px-2.5 sm:px-3 py-1 rounded-full text-xs font-bold self-start sm:self-auto", isPharmacy ? "bg-emerald-500/30" : "bg-orange-400/30")}>
                 <div className="w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
                 OFF
               </div>
             </div>
-            <div className="flex items-center gap-3 sm:gap-4">
-              <div className="w-12 h-12 sm:w-16 sm:h-16 bg-white rounded-full flex items-center justify-center shadow-inner shrink-0">
-                <div className={cn("w-9 h-9 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-colors duration-350", themeBgLight, themeText)}>
-                  <ShoppingCart size={20} className="sm:hidden" />
-                  <ShoppingCart size={24} className="hidden sm:block" />
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 sm:w-14 sm:h-14 bg-white rounded-full flex items-center justify-center shadow-inner shrink-0">
+                <div className={cn("w-8 h-8 sm:w-11 sm:h-11 rounded-full flex items-center justify-center transition-colors duration-350", themeBgLight, themeText)}>
+                  <ShoppingCart size={18} className="sm:hidden" />
+                  <ShoppingCart size={22} className="hidden sm:block" />
                 </div>
               </div>
               <div className="min-w-0">
-                <p className="font-bold text-base sm:text-lg truncate">{user.name}</p>
+                <p className="font-bold text-sm sm:text-lg truncate">{user.name}</p>
                 <p className={cn("text-xs sm:text-sm opacity-85 truncate", isPharmacy ? "text-emerald-100" : "text-orange-100")}>Perfil: {user.role}</p>
               </div>
             </div>
           </div>
 
-          <div className="flex flex-col gap-3 sm:gap-4">
+          <div className="flex flex-col gap-2.5 sm:gap-3">
             {hasActiveSession === false && (
-              <div className="bg-rose-50 border border-rose-200 p-4 sm:p-6 rounded-[2rem] flex flex-col md:flex-row items-center justify-between gap-4 mb-2 shadow-sm">
-                <div className="flex items-center gap-3 sm:gap-4">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center shrink-0">
-                    <Lock size={20} className="sm:hidden" />
-                    <Lock size={24} className="hidden sm:block" />
+              <div className="bg-rose-50 border border-rose-200 p-3 sm:p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 sm:w-10 sm:h-10 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center shrink-0">
+                    <Lock size={18} />
                   </div>
                   <div>
-                    <h3 className="font-bold text-rose-900 text-sm sm:text-base">Caixa Fechado</h3>
-                    <p className="text-xs sm:text-sm text-rose-600">É necessário abrir o caixa para realizar vendas.</p>
+                    <h3 className="font-bold text-rose-900 text-xs sm:text-sm">Caixa Fechado</h3>
+                    <p className="text-[11px] sm:text-xs text-rose-600">É necessário abrir o caixa para realizar vendas.</p>
                   </div>
                 </div>
                 {hasPermission(user, 'pos_open_cashier') ? (
                   <button 
                     onClick={() => window.location.hash = '#/seller/close'}
-                    className="w-full sm:w-auto px-6 py-2.5 bg-green-600 text-white rounded-xl text-xs sm:text-sm font-bold hover:bg-green-700 transition-all active:scale-95 shadow-lg shadow-green-200"
+                    className="w-full sm:w-auto px-5 py-2 bg-green-600 text-white rounded-xl text-xs sm:text-sm font-bold hover:bg-green-700 transition-all active:scale-95 shadow-md shadow-green-200"
                   >
                     Abrir Caixa Agora
                   </button>
                 ) : (
-                  <div className="w-full sm:w-auto text-center px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-bold border border-rose-200">
+                  <div className="w-full sm:w-auto text-center px-4 py-1.5 bg-rose-100 text-rose-700 rounded-xl text-xs font-bold border border-rose-200">
                     Aguarde a abertura por um supervisor
                   </div>
                 )}
@@ -13467,41 +13550,39 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             )}
             <div className="flex items-center gap-3">
               <div className="relative flex-1">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
                 <input 
                   type="text" 
                   placeholder="Pesquisar por nome ou código de barra..." 
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className={cn("w-full pl-11 pr-4 py-3 sm:py-4 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 shadow-sm text-sm sm:text-lg", themeRing)}
+                  className={cn("w-full pl-10 pr-4 py-2.5 sm:py-3.5 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 shadow-xs text-xs sm:text-base", themeRing)}
                 />
               </div>
             </div>
 
-            <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-2 scrollbar-none">
+            <div className="flex gap-2 sm:gap-2.5 overflow-x-auto pb-1.5 scrollbar-none touch-pan-x">
               {categories.map(cat => (
                 <button
                   key={cat.name}
                   onClick={() => setCategory(cat.name)}
                   className={cn(
-                    "flex items-center gap-2 px-4 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all shadow-sm border-2 shrink-0 active:scale-95",
+                    "flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 sm:px-5 sm:py-2.5 rounded-xl sm:rounded-2xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all shadow-2xs border-2 shrink-0 active:scale-95",
                     category === cat.name 
                       ? (isPharmacy ? "bg-emerald-600 border-emerald-600 text-white" : "bg-orange-500 border-orange-500 text-white")
                       : (isPharmacy ? "bg-white border-zinc-100 text-zinc-500 hover:border-emerald-200" : "bg-white border-zinc-100 text-zinc-500 hover:border-orange-200")
                   )}
                 >
-                  <cat.icon size={16} className="sm:hidden" />
-                  <cat.icon size={18} className="hidden sm:block" />
+                  <cat.icon size={15} />
                   {cat.name}
                 </button>
               ))}
               {services.length > 0 && (
                 <button
                   onClick={() => setIsServiceModalOpen(true)}
-                  className="flex items-center gap-2 px-4 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all shadow-sm border-2 bg-zinc-900 border-zinc-900 text-white hover:bg-zinc-800 shrink-0 active:scale-95"
+                  className="flex items-center gap-1.5 sm:gap-2 px-3.5 py-2 sm:px-5 sm:py-2.5 rounded-xl sm:rounded-2xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all shadow-2xs border-2 bg-zinc-900 border-zinc-900 text-white hover:bg-zinc-800 shrink-0 active:scale-95"
                 >
-                  <Sparkles size={16} className="sm:hidden" />
-                  <Sparkles size={18} className="hidden sm:block" />
+                  <Sparkles size={15} />
                   Serviços
                 </button>
               )}
@@ -13509,58 +13590,135 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2.5 sm:gap-3 pr-1 sm:pr-2 pb-28 lg:pb-4">
-          {filteredProducts.map(product => (
-            <motion.div
-              layout
-              key={product.id}
-              onClick={() => addToCart(product)}
-              className="group cursor-pointer select-none active:scale-95 transition-transform"
-            >
-              <Card className={cn("h-full transition-all border-zinc-100 shadow-sm rounded-xl flex flex-col overflow-hidden hover:shadow-md", isPharmacy ? "hover:border-emerald-500" : "hover:border-orange-500")}>
-                <div className="aspect-square relative p-2 bg-zinc-50/50 flex items-center justify-center">
-                  <img 
-                    src={product.image_url || undefined} 
-                    alt={product.name} 
-                    className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300" 
-                    referrerPolicy="no-referrer" 
-                  />
-                  {product.discount_percent && (
-                    <div className="absolute top-1.5 right-1.5 bg-rose-600 text-white text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase shadow-sm">
-                      -{product.discount_percent}%
-                    </div>
-                  )}
-                </div>
-                <div className="p-2 sm:p-2.5 flex-1 flex flex-col min-h-0">
-                  <h4 className="font-bold text-xs sm:text-sm text-zinc-800 line-clamp-2 mb-1 leading-tight">{product.name}</h4>
-                  <div className="mt-auto flex items-end justify-between gap-1 pt-1">
-                    <div className="flex flex-col">
-                      {product.discount_percent && (
-                        <span className="text-[9px] text-zinc-400 line-through">Kz {(product.price || 0).toLocaleString()}</span>
+        {/* Product Grid - Fixed alignment without squashing or cutting descriptions */}
+        <div className="flex-1 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 min-[1800px]:grid-cols-5 gap-2.5 sm:gap-3.5 md:gap-4 p-0.5 pb-28 lg:pb-6 content-start auto-rows-max">
+          {filteredProducts.length === 0 ? (
+            <div className="col-span-full py-16 flex flex-col items-center justify-center text-zinc-400 text-center">
+              <Package size={48} className="stroke-[1.25] text-zinc-300 mb-3" />
+              <p className="font-bold text-sm text-zinc-600">Nenhum produto encontrado</p>
+              <p className="text-xs text-zinc-400 mt-1 max-w-xs">
+                Tente ajustar a pesquisa ou escolher outra categoria.
+              </p>
+            </div>
+          ) : (
+            filteredProducts.map(product => (
+              <motion.div
+                layout
+                key={product.id}
+                onClick={() => addToCart(product)}
+                className="group cursor-pointer select-none active:scale-[0.98] transition-all flex flex-col"
+              >
+                <Card className={cn(
+                  "w-full h-full transition-all border border-zinc-200/80 shadow-xs rounded-2xl flex flex-col overflow-hidden hover:shadow-md bg-white hover:border-orange-400/80",
+                  isPharmacy && "hover:border-emerald-500"
+                )}>
+                  {/* Uniform Square Frame with Complete Uncropped Image (object-contain) */}
+                  <div className="w-full aspect-square relative bg-zinc-50/80 border-b border-zinc-100 flex items-center justify-center p-2.5 sm:p-3 overflow-hidden shrink-0">
+                    {product.image_url ? (
+                      <>
+                        <img 
+                          src={product.image_url} 
+                          alt={product.name} 
+                          className="w-full h-full object-contain transition-transform duration-200 group-hover:scale-105 select-none drop-shadow-2xs" 
+                          referrerPolicy="no-referrer" 
+                          loading="lazy"
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            target.style.display = 'none';
+                            const fallback = target.nextElementSibling as HTMLElement;
+                            if (fallback) fallback.style.display = 'flex';
+                          }}
+                        />
+                        {/* Botão de ampliação para o vendedor visualizar a foto completa */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewImage({ url: product.image_url!, name: product.name });
+                          }}
+                          className="absolute top-1.5 left-1.5 p-1.5 rounded-lg bg-white/95 hover:bg-white text-zinc-700 opacity-0 group-hover:opacity-100 transition-opacity shadow-xs border border-zinc-200 cursor-pointer z-10"
+                          title="Ver imagem completa do produto"
+                        >
+                          <Eye size={13} />
+                        </button>
+                      </>
+                    ) : null}
+                    
+                    {/* Fallback Icon Box se o item não possuir foto */}
+                    <div 
+                      className={cn(
+                        "w-full h-full flex flex-col items-center justify-center p-2 text-zinc-400 bg-gradient-to-b from-zinc-50 to-zinc-100/70",
+                        product.image_url ? "hidden" : "flex"
                       )}
-                      <p className={cn("font-black text-xs sm:text-sm", themeText)}>
-                        Kz {(product.discount_percent 
-                          ? (product.price || 0) * (1 - product.discount_percent / 100) 
-                          : (product.price || 0)).toLocaleString()}
-                      </p>
+                    >
+                      <div className="w-10 h-10 rounded-xl bg-white border border-zinc-200/60 shadow-2xs flex items-center justify-center mb-1 text-zinc-400 group-hover:text-zinc-600 transition-colors">
+                        <Package size={22} className="stroke-[1.5]" />
+                      </div>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-400 truncate max-w-full px-1">
+                        {product.category || 'Produto'}
+                      </span>
                     </div>
-                    <span className={cn(
-                      "text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0",
-                      product.stock > 10 ? "text-emerald-600 bg-emerald-50" : "text-rose-600 bg-rose-50"
-                    )}>
-                      {product.stock} un
-                    </span>
+
+                    {product.discount_percent && (
+                      <div className="absolute top-1.5 right-1.5 bg-rose-600 text-white text-[8px] sm:text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase shadow-xs">
+                        -{product.discount_percent}%
+                      </div>
+                    )}
                   </div>
-                </div>
-              </Card>
-            </motion.div>
-          ))}
+
+                  {/* Body with consistent height and all habitual descriptions */}
+                  <div className="p-2.5 sm:p-3 flex-1 flex flex-col justify-between bg-white min-h-[96px] sm:min-h-[108px]">
+                    <div>
+                      {/* Categoria & Código */}
+                      <div className="flex items-center justify-between gap-1 text-[10px] text-zinc-400 font-medium mb-1">
+                        <span className="truncate uppercase font-bold text-[9px] tracking-wider text-zinc-400">
+                          {product.category || 'Geral'}
+                        </span>
+                        {product.barcode && (
+                          <span className="font-mono text-[9px] text-zinc-400 shrink-0 truncate max-w-[80px]">
+                            {product.barcode}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Nome do Produto com altura mínima alinhada */}
+                      <h4 className="font-bold text-xs sm:text-sm text-zinc-900 line-clamp-2 leading-snug break-words min-h-[2rem] sm:min-h-[2.4rem]" title={product.name}>
+                        {product.name}
+                      </h4>
+                    </div>
+
+                    {/* Preço e Estoque */}
+                    <div className="mt-2 pt-2 border-t border-zinc-100 flex items-end justify-between gap-1">
+                      <div className="flex flex-col min-w-0">
+                        {product.discount_percent && (
+                          <span className="text-[9px] sm:text-[10px] text-zinc-400 line-through leading-none mb-0.5">
+                            Kz {(product.price || 0).toLocaleString()}
+                          </span>
+                        )}
+                        <p className={cn("font-black text-xs sm:text-sm leading-tight truncate", themeText)}>
+                          Kz {(product.discount_percent 
+                            ? (product.price || 0) * (1 - product.discount_percent / 100) 
+                            : (product.price || 0)).toLocaleString()}
+                        </p>
+                      </div>
+                      <span className={cn(
+                        "text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-md shrink-0 leading-none",
+                        product.stock > 10 ? "text-emerald-700 bg-emerald-50 border border-emerald-100" : "text-rose-700 bg-rose-50 border border-rose-100"
+                      )}>
+                        {product.stock} un
+                      </span>
+                    </div>
+                  </div>
+                </Card>
+              </motion.div>
+            ))
+          )}
         </div>
       </div>
 
       {/* Cart / Checkout - Sidebar on desktop, Toggleable on mobile */}
       <div className={cn(
-        "lg:flex w-full lg:w-80 xl:w-96 flex-col transition-all shrink-0",
+        "lg:flex w-full lg:w-72 xl:w-80 2xl:w-96 flex-col transition-all shrink-0",
         showCartMobile 
           ? "flex flex-1 fixed inset-0 z-[100] p-2 sm:p-4 pb-20 sm:pb-24 lg:pb-0 bg-black/60 backdrop-blur-md lg:relative lg:p-0 lg:bg-transparent lg:inset-auto" 
           : "hidden"
@@ -14546,7 +14704,37 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         </div>
       </Modal>
 
-      {/* Cancel Confirmation Modal */}
+      {/* Visualizador de Imagem Completa do Produto para o Vendedor */}
+      <Modal
+        isOpen={!!previewImage}
+        onClose={() => setPreviewImage(null)}
+        title={previewImage?.name || "Foto do Produto"}
+      >
+        <div className="flex flex-col items-center space-y-4 pt-1">
+          <div className="w-full max-h-[65vh] flex items-center justify-center bg-zinc-50 rounded-2xl p-4 border border-zinc-200 overflow-hidden">
+            {previewImage && (
+              <img
+                src={previewImage.url}
+                alt={previewImage.name}
+                className="max-w-full max-h-[55vh] w-auto h-auto object-contain rounded-lg shadow-sm"
+                referrerPolicy="no-referrer"
+              />
+            )}
+          </div>
+          <div className="w-full flex items-center justify-between">
+            <span className="text-xs font-semibold text-zinc-500 truncate max-w-[280px]">
+              {previewImage?.name}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPreviewImage(null)}
+              className="px-5 py-2.5 bg-zinc-900 text-white rounded-xl text-xs font-bold hover:bg-black transition-colors"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+      </Modal>
       <Modal isOpen={isCancelConfirmOpen} onClose={() => setIsCancelConfirmOpen(false)} title="Confirmar Cancelamento">
         <div className="space-y-6 text-center py-4">
           <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-4">
