@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { Printer, Download, FileText, ShoppingBag } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas-pro';
+import { executeInvoicePrint } from '../lib/printInvoice';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -19,7 +20,10 @@ export const PurchaseDocument = ({
   const documentRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
-    window.print();
+    executeInvoicePrint(documentRef.current, {
+      type: 'a4',
+      title: `${type.toUpperCase()}_${document.invoice_number || document.id || 'DOC'}`
+    });
   };
 
   const handleDownload = async () => {
@@ -169,7 +173,7 @@ export const PurchaseDocument = ({
 
       <div ref={documentRef} className="space-y-8 no-shadow">
         {itemPages.map((pageItems, pageIdx) => (
-          <div key={pageIdx} className="document-page bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden mb-8 last:mb-0">
+          <div key={pageIdx} className="document-page invoice-a4-container bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden mb-8 last:mb-0">
             {/* Header - Only on first page */}
             {pageIdx === 0 && (
               <div className="flex justify-between items-start mb-12">

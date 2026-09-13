@@ -122,6 +122,8 @@ import { OwnerFinance } from './components/OwnerFinance';
 import { OwnerSchool } from './components/OwnerSchool';
 import AdminAuditLogs from './components/AdminAuditLogs';
 import { LandingPage } from './components/LandingPage';
+import { executeInvoicePrint, downloadThermalInvoicePdf } from './lib/printInvoice';
+import { ProductLabelsView } from './components/ProductLabelsView';
 
 // --- Utilities ---
 function cn(...inputs: ClassValue[]) {
@@ -5357,7 +5359,17 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">{selectedSystemInvoice.invoice_number}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                   <button onClick={() => window.print()} className="p-3 bg-zinc-100 text-zinc-600 rounded-xl hover:bg-zinc-200">
+                   <button 
+                    onClick={() => {
+                      const el = document.getElementById('printable-system-invoice');
+                      executeInvoicePrint(el, {
+                        type: 'a4',
+                        title: `SaaS_${selectedSystemInvoice.invoice_number}`
+                      });
+                    }} 
+                    className="p-3 bg-zinc-100 text-zinc-600 rounded-xl hover:bg-zinc-200"
+                    title="Imprimir"
+                  >
                     <Printer size={20} />
                   </button>
                   <button onClick={() => setIsSystemInvoicePreviewOpen(false)} className="p-3 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100">
@@ -5367,7 +5379,7 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
               </div>
 
               <div className="flex-1 overflow-y-auto p-12 bg-zinc-50/50 print:p-0 print:bg-white" id="printable-system-invoice">
-                <div className="bg-white p-12 border border-zinc-100 shadow-sm print:border-none print:shadow-none min-h-full max-w-[800px] mx-auto">
+                <div className="invoice-a4-container bg-white p-12 border border-zinc-100 shadow-sm print:border-none print:shadow-none min-h-full max-w-[800px] mx-auto">
                   <div className="flex justify-between items-start mb-16">
                     <div>
                       <div className="w-16 h-16 bg-black text-white rounded-2xl flex items-center justify-center mb-6">
@@ -5549,7 +5561,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
   const [newMessage, setNewMessage] = useState('');
   const [isTicketModalOpen, setIsTicketModalOpen] = useState(false);
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
-  const [productsSubTab, setProductsSubTab] = useState<'all' | 'categories' | 'manufacturers' | 'active_substances' | 'forms' | 'units'>('all');
+  const [productsSubTab, setProductsSubTab] = useState<'all' | 'labels' | 'categories' | 'manufacturers' | 'active_substances' | 'forms' | 'units'>('all');
   const [pharmacyCategories, setPharmacyCategories] = useState<any[]>([]);
   const [pharmacyManufacturers, setPharmacyManufacturers] = useState<any[]>([]);
   const [pharmacyActiveSubstances, setPharmacyActiveSubstances] = useState<any[]>([]);
@@ -6862,6 +6874,7 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                       <h3 className="font-bold text-lg">Gestão de Produtos</h3>
                       <p className="text-xs text-zinc-500 mt-0.5">
                         {productsSubTab === 'all' && "Gerencie os produtos do seu estabelecimento."}
+                        {productsSubTab === 'labels' && "Etiquetas com código de barras e número interno para leitura com pistola de scanner."}
                         {productsSubTab === 'categories' && "Gerencie as categorias de produtos do seu estabelecimento."}
                         {productsSubTab === 'manufacturers' && "Gerencie os fabricantes / laboratórios cadastrados."}
                         {productsSubTab === 'active_substances' && "Gerencie os princípios ativos (substâncias) dos medicamentos."}
@@ -6869,95 +6882,123 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                         {productsSubTab === 'units' && "Gerencie as unidades de medida / venda para o inventário."}
                       </p>
                     </div>
-                    {productsSubTab === 'all' && (
-                      <div className="flex flex-wrap gap-2 w-full lg:w-auto">
-                        <button 
-                          onClick={() => setIsPromoModalOpen(true)}
-                          className="flex-1 lg:flex-none bg-amber-100 text-amber-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-amber-200 transition-colors"
-                        >
-                          <Tag size={16} /> Criar Promoção
-                        </button>
+                    <div className="flex flex-wrap gap-2 w-full lg:w-auto">
+                      <button 
+                        type="button"
+                        onClick={() => setProductsSubTab(productsSubTab === 'labels' ? 'all' : 'labels')}
+                        className={cn(
+                          "flex-1 lg:flex-none px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer",
+                          productsSubTab === 'labels'
+                            ? "bg-zinc-100 text-zinc-800 hover:bg-zinc-200 border border-zinc-300"
+                            : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200"
+                        )}
+                      >
+                        <Barcode size={16} /> {productsSubTab === 'labels' ? "Lista de Produtos" : "Etiquetas de Código de Barra"}
+                      </button>
 
-                        <button 
-                          onClick={() => setIsProductModalOpen(true)}
-                          className="flex-1 lg:flex-none bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
-                        >
-                          <Plus size={16} /> Novo Produto
-                        </button>
-                      </div>
-                    )}
+                      {productsSubTab === 'all' && (
+                        <>
+                          <button 
+                            onClick={() => setIsPromoModalOpen(true)}
+                            className="flex-1 lg:flex-none bg-amber-100 text-amber-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-amber-200 transition-colors"
+                          >
+                            <Tag size={16} /> Criar Promoção
+                          </button>
+
+                          <button 
+                            onClick={() => setIsProductModalOpen(true)}
+                            className="flex-1 lg:flex-none bg-black text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+                          >
+                            <Plus size={16} /> Novo Produto
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
 
-                  {establishment?.type === 'farmácia' && (
-                    <div className="px-6 py-2.5 bg-zinc-50 border-b border-zinc-100 flex items-center gap-1 overflow-x-auto shrink-0 scrollbar-none">
-                      <button
-                        onClick={() => setProductsSubTab('all')}
-                        className={cn(
-                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
-                          productsSubTab === 'all'
-                            ? "bg-black text-white shadow-sm"
-                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
-                        )}
-                      >
-                        <ShoppingBag size={14} /> Todos os Produtos
-                      </button>
-                      <button
-                        onClick={() => setProductsSubTab('categories')}
-                        className={cn(
-                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
-                          productsSubTab === 'categories'
-                            ? "bg-black text-white shadow-sm"
-                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
-                        )}
-                      >
-                        <Tag size={14} /> Categorias
-                      </button>
-                      <button
-                        onClick={() => setProductsSubTab('manufacturers')}
-                        className={cn(
-                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
-                          productsSubTab === 'manufacturers'
-                            ? "bg-black text-white shadow-sm"
-                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
-                        )}
-                      >
-                        <Factory size={14} /> Fabricantes
-                      </button>
-                      <button
-                        onClick={() => setProductsSubTab('active_substances')}
-                        className={cn(
-                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
-                          productsSubTab === 'active_substances'
-                            ? "bg-black text-white shadow-sm"
-                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
-                        )}
-                      >
-                        <Activity size={14} /> Princípio Ativo
-                      </button>
-                      <button
-                        onClick={() => setProductsSubTab('forms')}
-                        className={cn(
-                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
-                          productsSubTab === 'forms'
-                            ? "bg-black text-white shadow-sm"
-                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
-                        )}
-                      >
-                        <Layers size={14} /> Formas Farmacêuticas
-                      </button>
-                      <button
-                        onClick={() => setProductsSubTab('units')}
-                        className={cn(
-                          "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5",
-                          productsSubTab === 'units'
-                            ? "bg-black text-white shadow-sm"
-                            : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
-                        )}
-                      >
-                        <Scale size={14} /> Unidade de Medida
-                      </button>
-                    </div>
-                  )}
+                  <div className="px-6 py-2.5 bg-zinc-50 border-b border-zinc-100 flex items-center gap-1 overflow-x-auto shrink-0 scrollbar-none">
+                    <button
+                      onClick={() => setProductsSubTab('all')}
+                      className={cn(
+                        "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer",
+                        productsSubTab === 'all'
+                          ? "bg-black text-white shadow-sm"
+                          : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                      )}
+                    >
+                      <ShoppingBag size={14} /> Todos os Produtos
+                    </button>
+                    <button
+                      onClick={() => setProductsSubTab('labels')}
+                      className={cn(
+                        "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer",
+                        productsSubTab === 'labels'
+                          ? "bg-black text-white shadow-sm"
+                          : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                      )}
+                    >
+                      <Barcode size={14} /> Etiquetas (Código de Barras)
+                    </button>
+                    {establishment?.type === 'farmácia' && (
+                      <>
+                        <button
+                          onClick={() => setProductsSubTab('categories')}
+                          className={cn(
+                            "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer",
+                            productsSubTab === 'categories'
+                              ? "bg-black text-white shadow-sm"
+                              : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                          )}
+                        >
+                          <Tag size={14} /> Categorias
+                        </button>
+                        <button
+                          onClick={() => setProductsSubTab('manufacturers')}
+                          className={cn(
+                            "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer",
+                            productsSubTab === 'manufacturers'
+                              ? "bg-black text-white shadow-sm"
+                              : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                          )}
+                        >
+                          <Factory size={14} /> Fabricantes
+                        </button>
+                        <button
+                          onClick={() => setProductsSubTab('active_substances')}
+                          className={cn(
+                            "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer",
+                            productsSubTab === 'active_substances'
+                              ? "bg-black text-white shadow-sm"
+                              : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                          )}
+                        >
+                          <Activity size={14} /> Princípio Ativo
+                        </button>
+                        <button
+                          onClick={() => setProductsSubTab('forms')}
+                          className={cn(
+                            "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer",
+                            productsSubTab === 'forms'
+                              ? "bg-black text-white shadow-sm"
+                              : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                          )}
+                        >
+                          <Layers size={14} /> Formas Farmacêuticas
+                        </button>
+                        <button
+                          onClick={() => setProductsSubTab('units')}
+                          className={cn(
+                            "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer",
+                            productsSubTab === 'units'
+                              ? "bg-black text-white shadow-sm"
+                              : "text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100"
+                          )}
+                        >
+                          <Scale size={14} /> Unidade de Medida
+                        </button>
+                      </>
+                    )}
+                  </div>
 
                   <div className="flex-1 overflow-y-auto">
                     {productsSubTab === 'all' ? (
@@ -7170,6 +7211,12 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                 ))}
               </div>
             </>
+          ) : productsSubTab === 'labels' ? (
+            <ProductLabelsView
+              products={products}
+              establishment={establishment}
+              onBackToProducts={() => setProductsSubTab('all')}
+            />
           ) : (
             details && (
               <div className="p-6 max-w-7xl mx-auto w-full">
@@ -10817,7 +10864,10 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
   }, [invoice, establishment]);
 
   const handlePrint = () => {
-    window.print();
+    executeInvoicePrint(invoiceRef.current, {
+      type: 'a4',
+      title: `${invoice.doc_type || 'FATURA'}_${(invoice.invoice_number || '').replace(/[\/\\]/g, '_')}`
+    });
   };
 
   const handleDownload = async () => {
@@ -10897,9 +10947,9 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
         </button>
       </div>
 
-      <div ref={invoiceRef} className="bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden invoice-print">
+      <div ref={invoiceRef} className="bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden invoice-a4-container invoice-print">
         {/* Header */}
-        <div className="flex justify-between items-start mb-12">
+        <div className="invoice-header flex justify-between items-start mb-12">
           <div className="flex items-center gap-8">
             {establishment.logo_url && (
               <div className="w-24 h-24 bg-zinc-50 rounded-2xl flex items-center justify-center p-4 border border-zinc-100">
@@ -10948,7 +10998,7 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
         </div>
 
         {/* Client Info */}
-        <div className="grid grid-cols-2 gap-12 mb-12">
+        <div className="invoice-client-info grid grid-cols-2 gap-12 mb-12">
           <div className="p-8 bg-zinc-50 rounded-3xl border border-zinc-100">
             <p className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] mb-4">Dados do Cliente</p>
             <div className="space-y-2">
@@ -11006,7 +11056,7 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
         </div>
 
         {/* Footer */}
-        <div className="mt-12 pt-12 border-t-2 border-zinc-100 flex-grow-0">
+        <div className="invoice-footer mt-12 pt-12 border-t-2 border-zinc-100 flex-grow-0">
           <div className="flex justify-between items-start">
             <div className="space-y-6">
               <div>
@@ -11091,24 +11141,6 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
           </div>
         </div>
       </div>
-
-      <style dangerouslySetInnerHTML={{ __html: `
-        @media print {
-          body * { visibility: hidden; }
-          .invoice-print, .invoice-print * { visibility: visible; }
-          .invoice-print { 
-            position: absolute; 
-            left: 0; 
-            top: 0; 
-            width: 100% !important; 
-            margin: 0 !important;
-            padding: 2mm !important;
-            box-shadow: none !important; 
-            border: none !important;
-          }
-          .no-print { display: none !important; }
-        }
-      `}} />
     </div>
   );
 };
@@ -11117,7 +11149,10 @@ const ProformaInvoice = ({ proforma, establishment }: { proforma: any, establish
   const invoiceRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
-    window.print();
+    executeInvoicePrint(invoiceRef.current, {
+      type: 'a4',
+      title: `PROFORMA_${(proforma.invoice_number || proforma.id || '').toString().replace(/[\/\\]/g, '_')}`
+    });
   };
 
   const handleDownload = async () => {
@@ -11282,7 +11317,7 @@ const ProformaInvoice = ({ proforma, establishment }: { proforma: any, establish
 
       <div ref={invoiceRef} className="space-y-8 no-shadow">
         {itemPages.map((pageItems, pageIdx) => (
-          <div key={pageIdx} className="proforma-page bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden mb-8 last:mb-0">
+          <div key={pageIdx} className="proforma-page invoice-a4-container bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden mb-8 last:mb-0">
             {/* Header - Only on first page */}
             {pageIdx === 0 && (
               <div className="flex justify-between items-start mb-12">
@@ -11426,8 +11461,10 @@ const ProformaInvoice = ({ proforma, establishment }: { proforma: any, establish
 const Invoice = ({ sale, establishment, user, ticketSize = '80mm' }: { sale: any, establishment: any, user: User, ticketSize?: '58mm' | '80mm' }) => {
   const invoiceRef = useRef<HTMLDivElement>(null);
   const [qrCode, setQrCode] = useState<string>('');
+  const [currentTicketSize, setCurrentTicketSize] = useState<'58mm' | '80mm'>(ticketSize);
+  const [isDownloading, setIsDownloading] = useState(false);
 
-  const is58 = ticketSize === '58mm';
+  const is58 = currentTicketSize === '58mm';
 
   useEffect(() => {
     if (sale.billing_mode === 'eletronica') {
@@ -11439,65 +11476,60 @@ const Invoice = ({ sale, establishment, user, ticketSize = '80mm' }: { sale: any
   }, [sale, establishment, is58]);
 
   const handlePrint = () => {
-    window.print();
+    executeInvoicePrint(invoiceRef.current, {
+      type: 'thermal',
+      ticketSize: currentTicketSize,
+      title: `${sale.doc_type || 'FATURA'}_${(sale.invoice_number || '').replace(/[\/\\]/g, '_')}`
+    });
   };
 
   const handleDownload = async () => {
-    if (!invoiceRef.current) return;
-    
-    // Scale 3 guarantees ultra-sharp high-definition results
-    const canvas = await html2canvas(invoiceRef.current, {
-      scale: 3,
-      useCORS: true,
-      logging: false,
-      backgroundColor: '#ffffff',
-      windowWidth: is58 ? 260 : 350,
-      onclone: (clonedDoc) => {
-        // Find cloned targets to ensure standard layout locks
-        const styleEl = clonedDoc.createElement('style');
-        styleEl.textContent = `
-          .invoice-print {
-            box-sizing: border-box !important;
-            width: ${is58 ? '210px' : '280px'} !important;
-            max-width: ${is58 ? '210px' : '280px'} !important;
-            min-width: ${is58 ? '210px' : '280px'} !important;
-            padding: ${is58 ? '8px' : '16px'} !important;
-            margin: 0 !important;
-            background-color: #ffffff !important;
-            border: 1px solid #e4e4e7 !important;
-            box-shadow: none !important;
-            border-radius: 8px !important;
-          }
-          .invoice-print * {
-            box-sizing: border-box !important;
-          }
-        `;
-        clonedDoc.head.appendChild(styleEl);
-      }
-    });
-    
-    const imgData = canvas.toDataURL('image/png');
-    const imgProps = new jsPDF().getImageProperties(imgData);
-    const pdfWidth = is58 ? 58 : 80; // Match paper/device standard in mm
-    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: [pdfWidth, pdfHeight]
-    });
-    
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-    pdf.save(`${sale.doc_type || 'FATURA'}_${sale.invoice_number.replace('/', '_')}.pdf`);
+    if (!invoiceRef.current || isDownloading) return;
+    setIsDownloading(true);
+    try {
+      await downloadThermalInvoicePdf(invoiceRef.current, {
+        ticketSize: currentTicketSize,
+        filename: `${sale.doc_type || 'FATURA'}_${(sale.invoice_number || '').replace(/[\/\\]/g, '_')}.pdf`
+      });
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   if (!sale || !establishment) return null;
 
   return (
     <div className="space-y-4">
+      {/* Seletor de Largura da Fatura / Talão */}
+      <div className="flex items-center justify-between no-print max-w-xs mx-auto px-1">
+        <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Formato do Talão:</span>
+        <div className="flex bg-zinc-100 p-1 rounded-xl gap-1">
+          <button
+            type="button"
+            onClick={() => setCurrentTicketSize('80mm')}
+            className={cn(
+              "px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer",
+              currentTicketSize === '80mm' ? "bg-white text-zinc-900 shadow-xs" : "text-zinc-500 hover:text-zinc-900"
+            )}
+          >
+            80mm
+          </button>
+          <button
+            type="button"
+            onClick={() => setCurrentTicketSize('58mm')}
+            className={cn(
+              "px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer",
+              currentTicketSize === '58mm' ? "bg-white text-zinc-900 shadow-xs" : "text-zinc-500 hover:text-zinc-900"
+            )}
+          >
+            58mm
+          </button>
+        </div>
+      </div>
+
       <div ref={invoiceRef} className={cn(
-        "bg-white mx-auto shadow-sm border border-zinc-200 rounded-lg invoice-print font-mono text-black text-left",
-        is58 ? "p-2 max-w-[210px]" : "p-4 max-w-[280px]"
+        "bg-white mx-auto shadow-sm border border-zinc-200 rounded-lg invoice-thermal-container invoice-print font-mono text-black text-left",
+        is58 ? "p-2 max-w-[210px] print-size-58" : "p-4 max-w-[280px] print-size-80"
       )}>
           <div className="text-center mb-2 border-b-2 border-dashed border-zinc-900 pb-2">
           {establishment.logo_url && (
@@ -11656,56 +11688,23 @@ const Invoice = ({ sale, establishment, user, ticketSize = '80mm' }: { sale: any
       <div className="flex gap-2 no-print max-w-md mx-auto">
         <button 
           onClick={handlePrint}
-          className="flex-1 bg-zinc-100 text-zinc-900 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-zinc-200 transition-all"
+          className="flex-1 bg-zinc-100 text-zinc-900 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-zinc-200 transition-all cursor-pointer"
         >
-          <Printer size={16} /> Imprimir
+          <Printer size={16} /> Imprimir ({currentTicketSize})
         </button>
         <button 
           onClick={handleDownload}
-          className="flex-1 bg-black text-white py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all"
+          disabled={isDownloading}
+          className="flex-1 bg-black text-white py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all disabled:opacity-50 cursor-pointer"
         >
-          <FileText size={16} /> Descarregar PDF
+          {isDownloading ? (
+            <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+          ) : (
+            <FileText size={16} />
+          )}
+          {isDownloading ? 'A gerar...' : 'Descarregar PDF'}
         </button>
       </div>
-
-      <style dangerouslySetInnerHTML={{ __html: `
-        @media print {
-          @page {
-            margin: 0;
-            size: auto;
-          }
-          body {
-            background-color: #ffffff !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-          body * { 
-            visibility: hidden !important; 
-          }
-          #print-fallback-target, #print-fallback-target *,
-          .invoice-print, .invoice-print * { 
-            visibility: visible !important; 
-          }
-          .invoice-print { 
-            position: absolute !important; 
-            left: 0px !important; 
-            top: 0px !important; 
-            width: ${is58 ? '210px' : '280px'} !important; 
-            max-width: ${is58 ? '210px' : '280px'} !important;
-            min-width: ${is58 ? '210px' : '280px'} !important;
-            box-shadow: none !important; 
-            border: none !important;
-            margin: 0 !important;
-            padding: ${is58 ? '6px' : '12px'} !important;
-            background-color: #ffffff !important;
-          }
-          .no-print { 
-            display: none !important; 
-          }
-        }
-      `}} />
     </div>
   );
 };
@@ -12458,7 +12457,12 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         // Since local agent failed, trigger direct browser print automatically
         setTimeout(() => {
           try {
-            window.print();
+            const el = document.querySelector('.invoice-thermal-container, .invoice-a4-container, .invoice-print') as HTMLElement;
+            executeInvoicePrint(el, {
+              type: 'thermal',
+              ticketSize: printConfig.ticketSize,
+              title: `FATURA_${sale.invoice_number || 'VENDA'}`
+            });
           } catch (e) {
             console.error(e);
           }
@@ -12475,9 +12479,20 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       });
       setTimeout(() => {
         try {
-          window.print();
+          const el = document.querySelector('.invoice-thermal-container, .invoice-a4-container, .invoice-print') as HTMLElement;
+          executeInvoicePrint(el, {
+            type: 'thermal',
+            ticketSize: printConfig.ticketSize,
+            title: `FATURA_${sale.invoice_number || 'VENDA'}`
+          });
           if (printConfig.printSecondCopy) {
-            setTimeout(() => window.print(), 1000);
+            setTimeout(() => {
+              executeInvoicePrint(el, {
+                type: 'thermal',
+                ticketSize: printConfig.ticketSize,
+                title: `FATURA_${sale.invoice_number || 'VENDA'}_VIA2`
+              });
+            }, 1200);
           }
         } catch (e) {
           console.error("Falha na impressão direta via navegador:", e);
@@ -13420,10 +13435,20 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const change = paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - totalInSelectedCurrency : 0;
 
   const filteredProducts = products
-    .filter(p => 
-      (category === 'Geral' || p.category === category || (category === 'Promoções' && p.discount_percent)) &&
-      (p.name.toLowerCase().includes(search.toLowerCase()) || (p.barcode && p.barcode.toLowerCase().includes(search.toLowerCase())))
-    )
+    .filter(p => {
+      const q = search.trim().toLowerCase();
+      const matchCategory = (category === 'Geral' || p.category === category || (category === 'Promoções' && p.discount_percent));
+      if (!q) return matchCategory;
+      const matchName = p.name.toLowerCase().includes(q);
+      const matchBarcode = p.barcode ? p.barcode.toLowerCase().includes(q) : false;
+      const matchInternalId = p.id.toString() === q ||
+        p.id.toString().padStart(4, '0') === q ||
+        p.id.toString().padStart(6, '0') === q ||
+        `prd-${p.id.toString().padStart(5, '0')}`.toLowerCase() === q ||
+        `prd-${p.id}`.toLowerCase() === q ||
+        `#${p.id}` === q;
+      return (matchCategory || q.length > 0) && (matchName || matchBarcode || matchInternalId);
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const dynamicCategories: string[] = Array.from(new Set(products.map(p => p.category)))
@@ -13553,9 +13578,33 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
                 <input 
                   type="text" 
-                  placeholder="Pesquisar por nome ou código de barra..." 
+                  placeholder="Pesquisar por nome, código de barra ou ID (Pistola de Scanner)..." 
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const q = search.trim().toLowerCase();
+                      if (!q) return;
+                      // Localizar correspondência exata por código de barra ou ID interno
+                      const exactMatch = products.find(p => {
+                        const bMatch = p.barcode && p.barcode.trim().toLowerCase() === q;
+                        const idMatch = p.id.toString() === q ||
+                          p.id.toString().padStart(4, '0') === q ||
+                          p.id.toString().padStart(6, '0') === q ||
+                          `prd-${p.id.toString().padStart(5, '0')}`.toLowerCase() === q ||
+                          `prd-${p.id}`.toLowerCase() === q ||
+                          `#${p.id}` === q;
+                        return bMatch || idMatch;
+                      });
+                      if (exactMatch) {
+                        addToCart(exactMatch);
+                        setSearch('');
+                      } else if (filteredProducts.length === 1) {
+                        addToCart(filteredProducts[0]);
+                        setSearch('');
+                      }
+                    }
+                  }}
                   className={cn("w-full pl-10 pr-4 py-2.5 sm:py-3.5 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 shadow-xs text-xs sm:text-base", themeRing)}
                 />
               </div>
@@ -14804,7 +14853,12 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           <div className="flex gap-2 pt-2 border-t border-zinc-100">
             <button 
               onClick={() => {
-                window.print();
+                const target = document.querySelector('#print-fallback-target .invoice-thermal-container, #print-fallback-target .invoice-print') as HTMLElement;
+                executeInvoicePrint(target, {
+                  type: 'thermal',
+                  ticketSize: printConfig.ticketSize,
+                  title: `TALAO_${printStatus.sale?.invoice_number || 'VENDA'}`
+                });
               }}
               className="flex-1 py-3 bg-zinc-900 hover:bg-black text-white rounded-xl font-black uppercase tracking-wider text-[10px] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
             >
@@ -14814,48 +14868,12 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
             <button 
               onClick={async () => {
                 if (printStatus.sale) {
-                  const fallbackEl = document.querySelector('#print-fallback-target .invoice-print') as HTMLDivElement;
+                  const fallbackEl = document.querySelector('#print-fallback-target .invoice-thermal-container, #print-fallback-target .invoice-print') as HTMLElement;
                   if (fallbackEl) {
-                    const canvas = await html2canvas(fallbackEl, {
-                      scale: 3,
-                      useCORS: true,
-                      logging: false,
-                      backgroundColor: '#ffffff',
-                      windowWidth: printConfig.ticketSize === '58mm' ? 260 : 350,
-                      onclone: (clonedDoc) => {
-                        const styleEl = clonedDoc.createElement('style');
-                        const is58 = printConfig.ticketSize === '58mm';
-                        styleEl.textContent = `
-                          .invoice-print {
-                            box-sizing: border-box !important;
-                            width: ${is58 ? '210px' : '280px'} !important;
-                            max-width: ${is58 ? '210px' : '280px'} !important;
-                            min-width: ${is58 ? '210px' : '280px'} !important;
-                            padding: ${is58 ? '8px' : '16px'} !important;
-                            margin: 0 !important;
-                            background-color: #ffffff !important;
-                            border: 1px solid #e4e4e7 !important;
-                            box-shadow: none !important;
-                            border-radius: 8px !important;
-                          }
-                          .invoice-print * {
-                            box-sizing: border-box !important;
-                          }
-                        `;
-                        clonedDoc.head.appendChild(styleEl);
-                      }
+                    await downloadThermalInvoicePdf(fallbackEl, {
+                      ticketSize: printConfig.ticketSize,
+                      filename: `FATURA_${printStatus.sale.invoice_number.replace(/[\/\\]/g, '_')}.pdf`
                     });
-                    const imgData = canvas.toDataURL('image/png');
-                    const imgProps = new jsPDF().getImageProperties(imgData);
-                    const pdfWidth = printConfig.ticketSize === '58mm' ? 58 : 80;
-                    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-                    const pdf = new jsPDF({
-                      orientation: 'portrait',
-                      unit: 'mm',
-                      format: [pdfWidth, pdfHeight]
-                    });
-                    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-                    pdf.save(`FATURA_${printStatus.sale.invoice_number.replace('/', '_')}.pdf`);
                   }
                 }
               }}

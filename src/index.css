@@ -140,3 +140,228 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* ==========================================================================
+   PRINT STYLES - FATU-R ERP & PDV
+   Garante impressão limpa, proporcional e sem quebras tanto para documentos A4
+   quanto para talões térmicos (58mm e 80mm), eliminando o caos de sobreposição.
+   ========================================================================== */
+
+#fatur-print-portal {
+  display: none;
+}
+
+@media print {
+  /* Configuração Geral do Papel */
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background-color: #ffffff !important;
+    color: #09090b !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Ocultar elementos desnecessários na impressão direta */
+  .no-print,
+  button,
+  nav,
+  aside,
+  [role="tooltip"],
+  .modal-backdrop,
+  [class*="backdrop-blur"] {
+    display: none !important;
+  }
+
+  /* --------------------------------------------------------------------------
+     1. MODO PORTAL ISOLADO (Recomendado via executeInvoicePrint)
+     Oculta 100% do app React (#root) e exibe unicamente o portal de impressão
+     -------------------------------------------------------------------------- */
+  body.printing-via-portal > *:not(#fatur-print-portal) {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body.printing-via-portal #fatur-print-portal {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+
+  /* A4 Documento no Portal */
+  body.printing-via-portal.print-mode-a4 #fatur-print-portal {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  body.printing-via-portal.print-mode-a4 .invoice-a4-clean-render,
+  body.printing-via-portal.print-mode-a4 .invoice-a4-container,
+  body.printing-via-portal.print-mode-a4 .proforma-page,
+  body.printing-via-portal.print-mode-a4 .document-page,
+  body.printing-via-portal.print-mode-a4 #printable-system-invoice > div {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: auto !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 4mm 6mm !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+    background: #ffffff !important;
+  }
+
+  /* Talão Térmico no Portal */
+  body.printing-via-portal.print-mode-thermal #fatur-print-portal {
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.printing-via-portal.print-mode-thermal.print-size-58 .invoice-thermal-clean-render,
+  body.printing-via-portal.print-mode-thermal.print-size-58 .invoice-thermal-container {
+    width: 52mm !important;
+    max-width: 52mm !important;
+    min-width: 52mm !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 auto !important;
+    padding: 1mm 2mm !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  body.printing-via-portal.print-mode-thermal.print-size-80 .invoice-thermal-clean-render,
+  body.printing-via-portal.print-mode-thermal.print-size-80 .invoice-thermal-container {
+    width: 74mm !important;
+    max-width: 74mm !important;
+    min-width: 74mm !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 auto !important;
+    padding: 2mm 3mm !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* --------------------------------------------------------------------------
+     2. MODO DIRETO (Fallback quando o usuário aperta Ctrl+P no modal)
+     -------------------------------------------------------------------------- */
+  /* Remove restrições do Modal para não cortar a fatura */
+  .fixed.inset-0.z-\[100\],
+  .fixed.inset-0.z-\[60\] {
+    position: static !important;
+    width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+  }
+
+  .fixed.inset-0.z-\[100\] > div,
+  .fixed.inset-0.z-\[60\] > div {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    transform: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Oculta o cabeçalho do Modal (título e botão fechar) */
+  .fixed.inset-0.z-\[100\] > div > div:first-child:has(button),
+  .fixed.inset-0.z-\[60\] > div > div:first-child:has(button) {
+    display: none !important;
+  }
+
+  /* Expande o container da fatura A4 na impressão direta */
+  .invoice-a4-container,
+  .proforma-page,
+  .document-page {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: auto !important;
+    height: auto !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+    padding: 4mm 6mm !important;
+    margin: 0 auto !important;
+  }
+
+  /* Ajusta o talão térmico na impressão direta */
+  .invoice-thermal-container {
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    margin: 0 auto !important;
+  }
+  .invoice-thermal-container.print-size-58 {
+    width: 52mm !important;
+    max-width: 52mm !important;
+  }
+  .invoice-thermal-container.print-size-80 {
+    width: 74mm !important;
+    max-width: 74mm !important;
+  }
+
+  /* --------------------------------------------------------------------------
+     3. REGRAS DE TABELA E QUEBRA DE PÁGINA
+     -------------------------------------------------------------------------- */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .invoice-header,
+  .invoice-client-info,
+  .invoice-footer,
+  .avoid-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}

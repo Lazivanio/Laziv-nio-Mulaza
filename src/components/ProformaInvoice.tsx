@@ -2,12 +2,16 @@ import React, { useRef } from 'react';
 import { Printer, Download, ShieldCheck } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas-pro';
+import { executeInvoicePrint } from '../lib/printInvoice';
 
 export const ProformaInvoice = ({ proforma, establishment }: { proforma: any, establishment: any }) => {
   const invoiceRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
-    window.print();
+    executeInvoicePrint(invoiceRef.current, {
+      type: 'a4',
+      title: `PROFORMA_${proforma.invoice_number || proforma.id || 'DOCUMENT'}`
+    });
   };
 
   const handleDownload = async () => {
@@ -164,7 +168,7 @@ export const ProformaInvoice = ({ proforma, establishment }: { proforma: any, es
 
       <div ref={invoiceRef} className="space-y-8 no-shadow">
         {itemPages.map((pageItems, pageIdx) => (
-          <div key={pageIdx} className="proforma-page bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden mb-8 last:mb-0">
+          <div key={pageIdx} className="proforma-page invoice-a4-container bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden mb-8 last:mb-0">
             {/* Header - Only on first page */}
             {pageIdx === 0 && (
               <div className="flex justify-between items-start mb-12">
