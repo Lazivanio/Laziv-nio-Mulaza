@@ -782,6 +782,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
     return (
       <CheckoutPage 
         initialPlan={checkoutInitialPlan}
+        initialPlans={dbPlans}
         onBack={closeDedicatedPage}
         onLogin={onLogin}
         onGoToRegister={() => openDedicatedPage('register')}
@@ -2461,14 +2462,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                     </button>
                     <button
                       onClick={() => {
-                        const nameLower = plan.name?.toLowerCase() || '';
-                        let targetPlan = 'Profissional';
-                        if (nameLower.includes('básico') || nameLower === 'base') {
-                          targetPlan = 'Básico';
-                        } else if (nameLower.includes('pro') || nameLower.includes('empresarial')) {
-                          targetPlan = 'Empresarial';
-                        }
-                        openDedicatedPage('checkout', targetPlan);
+                        openDedicatedPage('checkout', plan.name);
                       }}
                       className="w-full py-1.5 text-[11px] font-bold text-orange-600 hover:text-orange-700 hover:underline transition-all cursor-pointer text-center block"
                     >

@@ -4273,6 +4273,64 @@ const AdminPanel = ({ user, onLogout }: { user: User, onLogout: () => void }) =>
                   </div>
 
                   <div className="pt-6 border-t border-zinc-100">
+                    <h4 className="font-bold text-sm mb-1">Coordenadas de Pagamento (Página de Compra / Checkout)</h4>
+                    <p className="text-xs text-zinc-500 mb-4">Estas informações são apresentadas aos clientes quando compram ou renovam licenças.</p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1.5">Titular da Conta</label>
+                        <input 
+                          type="text" 
+                          value={systemSettings.bank_account_holder || ''}
+                          onChange={(e) => handleUpdateSetting('bank_account_holder', e.target.value)}
+                          placeholder="Ex: Fatu-R Soluções Lda"
+                          className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-black transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1.5">Entidade Multicaixa</label>
+                        <input 
+                          type="text" 
+                          value={systemSettings.multicaixa_entity || ''}
+                          onChange={(e) => handleUpdateSetting('multicaixa_entity', e.target.value)}
+                          placeholder="Ex: 10245"
+                          className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-100 rounded-xl text-sm font-mono outline-none focus:ring-2 focus:ring-black transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1.5">IBAN Banco BAI</label>
+                        <input 
+                          type="text" 
+                          value={systemSettings.bank_iban_bai || ''}
+                          onChange={(e) => handleUpdateSetting('bank_iban_bai', e.target.value)}
+                          placeholder="AO06..."
+                          className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-100 rounded-xl text-sm font-mono outline-none focus:ring-2 focus:ring-black transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1.5">Referência Multicaixa</label>
+                        <input 
+                          type="text" 
+                          value={systemSettings.multicaixa_reference || ''}
+                          onChange={(e) => handleUpdateSetting('multicaixa_reference', e.target.value)}
+                          placeholder="Ex: 924 812 051"
+                          className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-100 rounded-xl text-sm font-mono outline-none focus:ring-2 focus:ring-black transition-all"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-black text-zinc-400 uppercase tracking-widest mb-1.5">IBAN Banco BFA</label>
+                        <input 
+                          type="text" 
+                          value={systemSettings.bank_iban_bfa || ''}
+                          onChange={(e) => handleUpdateSetting('bank_iban_bfa', e.target.value)}
+                          placeholder="AO06..."
+                          className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-100 rounded-xl text-sm font-mono outline-none focus:ring-2 focus:ring-black transition-all"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-6 border-t border-zinc-100">
                     <h4 className="font-bold text-sm mb-4">Notificações Automáticas</h4>
                     <div className="space-y-6">
                       <div className="flex items-center justify-between">

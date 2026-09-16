@@ -2253,6 +2253,11 @@ function initializeDatabase() {
       db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("weekly_reports", "false");
       db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?)").run("system_name", "Fatu-R");
     }
+    db.prepare("INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)").run("bank_iban_bai", "AO06 0040 0000 9876 5432 1018 9");
+    db.prepare("INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)").run("bank_iban_bfa", "AO06 0006 0000 9876 5432 1098 7");
+    db.prepare("INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)").run("bank_account_holder", "Fatu-R Soluções Lda");
+    db.prepare("INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)").run("multicaixa_entity", "10245");
+    db.prepare("INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)").run("multicaixa_reference", "924 812 051");
 
     // Ensure series exist for establishment 1
     const neededSeries = [
@@ -3620,9 +3625,15 @@ async function startServer() {
       // 4. Create license record with status = pending_approval and attached proof
       const startDateStr = new Date().toISOString().split('T')[0];
       
-      let resolvedPlan = "Básico";
-      if (planName === "Flex" || planName === "Profissional") resolvedPlan = "Profissional";
-      if (planName === "Pro" || planName === "Empresarial") resolvedPlan = "Empresarial";
+      let resolvedPlan = planName || "Básico";
+      const systemPlanMatch = db.prepare("SELECT name FROM system_plans WHERE LOWER(name) = LOWER(?)").get(planName) as any;
+      if (systemPlanMatch) {
+        resolvedPlan = systemPlanMatch.name;
+      } else if (planName === "Flex" || planName === "Profissional") {
+        resolvedPlan = "Profissional";
+      } else if (planName === "Pro" || planName === "Empresarial") {
+        resolvedPlan = "Empresarial";
+      }
 
       db.prepare(`
         INSERT INTO licenses (user_id, establishment_id, plan_type, start_date, expiry_date, status, payment_method, payment_proof, payment_proof_name, features)

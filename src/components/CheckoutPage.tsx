@@ -1,4 +1,4 @@
-import React, { useState, useRef, FormEvent } from 'react';
+import React, { useState, useEffect, useRef, FormEvent } from 'react';
 import { 
   CreditCard, 
   ArrowLeft, 
@@ -14,16 +14,29 @@ import {
   FileCheck, 
   X, 
   AlertCircle, 
-  BadgePercent,
-  Zap,
-  Copy,
-  ArrowRight
+  BadgePercent, 
+  Zap, 
+  Copy, 
+  ArrowRight,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { User } from '../types';
 import { FloatingBubbles } from './FloatingBubbles';
 
+export interface SystemPlan {
+  id: number;
+  name: string;
+  price: number;
+  max_establishments?: number;
+  max_products?: number;
+  features?: any;
+  description?: string;
+}
+
 interface CheckoutPageProps {
   initialPlan?: string;
+  initialPlans?: SystemPlan[];
   onBack: () => void;
   onLogin: (user: User) => void;
   onGoToRegister: () => void;
@@ -32,16 +45,43 @@ interface CheckoutPageProps {
 
 export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   initialPlan = 'Profissional',
+  initialPlans,
   onBack,
   onLogin,
   onGoToRegister,
   onGoToLogin
 }) => {
-  const [selectedPlan, setSelectedPlan] = useState<'Básico' | 'Profissional' | 'Empresarial'>(() => {
-    if (initialPlan === 'Básico' || initialPlan === 'Base') return 'Básico';
-    if (initialPlan === 'Empresarial' || initialPlan === 'Pro') return 'Empresarial';
-    return 'Profissional';
+  // Plans fetched from the Administrator account configuration (/api/admin/plans)
+  const [plans, setPlans] = useState<SystemPlan[]>(() => {
+    if (initialPlans && initialPlans.length > 0) {
+      return initialPlans.filter(p => !p.name?.toLowerCase().includes('rh'));
+    }
+    return [
+      { id: 1, name: 'Básico', price: 5000, max_establishments: 1, max_products: 100, description: 'Serviços, Consultoria e Facturação A4' },
+      { id: 2, name: 'Profissional', price: 15000, max_establishments: 2, max_products: 1000, description: 'POS Retalho, Lojas, Stock e Caixa' },
+      { id: 3, name: 'Empresarial', price: 35000, max_establishments: 10, max_products: 5000, description: 'Restauração, Cozinha e Multi-armazéns' }
+    ];
   });
+
+  const [selectedPlanId, setSelectedPlanId] = useState<number>(() => {
+    // Attempt to match initial plan from props
+    if (initialPlans && initialPlans.length > 0) {
+      const match = initialPlans.find(p => 
+        p.name?.toLowerCase() === initialPlan?.toLowerCase() ||
+        (initialPlan?.toLowerCase().includes('básic') && p.name?.toLowerCase().includes('básic')) ||
+        (initialPlan?.toLowerCase().includes('base') && p.name?.toLowerCase().includes('base')) ||
+        (initialPlan?.toLowerCase().includes('profis') && p.name?.toLowerCase().includes('profis')) ||
+        (initialPlan?.toLowerCase().includes('flex') && p.name?.toLowerCase().includes('flex')) ||
+        (initialPlan?.toLowerCase().includes('empresa') && p.name?.toLowerCase().includes('empresa')) ||
+        (initialPlan?.toLowerCase().includes('pro') && p.name?.toLowerCase().includes('pro'))
+      );
+      if (match) return match.id;
+    }
+    return 2; // Default to Profissional
+  });
+
+  const [adminSettings, setAdminSettings] = useState<Record<string, string>>({});
+  const [isLoadingPlans, setIsLoadingPlans] = useState<boolean>(true);
 
   const [billingPeriod, setBillingPeriod] = useState<'trimestral' | 'semestral' | 'anual'>('trimestral');
   const [paymentMethod, setPaymentMethod] = useState<'iban' | 'multicaixa'>('iban');
@@ -65,14 +105,80 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const [registeredUser, setRegisteredUser] = useState<User | null>(null);
   const [copiedIBAN, setCopiedIBAN] = useState<string | null>(null);
 
-  const planMonthlyPrices = {
-    'Básico': 7900,
-    'Profissional': 15000,
-    'Empresarial': 19500
+  // Fetch administrator account plans and system configuration dynamically
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchAdminConfiguration = async () => {
+      try {
+        const [plansRes, settingsRes] = await Promise.all([
+          fetch(`/api/admin/plans?t=${Date.now()}`),
+          fetch(`/api/admin/settings?t=${Date.now()}`)
+        ]);
+
+        if (plansRes.ok) {
+          const plansData = await plansRes.json();
+          if (isMounted && Array.isArray(plansData) && plansData.length > 0) {
+            const cleanPlans: SystemPlan[] = plansData.filter((p: any) => !p.name?.toLowerCase().includes('rh'));
+            setPlans(cleanPlans);
+
+            // Match initialPlan against fresh administrator plans
+            const match = cleanPlans.find((p: SystemPlan) => 
+              p.name?.toLowerCase() === initialPlan?.toLowerCase() ||
+              (initialPlan?.toLowerCase().includes('básic') && p.name?.toLowerCase().includes('básic')) ||
+              (initialPlan?.toLowerCase().includes('base') && p.name?.toLowerCase().includes('base')) ||
+              (initialPlan?.toLowerCase().includes('profis') && p.name?.toLowerCase().includes('profis')) ||
+              (initialPlan?.toLowerCase().includes('flex') && p.name?.toLowerCase().includes('flex')) ||
+              (initialPlan?.toLowerCase().includes('empresa') && p.name?.toLowerCase().includes('empresa')) ||
+              (initialPlan?.toLowerCase().includes('pro') && p.name?.toLowerCase().includes('pro'))
+            );
+
+            if (match) {
+              setSelectedPlanId(match.id);
+            } else if (cleanPlans.length > 0) {
+              // If current selected plan is not in list, pick the first or second
+              const currentExists = cleanPlans.some(p => p.id === selectedPlanId);
+              if (!currentExists) {
+                setSelectedPlanId(cleanPlans.length > 1 ? cleanPlans[1].id : cleanPlans[0].id);
+              }
+            }
+          }
+        }
+
+        if (settingsRes.ok) {
+          const settingsData = await settingsRes.json();
+          if (isMounted && settingsData && typeof settingsData === 'object') {
+            setAdminSettings(settingsData);
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao obter configuração dos planos do administrador:', err);
+      } finally {
+        if (isMounted) {
+          setIsLoadingPlans(false);
+        }
+      }
+    };
+
+    fetchAdminConfiguration();
+    return () => {
+      isMounted = false;
+    };
+  }, [initialPlan]);
+
+  // Selected plan entity resolved from administrator data
+  const selectedPlan: SystemPlan = plans.find(p => p.id === selectedPlanId) || plans[0] || {
+    id: 1,
+    name: 'Básico',
+    price: 5000,
+    max_establishments: 1,
+    max_products: 100,
+    description: 'Serviços, Consultoria e Facturação A4'
   };
 
+  // Real price calculation strictly driven by the administrator account price
   const getCalculation = () => {
-    const monthlyPrice = planMonthlyPrices[selectedPlan];
+    const monthlyPrice = Number(selectedPlan.price) || 0;
     let months = 3;
     let discountPercent = 0;
 
@@ -99,6 +205,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   };
 
   const calc = getCalculation();
+
+  // Bank Coordinates configured by the administrator (with official fallback)
+  const bankBai = adminSettings.bank_iban_bai || 'AO06 0040 0000 9876 5432 1018 9';
+  const bankBfa = adminSettings.bank_iban_bfa || 'AO06 0006 0000 9876 5432 1098 7';
+  const accountHolder = adminSettings.bank_account_holder || adminSettings.system_name || 'Fatu-R Soluções Lda';
+  const multicaixaEntity = adminSettings.multicaixa_entity || '10245';
+  const multicaixaRef = adminSettings.multicaixa_reference || '924 812 051';
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -135,7 +248,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     }
 
     if (paymentMethod === 'iban' && !proofFile) {
-      setError('Por favor, anexe o comprovativo da transferência bancária para validação da licença.');
+      setError('Por favor, anexe o comprovativo da transferência bancária para validação da sua licença.');
       return;
     }
 
@@ -153,7 +266,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
           phone: phone || 'N/A',
           nif: nif || '999999999',
           address: address || 'Luanda, Angola',
-          planName: selectedPlan,
+          planName: selectedPlan.name,
           months: String(calc.months),
           paymentMethod: paymentMethod === 'multicaixa' ? 'Referência Multicaixa' : 'Transferência Bancária / IBAN',
           paymentProof: proofFile ? proofFile.data : null,
@@ -250,13 +363,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                 A sua empresa <strong className="text-black font-black">{companyName}</strong> foi registada no sistema.
               </p>
               <p className="text-xs text-slate-600 font-medium">
-                O comprovativo foi submetido. A sua licença comercial do plano <strong className="text-orange-600 font-black">{selectedPlan}</strong> está ativa.
+                O comprovativo foi submetido. A sua licença comercial do plano <strong className="text-orange-600 font-black">{selectedPlan.name}</strong> está ativa.
               </p>
             </div>
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-left text-xs space-y-2.5">
               <div className="flex justify-between">
                 <span className="text-slate-600 font-bold">Plano Selecionado:</span>
-                <span className="text-black font-black">{selectedPlan}</span>
+                <span className="text-black font-black">{selectedPlan.name}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-600 font-bold">Período:</span>
@@ -265,7 +378,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
               <div className="flex justify-between">
                 <span className="text-slate-600 font-bold">Valor Total:</span>
                 <span className="text-black font-mono font-black text-sm">
-                  {calc.total.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+                  {calc.total.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kz
                 </span>
               </div>
             </div>
@@ -288,13 +401,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
             <div className="mb-8 text-left">
               <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/90 border border-white shadow-md shadow-orange-950/10 text-black text-xs font-black mb-3">
                 <Zap size={14} className="text-orange-600" />
-                <span>Ativação Direta de Licença Comercial</span>
+                <span>Ativação Direta de Licença Comercial • Tabela de Preços Oficial</span>
               </div>
               <h1 className="text-2xl sm:text-4xl font-black text-black tracking-tight">
                 Comprar Licença Comercial Fatu-R
               </h1>
               <p className="text-xs sm:text-sm font-semibold text-black/80 mt-1">
-                Escolha o seu plano de faturação, preencha os dados da sua empresa e confirme as coordenadas de pagamento.
+                Planos e preços sincronizados diretamente com a conta de administração do sistema.
               </p>
             </div>
 
@@ -317,85 +430,51 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                       <span className="w-7 h-7 rounded-xl bg-orange-500 text-white text-xs font-black flex items-center justify-center shadow-sm">1</span>
                       <h3 className="text-sm font-black text-black uppercase tracking-wider">Escolha a sua Licença Comercial</h3>
                     </div>
-                    <span className="text-xs font-bold text-slate-500">Homologado AGT nº 452</span>
+                    <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
+                      {isLoadingPlans && <Loader2 size={12} className="animate-spin text-orange-600" />}
+                      <span>Homologado AGT nº 452</span>
+                    </span>
                   </div>
 
-                  {/* Plan cards */}
+                  {/* Plan cards dynamically mapped from the Administrator Account configuration */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                    {/* Básico */}
-                    <div
-                      onClick={() => setSelectedPlan('Básico')}
-                      className={`p-4 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between ${
-                        selectedPlan === 'Básico'
-                          ? 'bg-orange-50/70 border-orange-500 ring-2 ring-orange-500/20 shadow-md'
-                          : 'bg-slate-50 border-slate-200 hover:border-orange-300'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-black text-black">Base / Básico</span>
-                          {selectedPlan === 'Básico' && <div className="w-3 h-3 rounded-full bg-orange-500" />}
-                        </div>
-                        <p className="text-[11px] font-medium text-slate-600 mt-1">Serviços, Consultoria e Facturação A4</p>
-                      </div>
-                      <div className="mt-4 pt-3 border-t border-slate-200">
-                        <span className="text-base font-black text-black">
-                          {planMonthlyPrices['Básico'].toLocaleString('pt-AO')} Kz
-                        </span>
-                        <span className="text-[10px] text-slate-500 block font-bold">/mês</span>
-                      </div>
-                    </div>
+                    {plans.map((plan, index) => {
+                      const isSelected = plan.id === selectedPlan.id;
+                      const isPopular = plan.name?.toLowerCase().includes('profis') || index === 1;
 
-                    {/* Profissional (Popular) */}
-                    <div
-                      onClick={() => setSelectedPlan('Profissional')}
-                      className={`p-4 rounded-2xl border-2 cursor-pointer transition-all relative overflow-hidden flex flex-col justify-between ${
-                        selectedPlan === 'Profissional'
-                          ? 'bg-orange-50/70 border-orange-500 ring-2 ring-orange-500/20 shadow-md'
-                          : 'bg-slate-50 border-slate-200 hover:border-orange-300'
-                      }`}
-                    >
-                      <div className="absolute top-0 right-0 bg-orange-500 text-white text-[9px] font-black px-2.5 py-0.5 rounded-bl-lg">
-                        POPULAR
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-black text-black">Flex / Profissional</span>
-                          {selectedPlan === 'Profissional' && <div className="w-3 h-3 rounded-full bg-orange-500" />}
+                      return (
+                        <div
+                          key={`checkout-plan-${plan.id}`}
+                          onClick={() => setSelectedPlanId(plan.id)}
+                          className={`p-4 rounded-2xl border-2 cursor-pointer transition-all relative overflow-hidden flex flex-col justify-between ${
+                            isSelected
+                              ? 'bg-orange-50/70 border-orange-500 ring-2 ring-orange-500/20 shadow-md scale-[1.01]'
+                              : 'bg-slate-50 border-slate-200 hover:border-orange-300'
+                          }`}
+                        >
+                          {isPopular && (
+                            <div className="absolute top-0 right-0 bg-orange-500 text-white text-[9px] font-black px-2.5 py-0.5 rounded-bl-lg">
+                              POPULAR
+                            </div>
+                          )}
+                          <div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-black text-black">{plan.name}</span>
+                              {isSelected && <div className="w-3 h-3 rounded-full bg-orange-500 shadow-sm" />}
+                            </div>
+                            <p className="text-[11px] font-medium text-slate-600 mt-1 line-clamp-2">
+                              {plan.description || `Até ${plan.max_establishments || 1} ${plan.max_establishments === 1 ? 'estabelecimento' : 'estabelecimentos'} e ${plan.max_products || 100} produtos`}
+                            </p>
+                          </div>
+                          <div className="mt-4 pt-3 border-t border-slate-200">
+                            <span className="text-base font-black text-black font-mono">
+                              {Number(plan.price).toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kz
+                            </span>
+                            <span className="text-[10px] text-slate-500 block font-bold">/mês</span>
+                          </div>
                         </div>
-                        <p className="text-[11px] font-medium text-slate-600 mt-1">POS Retalho, Lojas, Stock e Caixa</p>
-                      </div>
-                      <div className="mt-4 pt-3 border-t border-slate-200">
-                        <span className="text-base font-black text-black">
-                          {planMonthlyPrices['Profissional'].toLocaleString('pt-AO')} Kz
-                        </span>
-                        <span className="text-[10px] text-slate-500 block font-bold">/mês</span>
-                      </div>
-                    </div>
-
-                    {/* Empresarial */}
-                    <div
-                      onClick={() => setSelectedPlan('Empresarial')}
-                      className={`p-4 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between ${
-                        selectedPlan === 'Empresarial'
-                          ? 'bg-orange-50/70 border-orange-500 ring-2 ring-orange-500/20 shadow-md'
-                          : 'bg-slate-50 border-slate-200 hover:border-orange-300'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-black text-black">Pro / Empresarial</span>
-                          {selectedPlan === 'Empresarial' && <div className="w-3 h-3 rounded-full bg-orange-500" />}
-                        </div>
-                        <p className="text-[11px] font-medium text-slate-600 mt-1">Restauração, Cozinha e Multi-armazéns</p>
-                      </div>
-                      <div className="mt-4 pt-3 border-t border-slate-200">
-                        <span className="text-base font-black text-black">
-                          {planMonthlyPrices['Empresarial'].toLocaleString('pt-AO')} Kz
-                        </span>
-                        <span className="text-[10px] text-slate-500 block font-bold">/mês</span>
-                      </div>
-                    </div>
+                      );
+                    })}
                   </div>
 
                   {/* Billing Period Selector */}
@@ -593,16 +672,16 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                             <span className="text-xs font-black text-orange-600">Banco BAI</span>
                             <button
                               type="button"
-                              onClick={() => copyToClipboard('AO06.0040.0000.1234.5678.9012.3', 'bai')}
+                              onClick={() => copyToClipboard(bankBai, 'bai')}
                               className="text-[10px] font-bold text-slate-600 hover:text-black flex items-center gap-1 cursor-pointer bg-white px-2 py-0.5 rounded-md border border-slate-200"
                             >
                               <Copy size={11} />
                               <span>{copiedIBAN === 'bai' ? 'Copiado!' : 'Copiar'}</span>
                             </button>
                           </div>
-                          <p className="text-[10px] font-semibold text-slate-600">Titular: Fatu-R Soluções Lda</p>
+                          <p className="text-[10px] font-semibold text-slate-600">Titular: {accountHolder}</p>
                           <p className="text-xs font-mono font-black text-black tracking-wider pt-1">
-                            AO06.0040.0000.1234.5678.9012.3
+                            {bankBai}
                           </p>
                         </div>
 
@@ -612,16 +691,16 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                             <span className="text-xs font-black text-orange-600">Banco BFA</span>
                             <button
                               type="button"
-                              onClick={() => copyToClipboard('AO06.0006.0000.9876.5432.1098.7', 'bfa')}
+                              onClick={() => copyToClipboard(bankBfa, 'bfa')}
                               className="text-[10px] font-bold text-slate-600 hover:text-black flex items-center gap-1 cursor-pointer bg-white px-2 py-0.5 rounded-md border border-slate-200"
                             >
                               <Copy size={11} />
                               <span>{copiedIBAN === 'bfa' ? 'Copiado!' : 'Copiar'}</span>
                             </button>
                           </div>
-                          <p className="text-[10px] font-semibold text-slate-600">Titular: Fatu-R Soluções Lda</p>
+                          <p className="text-[10px] font-semibold text-slate-600">Titular: {accountHolder}</p>
                           <p className="text-xs font-mono font-black text-black tracking-wider pt-1">
-                            AO06.0006.0000.9876.5432.1098.7
+                            {bankBfa}
                           </p>
                         </div>
                       </div>
@@ -674,11 +753,11 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                       <div className="grid grid-cols-2 gap-4 pt-1">
                         <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
                           <span className="text-[10px] text-slate-500 block uppercase font-black">Entidade:</span>
-                          <span className="text-sm font-mono font-black text-black">10245</span>
+                          <span className="text-sm font-mono font-black text-black">{multicaixaEntity}</span>
                         </div>
                         <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
                           <span className="text-[10px] text-slate-500 block uppercase font-black">Referência:</span>
-                          <span className="text-sm font-mono font-black text-orange-600">924 812 051</span>
+                          <span className="text-sm font-mono font-black text-orange-600">{multicaixaRef}</span>
                         </div>
                       </div>
                       <p className="text-[11px] font-semibold text-slate-600">
@@ -700,12 +779,14 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   <div className="space-y-3 text-xs">
                     <div className="flex justify-between items-center">
                       <span className="text-slate-600 font-bold">Licença Selecionada:</span>
-                      <span className="text-black font-black">{selectedPlan}</span>
+                      <span className="text-black font-black">{selectedPlan.name}</span>
                     </div>
 
                     <div className="flex justify-between items-center">
                       <span className="text-slate-600 font-bold">Mensalidade Base:</span>
-                      <span className="text-black font-mono font-bold">{calc.monthlyPrice.toLocaleString('pt-AO')} Kz</span>
+                      <span className="text-black font-mono font-bold">
+                        {Number(calc.monthlyPrice).toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kz
+                      </span>
                     </div>
 
                     <div className="flex justify-between items-center">
@@ -715,7 +796,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
                     <div className="flex justify-between items-center">
                       <span className="text-slate-600 font-bold">Subtotal:</span>
-                      <span className="text-black font-mono font-bold">{calc.subtotal.toLocaleString('pt-AO')} Kz</span>
+                      <span className="text-black font-mono font-bold">
+                        {calc.subtotal.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kz
+                      </span>
                     </div>
 
                     {calc.discountAmount > 0 && (
@@ -724,7 +807,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                           <BadgePercent size={14} />
                           <span>Desconto ({calc.discountPercent}%):</span>
                         </span>
-                        <span className="font-mono font-black">- {calc.discountAmount.toLocaleString('pt-AO')} Kz</span>
+                        <span className="font-mono font-black">
+                          - {calc.discountAmount.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kz
+                        </span>
                       </div>
                     )}
 
@@ -732,7 +817,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                       <span className="text-sm font-black text-black">Total a Pagar:</span>
                       <div className="text-right">
                         <span className="text-2xl font-black text-orange-600 font-mono">
-                          {calc.total.toLocaleString('pt-AO', { minimumFractionDigits: 2 })} Kz
+                          {calc.total.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kz
                         </span>
                         <span className="text-[10px] text-slate-500 block font-semibold">IVA incluído à taxa legal</span>
                       </div>
