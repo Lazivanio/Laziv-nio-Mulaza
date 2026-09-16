@@ -1,4 +1,4 @@
-import React, { useState, FormEvent, useRef } from 'react';
+import React, { useState, useEffect, FormEvent, useRef } from 'react';
 import { 
   Zap, 
   CheckCircle2, 
@@ -49,12 +49,65 @@ import { BlogSubpage } from './BlogSubpage';
 import { DesktopOfflineSubpage } from './DesktopOfflineSubpage';
 import { ContactosSubpage } from './ContactosSubpage';
 import { SobreNosSubpage } from './SobreNosSubpage';
+import { LoginPage } from './LoginPage';
+import { RegisterPage } from './RegisterPage';
+import { CheckoutPage } from './CheckoutPage';
 
 interface LandingPageProps {
   onLogin: (user: User) => void;
 }
 
 export const LandingPage = ({ onLogin }: LandingPageProps) => {
+  const [activeDedicatedPage, setActiveDedicatedPage] = useState<'none' | 'login' | 'register' | 'checkout'>(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname.toLowerCase();
+      if (path === '/login' || path === '/iniciar-sessao' || path === '/entrar') return 'login';
+      if (path === '/register' || path === '/criar-conta' || path === '/registo') return 'register';
+      if (path === '/pagar' || path === '/checkout' || path === '/comprar') return 'checkout';
+    }
+    return 'none';
+  });
+  const [checkoutInitialPlan, setCheckoutInitialPlan] = useState<string>('Profissional');
+
+  const openDedicatedPage = (page: 'login' | 'register' | 'checkout', plan?: string) => {
+    if (plan) setCheckoutInitialPlan(plan);
+    setActiveDedicatedPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const urlMap = {
+      login: '/login',
+      register: '/criar-conta',
+      checkout: '/pagar'
+    };
+    if (typeof window !== 'undefined' && window.history?.pushState) {
+      window.history.pushState({ page }, '', urlMap[page] || '/');
+    }
+  };
+
+  const closeDedicatedPage = () => {
+    setActiveDedicatedPage('none');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (typeof window !== 'undefined' && window.history?.pushState) {
+      window.history.pushState(null, '', '/');
+    }
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname.toLowerCase();
+      if (path === '/login' || path === '/iniciar-sessao' || path === '/entrar') {
+        setActiveDedicatedPage('login');
+      } else if (path === '/register' || path === '/criar-conta' || path === '/registo') {
+        setActiveDedicatedPage('register');
+      } else if (path === '/pagar' || path === '/checkout' || path === '/comprar') {
+        setActiveDedicatedPage('checkout');
+      } else {
+        setActiveDedicatedPage('none');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [isTermsModalOpen, setIsTermsModalOpen] = useState(false);
@@ -702,6 +755,41 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
     }, 800);
   };
 
+  // Dedicated Full Pages routing
+  if (activeDedicatedPage === 'login') {
+    return (
+      <LoginPage 
+        onBack={closeDedicatedPage}
+        onLogin={onLogin}
+        onGoToRegister={() => openDedicatedPage('register')}
+        onGoToCheckout={() => openDedicatedPage('checkout')}
+      />
+    );
+  }
+
+  if (activeDedicatedPage === 'register') {
+    return (
+      <RegisterPage 
+        onBack={closeDedicatedPage}
+        onLogin={onLogin}
+        onGoToLogin={() => openDedicatedPage('login')}
+        onGoToCheckout={() => openDedicatedPage('checkout')}
+      />
+    );
+  }
+
+  if (activeDedicatedPage === 'checkout') {
+    return (
+      <CheckoutPage 
+        initialPlan={checkoutInitialPlan}
+        onBack={closeDedicatedPage}
+        onLogin={onLogin}
+        onGoToRegister={() => openDedicatedPage('register')}
+        onGoToLogin={() => openDedicatedPage('login')}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased selection:bg-orange-500 selection:text-white">
       
@@ -769,19 +857,13 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             </div>
 
             <button 
-              onClick={() => {
-                setError('');
-                setIsLoginModalOpen(true);
-              }}
+              onClick={() => openDedicatedPage('login')}
               className="text-[13px] font-bold text-slate-700 hover:text-slate-900 px-4 py-2 transition-colors cursor-pointer"
             >
               Iniciar Sessão
             </button>
             <button 
-              onClick={() => {
-                setRegError('');
-                setIsRegisterModalOpen(true);
-              }}
+              onClick={() => openDedicatedPage('register')}
               className="bg-orange-500 hover:bg-orange-600 text-white font-bold text-[13px] px-5 py-2.5 rounded-full transition-all shadow-md shadow-orange-500/10 cursor-pointer"
             >
               Testar Grátis
@@ -1183,20 +1265,18 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 <button 
                   onClick={() => {
                     setIsMobileMenuOpen(false);
-                    setError('');
-                    setIsLoginModalOpen(true);
+                    openDedicatedPage('login');
                   }}
-                  className="w-full py-2 bg-slate-100 font-bold text-slate-805 rounded-xl text-xs text-center border border-slate-200"
+                  className="w-full py-2 bg-slate-100 font-bold text-slate-805 rounded-xl text-xs text-center border border-slate-200 cursor-pointer"
                 >
                   Entrar
                 </button>
                 <button 
                   onClick={() => {
                     setIsMobileMenuOpen(false);
-                    setRegError('');
-                    setIsRegisterModalOpen(true);
+                    openDedicatedPage('register');
                   }}
-                  className="w-full py-2.5 bg-orange-500 text-white font-bold rounded-xl text-xs text-center"
+                  className="w-full py-2.5 bg-orange-500 text-white font-bold rounded-xl text-xs text-center cursor-pointer"
                 >
                   Criar Conta Grátis
                 </button>
@@ -1213,8 +1293,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }} 
           onRegister={() => {
-            setRegError('');
-            setIsRegisterModalOpen(true);
+            openDedicatedPage('register');
           }} 
         />
       ) : isClothingSubpageOpen ? (
@@ -1224,8 +1303,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }} 
           onRegister={() => {
-            setRegError('');
-            setIsRegisterModalOpen(true);
+            openDedicatedPage('register');
           }} 
         />
       ) : isBlogSubpageOpen ? (
@@ -1253,8 +1331,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             }
           }}
           onRegister={() => {
-            setRegError('');
-            setIsRegisterModalOpen(true);
+            openDedicatedPage('register');
           }}
         />
       ) : isDesktopOfflineSubpageOpen ? (
@@ -1272,8 +1349,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             }
           }}
           onRegister={() => {
-            setRegError('');
-            setIsRegisterModalOpen(true);
+            openDedicatedPage('register');
           }}
         />
       ) : isContactosSubpageOpen ? (
@@ -1288,8 +1364,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             }
           }}
           onRegister={() => {
-            setRegError('');
-            setIsRegisterModalOpen(true);
+            openDedicatedPage('register');
           }}
           onInitiateChat={() => {
             setIsChatBoxOpen(true);
@@ -1307,8 +1382,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             }
           }}
           onRegister={() => {
-            setRegError('');
-            setIsRegisterModalOpen(true);
+            openDedicatedPage('register');
           }}
         />
       ) : (
@@ -1334,27 +1408,20 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
 
                 <div className="flex flex-wrap items-center gap-3.5 pt-4">
                   <button 
-                    onClick={() => {
-                      setRegError('');
-                      setIsRegisterModalOpen(true);
-                    }}
-                    className="w-full sm:w-auto bg-orange-500 hover:bg-orange-600 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-orange-500/10"
+                    onClick={() => openDedicatedPage('register')}
+                    className="w-full sm:w-auto bg-orange-500 hover:bg-orange-600 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-orange-500/10 cursor-pointer"
                   >
                     Criar Conta Grátis
                   </button>
                   <button 
                     onClick={() => triggerScroll('precos')}
-                    className="w-full sm:w-auto bg-white/10 hover:bg-white/15 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all border border-white/10"
+                    className="w-full sm:w-auto bg-white/10 hover:bg-white/15 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all border border-white/10 cursor-pointer"
                   >
                     Ver Planos
                   </button>
                   <button 
-                    onClick={() => {
-                      setPaidError('');
-                      setPaidSuccess(false);
-                      setIsPaidModalOpen(true);
-                    }}
-                    className="w-full sm:w-auto bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-amber-500/15 border border-amber-400/20"
+                    onClick={() => openDedicatedPage('checkout')}
+                    className="w-full sm:w-auto bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-7 py-3 rounded-full text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-amber-500/15 border border-amber-400/20 cursor-pointer"
                   >
                     Pagar Agora
                   </button>
@@ -1718,10 +1785,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               </p>
               <div className="pt-2">
                 <button
-                  onClick={() => {
-                    setRegError('');
-                    setIsRegisterModalOpen(true);
-                  }}
+                  onClick={() => openDedicatedPage('register')}
                   className="inline-flex items-center justify-center bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs px-6 py-3 rounded-full transition-all shadow-md shadow-orange-500/15 group cursor-pointer"
                 >
                   Experimente Grátis
@@ -1793,10 +1857,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                   </p>
                   <div className="pt-2 flex flex-wrap items-center gap-4">
                     <button
-                      onClick={() => {
-                        setRegError('');
-                        setIsRegisterModalOpen(true);
-                      }}
+                      onClick={() => openDedicatedPage('register')}
                       className="bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs px-6 py-3.5 rounded-full transition-all shadow-md shadow-orange-500/10 active:scale-95 group flex items-center gap-1.5 cursor-pointer"
                     >
                       Experimente Grátis
@@ -2001,8 +2062,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                         setIsPOSSubpageOpen(true);
                         window.scrollTo({ top: 0, behavior: 'smooth' });
                       } else {
-                        setRegError('');
-                        setIsRegisterModalOpen(true);
+                        openDedicatedPage('register');
                       }
                     }}
                     className={`w-full shrink-0 bg-white p-8 rounded-2xl border border-slate-200 shadow-md min-h-[340px] flex flex-col justify-between transition-all duration-300 relative overflow-hidden group cursor-pointer ${item.borderColor} ${item.shadowColor}`}
@@ -2145,8 +2205,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                               setIsPOSSubpageOpen(true);
                               window.scrollTo({ top: 0, behavior: 'smooth' });
                             } else {
-                              setRegError('');
-                              setIsRegisterModalOpen(true);
+                              openDedicatedPage('register');
                             }
                           }}
                           className={`bg-white p-10 rounded-2xl border border-slate-200 shadow-md hover:-translate-y-2 group cursor-pointer duration-300 transition-all flex flex-col justify-between min-h-[350px] relative overflow-hidden ${item.borderColor} ${item.shadowColor}`}
@@ -2380,38 +2439,40 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                     </div>
                   </div>
 
-                  <div className="pt-6 mt-6 border-t border-slate-100 pointer-events-auto">
+                  <div className="pt-6 mt-6 border-t border-slate-100 pointer-events-auto space-y-2">
                     <button 
                       onClick={() => {
-                        setRegError('');
-                        
-                        // Sync current choice with checkout form
                         const nameLower = plan.name?.toLowerCase() || '';
+                        let targetPlan = 'Profissional';
                         if (nameLower.includes('básico') || nameLower === 'base') {
-                          setPaidPlan('Básico');
+                          targetPlan = 'Básico';
                         } else if (nameLower.includes('pro') || nameLower.includes('empresarial')) {
-                          setPaidPlan('Empresarial');
-                        } else {
-                          setPaidPlan('Profissional');
+                          targetPlan = 'Empresarial';
                         }
-
-                        if (billingPeriod === 'annually') {
-                          setPaidPeriod('anual');
-                        } else if (billingPeriod === 'semestral') {
-                          setPaidPeriod('semestral');
-                        } else {
-                          setPaidPeriod('trimestral');
-                        }
-
-                        setIsRegisterModalOpen(true);
+                        openDedicatedPage('register', targetPlan);
                       }}
-                      className={`w-full py-2.5 text-xs font-bold rounded-xl transition-all ${
+                      className={`w-full py-2.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
                         plan.popular 
-                          ? 'bg-orange-500 hover:bg-orange-600 text-white' 
+                          ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/15' 
                           : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                       }`}
                     >
-                      {plan.buttonText}
+                      {plan.buttonText || 'Começar Grátis (30 Dias)'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        const nameLower = plan.name?.toLowerCase() || '';
+                        let targetPlan = 'Profissional';
+                        if (nameLower.includes('básico') || nameLower === 'base') {
+                          targetPlan = 'Básico';
+                        } else if (nameLower.includes('pro') || nameLower.includes('empresarial')) {
+                          targetPlan = 'Empresarial';
+                        }
+                        openDedicatedPage('checkout', targetPlan);
+                      }}
+                      className="w-full py-1.5 text-[11px] font-bold text-orange-600 hover:text-orange-700 hover:underline transition-all cursor-pointer text-center block"
+                    >
+                      Pagar Agora (Licença Comercial) →
                     </button>
                   </div>
                 </div>
@@ -2861,8 +2922,8 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
             <div className="space-y-4">
               <h4 className="text-white font-black text-xs uppercase tracking-wider">Conta</h4>
               <ul className="space-y-2 text-slate-400 text-[11px]">
-                <li><button onClick={() => setIsLoginModalOpen(true)} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Login / Entrar</button></li>
-                <li><button onClick={() => { setRegError(''); setIsRegisterModalOpen(true); }} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Criar Conta Grátis</button></li>
+                <li><button onClick={() => openDedicatedPage('login')} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Login / Entrar</button></li>
+                <li><button onClick={() => openDedicatedPage('register')} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Criar Conta Grátis</button></li>
                 <li><button onClick={() => setIsTermsModalOpen(true)} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Termos e Condições</button></li>
                 <li><button onClick={() => setIsPrivacyModalOpen(true)} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Política de Privacidade</button></li>
                 <li><button onClick={() => setIsDataProtectionModalOpen(true)} className="hover:text-orange-500 transition-colors text-left cursor-pointer">Proteção de Dados</button></li>

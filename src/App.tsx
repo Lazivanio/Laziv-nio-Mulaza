@@ -1,4 +1,4 @@
-import React, { useState, useEffect, ReactNode, FormEvent, useRef } from 'react';
+import React, { useState, useEffect, useMemo, ReactNode, FormEvent, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable';
@@ -122,8 +122,23 @@ import { OwnerFinance } from './components/OwnerFinance';
 import { OwnerSchool } from './components/OwnerSchool';
 import AdminAuditLogs from './components/AdminAuditLogs';
 import { LandingPage } from './components/LandingPage';
-import { executeInvoicePrint, downloadThermalInvoicePdf } from './lib/printInvoice';
+import { executeInvoicePrint, downloadThermalInvoicePdf, downloadA4InvoicePdf } from './lib/printInvoice';
 import { ProductLabelsView } from './components/ProductLabelsView';
+import { CashRegisterDenominationModal, CashDrawerInventoryModal } from './components/CashRegisterDenominationModal';
+import { 
+  checkChangeFeasibility, 
+  deductChangeFromBreakdown, 
+  applySaleCashTransaction,
+  addBreakdowns,
+  subtractBreakdowns,
+  decomposeAmountToBreakdown,
+  calculateDenominationsTotal,
+  calculateChangeDistribution,
+  combinationToBreakdown,
+  DenominationBreakdown,
+  DenominationHistoryEntry,
+  ChangeItemCombination
+} from './lib/cashDenominations';
 
 // --- Utilities ---
 function cn(...inputs: ClassValue[]) {
@@ -5732,6 +5747,57 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
     max_limit: '0' 
   });
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
+  const [denomTargetRegister, setDenomTargetRegister] = useState<{ id: number; name: string; amount: number } | null>(null);
+  const [isDenomModalOpen, setIsDenomModalOpen] = useState(false);
+
+  const handleInitiateOpenDenominations = (registerId: number, registerName: string, amountStr: string) => {
+    const cleanAmount = (amountStr || '').toString().replace(',', '.').trim();
+    const amount = parseFloat(cleanAmount);
+    if (isNaN(amount) || amount < 0) {
+      alert('Por favor, informe um valor de abertura válido antes de escolher as moedas.');
+      return;
+    }
+    setDenomTargetRegister({ id: registerId, name: registerName, amount });
+    setIsDenomModalOpen(true);
+  };
+
+  const handleConfirmOpenWithDenominations = async (breakdown: DenominationBreakdown, total: number) => {
+    if (!denomTargetRegister) return;
+    const registerId = denomTargetRegister.id;
+
+    try {
+      const res = await fetch('/api/seller/open-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          establishment_id: Number(establishmentId),
+          seller_id: user.id,
+          cash_register_id: registerId,
+          opening_amount: total,
+          denominations: breakdown
+        })
+      });
+
+      if (res.ok) {
+        setOpeningAmounts(prev => ({ ...prev, [registerId]: '' }));
+        setIsDenomModalOpen(false);
+        setDenomTargetRegister(null);
+        fetchData();
+        alert('Caixa aberto com sucesso com as denominações selecionadas!');
+      } else {
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          alert(data.error || 'Erro ao abrir caixa.');
+        } else {
+          alert(`Erro ao abrir caixa (Código: ${res.status}). Por favor, tente novamente.`);
+        }
+      }
+    } catch (error) {
+      console.error("Error opening session:", error);
+      alert('Erro de conexão ao abrir caixa.');
+    }
+  };
   const [isOpeningModalOpen, setIsOpeningModalOpen] = useState(false);
   const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
   const [closingSessionId, setClosingSessionId] = useState<number | null>(null);
@@ -9217,13 +9283,15 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                                       placeholder="Saldo Inicial"
                                       value={openingAmounts[register.id] || ''}
                                       onChange={e => setOpeningAmounts(prev => ({ ...prev, [register.id]: e.target.value }))}
-                                      className="w-24 px-2 py-1 text-xs border border-zinc-200 rounded outline-none focus:border-orange-500"
+                                      className="w-24 px-2 py-1 text-xs border border-zinc-200 rounded outline-none focus:border-orange-500 font-bold"
                                     />
                                     <button 
-                                      onClick={() => handleOpenSession(register.id, openingAmounts[register.id] || '')}
-                                      className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-700 transition-all"
+                                      onClick={() => handleInitiateOpenDenominations(register.id, register.name, openingAmounts[register.id] || register.default_initial_balance.toString())}
+                                      className="bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
+                                      title="Escolher Cédulas e Moedas para Abertura de Caixa"
                                     >
-                                      Abrir Caixa
+                                      <Coins size={13} />
+                                      <span>Abrir / Moedas</span>
                                     </button>
                                   </div>
                                 )}
@@ -9334,13 +9402,15 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                               placeholder="Saldo Inicial"
                               value={openingAmounts[register.id] || ''}
                               onChange={e => setOpeningAmounts(prev => ({ ...prev, [register.id]: e.target.value }))}
-                              className="flex-1 px-3 py-2 text-xs border border-zinc-200 rounded-lg outline-none focus:border-orange-500"
+                              className="flex-1 px-3 py-2 text-xs border border-zinc-200 rounded-lg outline-none focus:border-orange-500 font-bold"
                             />
                             <button 
-                              onClick={() => handleOpenSession(register.id, openingAmounts[register.id] || '')}
-                              className="bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-green-700 transition-all"
+                              onClick={() => handleInitiateOpenDenominations(register.id, register.name, openingAmounts[register.id] || register.default_initial_balance.toString())}
+                              className="bg-orange-500 hover:bg-orange-600 text-white px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
+                              title="Escolher Cédulas e Moedas para Abertura"
                             >
-                              Abrir Caixa
+                              <Coins size={14} />
+                              <span>Abrir / Moedas</span>
                             </button>
                           </div>
                         )}
@@ -9796,10 +9866,11 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
                         />
                       </div>
                       <button
-                        onClick={() => handleOpenSession(register.id, openingAmounts[register.id] || register.default_initial_balance.toString())}
-                        className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100"
+                        onClick={() => handleInitiateOpenDenominations(register.id, register.name, openingAmounts[register.id] || register.default_initial_balance.toString())}
+                        className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100 flex items-center justify-center gap-2"
                       >
-                        Abrir Caixa
+                        <Coins size={18} />
+                        <span>Escolher Moedas & Abrir</span>
                       </button>
                     </div>
                   )}
@@ -10842,19 +10913,31 @@ const EstablishmentAdmin = ({ user }: { user: User }) => {
         message={confirmModal.message}
         variant={confirmModal.variant}
       />
+
+      {denomTargetRegister && (
+        <CashRegisterDenominationModal
+          isOpen={isDenomModalOpen}
+          onClose={() => {
+            setIsDenomModalOpen(false);
+            setDenomTargetRegister(null);
+          }}
+          registerName={denomTargetRegister.name}
+          registerId={denomTargetRegister.id}
+          targetOpeningAmount={denomTargetRegister.amount}
+          onConfirmOpen={handleConfirmOpenWithDenominations}
+        />
+      )}
     </div>
   );
 };
 
 
 const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establishment: any }) => {
-  if (invoice.doc_type === 'PP') {
-    return <ProformaInvoice proforma={invoice} establishment={establishment} />;
-  }
   const invoiceRef = useRef<HTMLDivElement>(null);
   const [qrCode, setQrCode] = useState<string>('');
 
   useEffect(() => {
+    if (!invoice || !establishment) return;
     if (invoice.billing_mode === 'eletronica' || invoice.doc_type === 'FR') {
       const qrData = `https://agt.minfin.gov.ao/m?nif=${establishment.nif}&num=${invoice.invoice_number}&dt=${new Date(invoice.invoice_date || invoice.timestamp || invoice.created_at).toISOString().split('T')[0]}&val=${invoice.total_amount.toFixed(2)}`;
       QRCode.toDataURL(qrData, { margin: 1, width: 120 }, (err, url) => {
@@ -10866,57 +10949,30 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
   const handlePrint = () => {
     executeInvoicePrint(invoiceRef.current, {
       type: 'a4',
-      title: `${invoice.doc_type || 'FATURA'}_${(invoice.invoice_number || '').replace(/[\/\\]/g, '_')}`
+      title: `${invoice?.doc_type || 'FATURA'}_${(invoice?.invoice_number || '').replace(/[\/\\]/g, '_')}`
     });
   };
 
   const handleDownload = async () => {
-    if (!invoiceRef.current) return;
+    if (!invoiceRef.current || !invoice) return;
     
-    const canvas = await html2canvas(invoiceRef.current, {
-      scale: 2,
-      useCORS: true,
-      logging: false,
-      onclone: (clonedDoc) => {
-        const styles = clonedDoc.querySelectorAll('style');
-        styles.forEach(style => {
-          if (style.textContent) {
-            style.textContent = style.textContent.replace(/oklab\([^)]+\)/g, '#000');
-            style.textContent = style.textContent.replace(/oklch\([^)]+\)/g, '#000');
-            style.textContent = style.textContent.replace(/color-mix\([^)]+\)/g, '#000');
-            style.textContent = style.textContent.replace(/light-dark\([^)]+\)/g, '#000');
-          }
-        });
-        const elementsWithStyle = clonedDoc.querySelectorAll('[style]');
-        elementsWithStyle.forEach(el => {
-          const styleAttr = el.getAttribute('style');
-          if (styleAttr) {
-            let newStyle = styleAttr.replace(/oklab\([^)]+\)/g, '#000');
-            newStyle = newStyle.replace(/oklch\([^)]+\)/g, '#000');
-            newStyle = newStyle.replace(/color-mix\([^)]+\)/g, '#000');
-            newStyle = newStyle.replace(/light-dark\([^)]+\)/g, '#000');
-            el.setAttribute('style', newStyle);
-          }
-        });
-      }
-    });
-    
-    const imgData = canvas.toDataURL('image/png');
-    const imgProps = new jsPDF().getImageProperties(imgData);
-    const pdfWidth = 210; // A4
-    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+    const docPrefix = invoice.doc_type === 'NC' ? 'NOTA_CREDITO' : 
+                      invoice.doc_type === 'ND' ? 'NOTA_DEBITO' : 
+                      invoice.doc_type === 'FR' ? 'FATURA_RECIBO' : 
+                      invoice.doc_type === 'RC' ? 'RECIBO' : 'FATURA_CREDITO';
+    const filename = `${docPrefix}_${(invoice.invoice_number || '').replace(/[\/\\]/g, '_')}.pdf`;
 
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4'
+    await downloadA4InvoicePdf(invoiceRef.current, {
+      filename,
+      fitToContent: true
     });
-    
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-    pdf.save(`${invoice.doc_type === 'NC' ? 'NOTA_CREDITO' : invoice.doc_type === 'ND' ? 'NOTA_DEBITO' : invoice.doc_type === 'FR' ? 'FATURA_RECIBO' : invoice.doc_type === 'RC' ? 'RECIBO' : 'FATURA_CREDITO'}_${invoice.invoice_number.replace('/', '_')}.pdf`);
   };
 
   if (!invoice || !establishment) return null;
+
+  if (invoice.doc_type === 'PP') {
+    return <ProformaInvoice proforma={invoice} establishment={establishment} />;
+  }
 
   const subtotal = (invoice.items || []).reduce((acc: number, item: any) => acc + (Number(item.price || 0) * Number(item.quantity || 0)), 0);
   const taxTotal = (invoice.items || []).reduce((acc: number, item: any) => {
@@ -10926,28 +10982,24 @@ const CreditInvoicePreview = ({ invoice, establishment }: { invoice: any, establ
   const total = subtotal + taxTotal + (Number(invoice.adjustment_amount || 0));
   const currencyCode = invoice.currency || 'Kz';
 
-  if (invoice.doc_type === 'PP') {
-    return <ProformaInvoice proforma={invoice} establishment={establishment} />;
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex justify-end gap-3 no-print">
         <button 
           onClick={handlePrint}
-          className="flex items-center gap-2 px-4 py-2 bg-zinc-100 text-zinc-700 rounded-xl font-bold text-sm hover:bg-zinc-200 transition-all"
+          className="flex items-center gap-2 px-4 py-2 bg-zinc-100 text-zinc-700 rounded-xl font-bold text-sm hover:bg-zinc-200 transition-all cursor-pointer"
         >
           <Printer size={18} /> Imprimir
         </button>
         <button 
           onClick={handleDownload}
-          className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-black/10"
+          className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-black/10 cursor-pointer"
         >
           <Download size={18} /> Descarregar PDF
         </button>
       </div>
 
-      <div ref={invoiceRef} className="bg-white p-12 w-[800px] min-h-[1123px] mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden invoice-a4-container invoice-print">
+      <div ref={invoiceRef} className="bg-white p-8 md:p-12 w-full max-w-[800px] min-h-0 mx-auto shadow-sm border border-zinc-100 rounded-lg font-sans text-zinc-900 flex flex-col relative overflow-hidden invoice-a4-container invoice-print">
         {/* Header */}
         <div className="invoice-header flex justify-between items-start mb-12">
           <div className="flex items-center gap-8">
@@ -11763,18 +11815,6 @@ const FeeSelectionContent = ({ service, onConfirm }: { service: Service | null, 
 };
 
 const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void }) => {
-  if (!hasPermission(user, 'pos_access')) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-zinc-500 space-y-4 p-8 text-center">
-        <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center text-rose-500 mb-4">
-          <ShieldAlert size={40} />
-        </div>
-        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
-        <p className="max-w-md">Você não tem permissão para aceder ao Ponto de Venda (PDV). Por favor, contacte o administrador para solicitar acesso.</p>
-      </div>
-    );
-  }
-
   const [products, setProducts] = useState<Product[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [cart, setCart] = useState<{ item: Product | Service, type: 'product' | 'service', quantity: number, id: string, selectedFees?: ServiceFee[] }[]>([]);
@@ -11829,6 +11869,10 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
   const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false);
   const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
+  const [activeSessionData, setActiveSessionData] = useState<any>(null);
+  const [isDenominationModalOpen, setIsDenominationModalOpen] = useState(false);
+  const [denominationTargetRegister, setDenominationTargetRegister] = useState<{ id: number; name: string; amount: number } | null>(null);
+  const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isTerminalSettingsOpen, setIsTerminalSettingsOpen] = useState(false);
   const [isSavingTerminalSettings, setIsSavingTerminalSettings] = useState(false);
@@ -12213,33 +12257,39 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     setHeldCarts(prev => prev.filter(item => item.id !== id));
   };
 
-  const checkActiveSession = async () => {
-    if (!user.cash_register_id) {
+  const checkActiveSession = async (overrideRegisterId?: number) => {
+    const regId = overrideRegisterId || user.cash_register_id;
+    if (!regId) {
       setHasActiveSession(false);
+      setActiveSessionData(null);
       return false;
     }
 
     const establishmentId = user.establishment_id || 1;
-    let url = `/api/seller/active-session/${establishmentId}?cash_register_id=${user.cash_register_id}`;
+    let url = `/api/seller/active-session/${establishmentId}?cash_register_id=${regId}`;
 
     try {
       const res = await fetch(url);
       if (!res.ok) {
         setHasActiveSession(false);
+        setActiveSessionData(null);
         return false;
       }
       const contentType = res.headers.get("content-type");
       if (contentType && contentType.includes("application/json")) {
         const data = await res.json();
         setHasActiveSession(!!data);
+        setActiveSessionData(data || null);
         return !!data;
       } else {
         setHasActiveSession(false);
+        setActiveSessionData(null);
         return false;
       }
     } catch (error) {
       // Silently handle session check errors to avoid console noise if server is briefly unavailable
       setHasActiveSession(false);
+      setActiveSessionData(null);
       return false;
     }
   };
@@ -12806,6 +12856,26 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     }
   }, [isFormalInvoiceModalOpen, formalInvoiceForm.currency, availableCurrencies, total]);
 
+  const change = paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - totalInSelectedCurrency : 0;
+
+  const changeFeasibility = useMemo(() => {
+    if (paymentMethod !== 'cash' || change <= 0) return null;
+    if (!activeSessionData?.denominations) return null;
+    return checkChangeFeasibility(change, activeSessionData.denominations);
+  }, [paymentMethod, change, activeSessionData?.denominations]);
+
+  if (!hasPermission(user, 'pos_access')) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-zinc-500 space-y-4 p-8 text-center">
+        <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center text-rose-500 mb-4">
+          <ShieldAlert size={40} />
+        </div>
+        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
+        <p className="max-w-md">Você não tem permissão para aceder ao Ponto de Venda (PDV). Por favor, contacte o administrador para solicitar acesso.</p>
+      </div>
+    );
+  }
+
   const handleSelectRegister = async (registerId: number) => {
     const res = await fetch('/api/seller/select-register', {
       method: 'PUT',
@@ -12818,20 +12888,28 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     }
   };
 
-  const handleOpenSession = async (e: FormEvent, registerId: number, amount: string) => {
-    e.preventDefault();
+  const handleInitiateOpenDenominations = (registerId: number, registerName: string, amountStr: string) => {
     if (!hasPermission(user, 'pos_open_cashier')) {
       alert('Você não tem permissão para abrir o caixa.');
       return;
     }
 
-    if (!amount || isNaN(parseFloat(amount))) {
-      alert('Por favor, insira um valor de abertura válido.');
+    const cleanAmount = (amountStr || '').toString().replace(',', '.').trim();
+    const amount = parseFloat(cleanAmount);
+    if (isNaN(amount) || amount < 0) {
+      alert('Por favor, informe o valor de abertura antes de escolher as moedas.');
       return;
     }
 
+    setDenominationTargetRegister({ id: registerId, name: registerName, amount });
+    setIsDenominationModalOpen(true);
+  };
+
+  const handleConfirmOpenWithDenominations = async (breakdown: DenominationBreakdown, total: number) => {
+    if (!denominationTargetRegister) return;
+    const registerId = denominationTargetRegister.id;
     const establishmentId = user.establishment_id || 1;
-    
+
     try {
       const res = await fetch('/api/seller/open-session', {
         method: 'POST',
@@ -12840,13 +12918,18 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           establishment_id: establishmentId,
           seller_id: user.id,
           cash_register_id: registerId,
-          opening_amount: parseFloat(amount)
+          opening_amount: total,
+          denominations: breakdown
         })
       });
 
       if (res.ok) {
         setOpeningAmounts(prev => ({ ...prev, [registerId]: '' }));
+        setIsDenominationModalOpen(false);
+        setDenominationTargetRegister(null);
+        fetchRegisters();
         await handleSelectRegister(registerId);
+        await checkActiveSession(registerId);
       } else {
         const contentType = res.headers.get("content-type");
         if (contentType && contentType.includes("application/json")) {
@@ -12860,6 +12943,11 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
       console.error("Error opening session:", error);
       alert('Erro de conexão ao abrir caixa.');
     }
+  };
+
+  const handleOpenSession = async (e: FormEvent, registerId: number, amount: string) => {
+    e.preventDefault();
+    handleInitiateOpenDenominations(registerId, 'Caixa', amount);
   };
 
   const addToCart = async (item: Product | Service, type: 'product' | 'service' = 'product') => {
@@ -12985,10 +13073,12 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                           />
                         </div>
                         <button
-                          onClick={(e) => handleOpenSession(e, register.id, openingAmounts[register.id] || '')}
-                          className="w-full bg-orange-500 text-white py-4 rounded-2xl font-black text-lg hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100"
+                          type="button"
+                          onClick={() => handleInitiateOpenDenominations(register.id, register.name, openingAmounts[register.id] || '')}
+                          className="w-full bg-orange-500 text-white py-4 rounded-2xl font-black text-lg hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100 flex items-center justify-center gap-2"
                         >
-                          Abrir e Ativar
+                          <Coins size={22} />
+                          Escolher Moedas
                         </button>
                       </>
                     )}
@@ -13005,6 +13095,21 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           })}
           </div>
         </div>
+
+        {/* MODAL DE DENOMINAÇÕES (10 COLUNAS: 5 NOTAS + 5 MOEDAS) */}
+        {denominationTargetRegister && (
+          <CashRegisterDenominationModal
+            isOpen={isDenominationModalOpen}
+            onClose={() => {
+              setIsDenominationModalOpen(false);
+              setDenominationTargetRegister(null);
+            }}
+            registerName={denominationTargetRegister.name}
+            registerId={denominationTargetRegister.id}
+            targetOpeningAmount={denominationTargetRegister.amount}
+            onConfirmOpen={handleConfirmOpenWithDenominations}
+          />
+        )}
       </div>
     </div>
   );
@@ -13079,9 +13184,11 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         
         if (data && data.status === 'open') {
           setHasActiveSession(true);
+          setActiveSessionData(data);
           setIsPaymentModalOpen(true);
         } else {
           setHasActiveSession(false);
+          setActiveSessionData(null);
           alert('O caixa deve estar aberto para realizar vendas. Por favor, abra o caixa no Dashboard.');
         }
       } else {
@@ -13182,6 +13289,16 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
         alert('Dinheiro insuficiente ou valor inválido!');
         return;
       }
+
+      if (changeFeasibility && !changeFeasibility.possible) {
+        const proceed = window.confirm(
+          `NOTIFICAÇÃO DE TROCO NO CAIXA:\n\nCom as notas e moedas presentes no caixa não será possível dar o troco certo!\n\nMotivo: ${changeFeasibility.reason}\n\nDeseja mesmo assim continuar e finalizar a venda?`
+        );
+        if (!proceed) {
+          setIsProcessing(false);
+          return;
+        }
+      }
     }
 
     if (paymentMethod === 'split') {
@@ -13196,6 +13313,70 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     setIsProcessing(true);
     try {
       const establishmentId = user.establishment_id || 1;
+
+      // Calcular atualização de cédulas e moedas físicas e o registo de histórico
+      let saleUpdatedDenominations: DenominationBreakdown | null = null;
+      let saleDenominationHistoryEntry: DenominationHistoryEntry | null = null;
+
+      if (activeSessionData?.denominations) {
+        if (paymentMethod === 'cash') {
+          const receivedAmt = parseFloat(cashReceived) || totalInSelectedCurrency;
+          const changeAmt = Math.max(0, receivedAmt - totalInSelectedCurrency);
+          const receivedBreakdown = decomposeAmountToBreakdown(receivedAmt);
+          
+          let changeCombination: ChangeItemCombination[] = [];
+          if (changeAmt > 0) {
+            if (changeFeasibility?.possible && changeFeasibility?.combination && changeFeasibility.combination.length > 0) {
+              changeCombination = changeFeasibility.combination;
+            } else {
+              changeCombination = calculateChangeDistribution(activeSessionData.denominations, changeAmt);
+            }
+          }
+
+          saleUpdatedDenominations = applySaleCashTransaction(
+            activeSessionData.denominations,
+            receivedBreakdown,
+            changeCombination
+          );
+
+          saleDenominationHistoryEntry = {
+            id: Date.now(),
+            type: 'sale',
+            title: `Venda a Dinheiro`,
+            timestamp: new Date().toISOString(),
+            in: receivedBreakdown,
+            out: changeAmt > 0 ? combinationToBreakdown(changeCombination) : null,
+            current: saleUpdatedDenominations,
+            amount: totalInSelectedCurrency,
+            changeAmount: changeAmt,
+            description: `Recebido: ${selectedCurrencyCode} ${receivedAmt.toLocaleString()} | Troco: ${selectedCurrencyCode} ${changeAmt.toLocaleString()}`
+          };
+        } else if (paymentMethod === 'split') {
+          const splitCash = parseFloat(splitAmounts.cash) || 0;
+          if (splitCash > 0) {
+            const receivedBreakdown = decomposeAmountToBreakdown(splitCash);
+            saleUpdatedDenominations = applySaleCashTransaction(
+              activeSessionData.denominations,
+              receivedBreakdown,
+              []
+            );
+
+            saleDenominationHistoryEntry = {
+              id: Date.now(),
+              type: 'sale',
+              title: `Venda Mista (Parcela Dinheiro)`,
+              timestamp: new Date().toISOString(),
+              in: receivedBreakdown,
+              out: null,
+              current: saleUpdatedDenominations,
+              amount: splitCash,
+              changeAmount: 0,
+              description: `Pagamento Dividido: Kz ${splitCash.toLocaleString()} (Dinheiro) + Kz ${(parseFloat(splitAmounts.card) || 0).toLocaleString()} (TPA)`
+            };
+          }
+        }
+      }
+
       const res = await fetch('/api/p-venda', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -13214,6 +13395,8 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           exchange_rate: currentExchangeRate,
           cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : (paymentMethod === 'split' ? (parseFloat(splitAmounts.cash) || 0) : totalInSelectedCurrency),
           split_details: paymentMethod === 'split' ? { cash: parseFloat(splitAmounts.cash) || 0, card: parseFloat(splitAmounts.card) || 0 } : null,
+          updated_denominations: saleUpdatedDenominations,
+          denomination_history_entry: saleDenominationHistoryEntry,
           items: cart.map(i => {
             let price = i.type === 'product' 
               ? ((i.item as Product).discount_percent ? i.item.price * (1 - (i.item as Product).discount_percent! / 100) : i.item.price)
@@ -13272,6 +13455,29 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           
           // Trigger Auto Print
           triggerAutoPrint(saleData.sale);
+
+          // Atualizar estado local de denominações imediatamente com o novo inventário e histórico
+          if (saleUpdatedDenominations) {
+            setActiveSessionData((prev: any) => {
+              if (!prev) return null;
+              const prevHist = Array.isArray(prev.denominations_history) ? prev.denominations_history : [];
+              const newHist = saleDenominationHistoryEntry ? [...prevHist, saleDenominationHistoryEntry] : prevHist;
+              const cashContribution = paymentMethod === 'cash' ? totalInSelectedCurrency : (parseFloat(splitAmounts.cash) || 0);
+              return {
+                ...prev,
+                denominations: saleUpdatedDenominations,
+                denominations_history: newHist,
+                totals: {
+                  ...(prev.totals || {}),
+                  sales: (prev.totals?.sales || 0) + totalInSelectedCurrency,
+                  sales_cash: (prev.totals?.sales_cash || 0) + cashContribution,
+                  expected: (prev.totals?.expected || prev.opening_amount || 0) + cashContribution
+                }
+              };
+            });
+            // Re-sincronizar sessão ativa em segundo plano
+            checkActiveSession();
+          }
         } else {
           throw new Error("Dados da venda não recebidos do servidor.");
         }
@@ -13432,8 +13638,6 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     }
   };
 
-  const change = paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - totalInSelectedCurrency : 0;
-
   const filteredProducts = products
     .filter(p => {
       const q = search.trim().toLowerCase();
@@ -13525,6 +13729,19 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   >
                     <Coins size={12} className={cn("animate-pulse", isPharmacy ? "text-emerald-200" : "text-orange-200")} />
                     <span className="text-[10px] font-black uppercase tracking-widest leading-none">Abrir Gaveta</span>
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setIsInventoryModalOpen(true)}
+                    className={cn("p-1 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 shadow-xs border cursor-pointer", isPharmacy ? "bg-emerald-700/40 hover:bg-emerald-700/85 text-emerald-100 border-emerald-500/20" : "bg-orange-650/40 hover:bg-orange-600/80 text-orange-100 border-orange-400/20")}
+                    title="Ver Detalhes das Cédulas e Moedas no Caixa"
+                  >
+                    <Coins size={12} className="text-amber-300" />
+                    <span className="text-[10px] font-black uppercase tracking-widest leading-none">
+                      {activeSessionData?.denominations 
+                        ? `Caixa: Kz ${calculateDenominationsTotal(activeSessionData.denominations).toLocaleString()}` 
+                        : "Cédulas e Moedas"}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -14382,6 +14599,43 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
                   </span>
                 </div>
               )}
+
+              {/* NOTIFICAÇÃO DE TROCO IMPOSSÍVEL */}
+              {changeFeasibility && !changeFeasibility.possible && (
+                <div className="p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl space-y-2 text-rose-900 shadow-sm animate-in fade-in">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="text-rose-600 shrink-0 mt-0.5" size={20} />
+                    <div className="space-y-1">
+                      <p className="font-black text-sm text-rose-950 uppercase tracking-wide">
+                        Aviso: Não é possível dar o troco certo!
+                      </p>
+                      <p className="text-xs font-semibold text-rose-800 leading-relaxed">
+                        {changeFeasibility.reason}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="bg-white/80 p-2.5 rounded-xl text-[11px] font-medium text-rose-700 border border-rose-200 flex justify-between items-center">
+                    <span>Total em caixa: <strong>{selectedCurrencyCode} {(changeFeasibility.totalAvailable || 0).toLocaleString()}</strong></span>
+                    <span>Troco necessário: <strong>{selectedCurrencyCode} {change.toLocaleString()}</strong></span>
+                  </div>
+                  <p className="text-[11px] text-rose-600 italic">
+                    Dica: Peça ao cliente o valor exato ou troque cédulas no caixa.
+                  </p>
+                </div>
+              )}
+
+              {/* SUGESTÃO DE COMBINAÇÃO DE CÉDULAS/MOEDAS */}
+              {changeFeasibility && changeFeasibility.possible && changeFeasibility.combination && changeFeasibility.combination.length > 0 && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-2.5 text-xs text-emerald-900">
+                  <CheckCircle2 size={16} className="text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-black block text-emerald-950">Troco viável no caixa:</span>
+                    <span className="text-emerald-800 font-medium">
+                      {changeFeasibility.combination.map(c => `${c.count}x ${c.type === 'note' ? 'Nota' : 'Moeda'} ${c.value.toLocaleString()} Kz`).join(' + ')}
+                    </span>
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -14914,6 +15168,35 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
           </button>
         </div>
       )}
+
+      {/* MODAL DE DENOMINAÇÕES (10 COLUNAS: 5 NOTAS + 5 MOEDAS) */}
+      {denominationTargetRegister && (
+        <CashRegisterDenominationModal
+          isOpen={isDenominationModalOpen}
+          onClose={() => {
+            setIsDenominationModalOpen(false);
+            setDenominationTargetRegister(null);
+          }}
+          registerName={denominationTargetRegister.name}
+          registerId={denominationTargetRegister.id}
+          targetOpeningAmount={denominationTargetRegister.amount}
+          onConfirmOpen={handleConfirmOpenWithDenominations}
+        />
+      )}
+
+      {/* MODAL DE VISUALIZAÇÃO DE CÉDULAS E MOEDAS EM CAIXA */}
+      <CashDrawerInventoryModal
+        isOpen={isInventoryModalOpen}
+        onClose={() => setIsInventoryModalOpen(false)}
+        breakdown={activeSessionData?.denominations}
+        initialBreakdown={activeSessionData?.initial_denominations}
+        history={activeSessionData?.denominations_history}
+        expectedBalance={activeSessionData?.totals?.expected}
+        sessionTotals={activeSessionData?.totals}
+        sessionOpeningTime={activeSessionData?.opening_time}
+        sellerName={user.name}
+        registerName={cashRegisters.find(r => r.id === (activeSessionData?.cash_register_id || user.cash_register_id))?.name || 'Caixa Ativo'}
+      />
     </div>
   );
 };
@@ -15270,18 +15553,6 @@ const SellerHistory = ({ user }: { user: User }) => {
 };
 
 const SellerDashboard = ({ user }: { user: User }) => {
-  if (!hasPermission(user, 'pos_access')) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-12rem)] text-zinc-500 space-y-4 p-8 text-center">
-        <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center text-rose-500 mb-4">
-          <ShieldAlert size={40} />
-        </div>
-        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
-        <p className="max-w-md">Você não tem permissão para aceder ao Painel de Vendas. Por favor, contacte o administrador para solicitar acesso.</p>
-      </div>
-    );
-  }
-
   const [stats, setStats] = useState({ today: 0, last7Days: 0 });
   const [hasActiveSession, setHasActiveSession] = useState<boolean | null>(null);
 
@@ -15306,6 +15577,18 @@ const SellerDashboard = ({ user }: { user: User }) => {
       .then(data => setHasActiveSession(!!data))
       .catch(() => setHasActiveSession(false));
   }, [user.id, user.cash_register_id]);
+
+  if (!hasPermission(user, 'pos_access')) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-12rem)] text-zinc-500 space-y-4 p-8 text-center">
+        <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center text-rose-500 mb-4">
+          <ShieldAlert size={40} />
+        </div>
+        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
+        <p className="max-w-md">Você não tem permissão para aceder ao Painel de Vendas. Por favor, contacte o administrador para solicitar acesso.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -15407,19 +15690,6 @@ const SellerDashboard = ({ user }: { user: User }) => {
 };
 
 const SellerCashMovements = ({ user }: { user: User }) => {
-  if (!hasPermission(user, 'pos_withdraw')) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-        <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mb-4">
-          <Lock size={40} />
-        </div>
-        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
-        <p className="text-zinc-500 max-w-md mx-auto mt-2">
-          Você não tem permissão para acessar os movimentos de caixa.
-        </p>
-      </div>
-    );
-  }
   const [movements, setMovements] = useState<any[]>([]);
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
@@ -15446,6 +15716,20 @@ const SellerCashMovements = ({ user }: { user: User }) => {
       .catch(() => setHasActiveSession(false));
   }, [user.id]);
 
+  if (!hasPermission(user, 'pos_withdraw')) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mb-4">
+          <Lock size={40} />
+        </div>
+        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
+        <p className="text-zinc-500 max-w-md mx-auto mt-2">
+          Você não tem permissão para acessar os movimentos de caixa.
+        </p>
+      </div>
+    );
+  }
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!hasPermission(user, 'pos_withdraw')) {
@@ -15457,6 +15741,8 @@ const SellerCashMovements = ({ user }: { user: User }) => {
       return;
     }
     const establishmentId = user.establishment_id || 1;
+    const numAmount = parseFloat(amount);
+    const movBreakdown = decomposeAmountToBreakdown(numAmount);
     const res = await fetch('/api/seller/cash-movements', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -15465,8 +15751,9 @@ const SellerCashMovements = ({ user }: { user: User }) => {
         seller_id: user.id,
         cash_register_id: user.cash_register_id,
         type,
-        amount: parseFloat(amount),
-        description
+        amount: numAmount,
+        description,
+        movement_breakdown: movBreakdown
       })
     });
     if (res.ok) {
@@ -15601,25 +15888,15 @@ const SellerCashMovements = ({ user }: { user: User }) => {
 };
 
 const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void }) => {
-  if (!hasPermission(user, 'pos_close_cashier')) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-        <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mb-4">
-          <Lock size={40} />
-        </div>
-        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
-        <p className="text-zinc-500 max-w-md mx-auto mt-2">
-          Você não tem permissão para fechar o caixa.
-        </p>
-      </div>
-    );
-  }
   const [session, setSession] = useState<any>(null);
   const [physicalAmount, setPhysicalAmount] = useState('');
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
   const [selectedRegisterId, setSelectedRegisterId] = useState<string>(user.cash_register_id?.toString() || '');
+  const [isDenomModalOpen, setIsDenomModalOpen] = useState(false);
+  const [denomTarget, setDenomTarget] = useState<{ id: number; name: string; amount: number } | null>(null);
+  const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
 
   const [searchParams] = useSearchParams();
   const queryEstablishmentId = searchParams.get('establishmentId');
@@ -15678,6 +15955,20 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
     fetchRegisters();
   }, [user.establishment_id, selectedRegisterId]);
 
+  if (!hasPermission(user, 'pos_close_cashier')) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mb-4">
+          <Lock size={40} />
+        </div>
+        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
+        <p className="text-zinc-500 max-w-md mx-auto mt-2">
+          Você não tem permissão para fechar o caixa.
+        </p>
+      </div>
+    );
+  }
+
   const handleSelectRegister = async (registerId: number) => {
     const res = await fetch('/api/seller/select-register', {
       method: 'PUT',
@@ -15690,20 +15981,28 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
     }
   };
 
-  const handleOpenSession = async (e: FormEvent, registerId: number, amount: string) => {
-    e.preventDefault();
+  const handleInitiateOpenDenominations = (registerId: number, registerName: string, amountStr: string) => {
     if (!hasPermission(user, 'pos_open_cashier')) {
       alert('Você não tem permissão para abrir o caixa.');
       return;
     }
 
-    if (!amount || isNaN(parseFloat(amount))) {
-      alert('Por favor, insira um valor de abertura válido.');
+    const cleanAmount = (amountStr || '').toString().replace(',', '.').trim();
+    const amount = parseFloat(cleanAmount);
+    if (isNaN(amount) || amount < 0) {
+      alert('Por favor, informe o valor de abertura antes de escolher as moedas.');
       return;
     }
 
+    setDenomTarget({ id: registerId, name: registerName, amount });
+    setIsDenomModalOpen(true);
+  };
+
+  const handleConfirmOpenWithDenominations = async (breakdown: DenominationBreakdown, total: number) => {
+    if (!denomTarget) return;
+    const registerId = denomTarget.id;
     const establishmentId = user.establishment_id || 1;
-    
+
     try {
       const res = await fetch('/api/seller/open-session', {
         method: 'POST',
@@ -15712,16 +16011,18 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
           establishment_id: establishmentId,
           seller_id: user.id,
           cash_register_id: registerId,
-          opening_amount: parseFloat(amount)
+          opening_amount: total,
+          denominations: breakdown
         })
       });
 
       if (res.ok) {
         setOpeningAmounts(prev => ({ ...prev, [registerId]: '' }));
-        // First select the register to update global state
+        setIsDenomModalOpen(false);
+        setDenomTarget(null);
         await handleSelectRegister(registerId);
-        // Then explicitly fetch the session to update local state immediately
         await fetchSession(registerId);
+        await fetchRegisters();
       } else {
         const contentType = res.headers.get("content-type");
         if (contentType && contentType.includes("application/json")) {
@@ -15735,6 +16036,11 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
       console.error("Error opening session:", error);
       alert('Erro de conexão ao abrir caixa.');
     }
+  };
+
+  const handleOpenSession = async (e: FormEvent, registerId: number, amount: string) => {
+    e.preventDefault();
+    handleInitiateOpenDenominations(registerId, 'Caixa', amount);
   };
 
   const handleCloseSession = async () => {
@@ -15861,10 +16167,12 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
                           className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-sm"
                         />
                         <button
-                          onClick={(e) => handleOpenSession(e, register.id, openingAmounts[register.id] || '')}
-                          className="w-full bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 transition-all active:scale-95 shadow-lg shadow-green-100"
+                          type="button"
+                          onClick={() => handleInitiateOpenDenominations(register.id, register.name, openingAmounts[register.id] || '')}
+                          className="w-full bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 transition-all active:scale-95 shadow-lg shadow-green-100 flex items-center justify-center gap-2"
                         >
-                          Abrir Caixa
+                          <Coins size={18} />
+                          Escolher Moedas
                         </button>
                       </>
                     )}
@@ -15880,6 +16188,21 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
             );
           })}
         </div>
+
+        {/* MODAL DE DENOMINAÇÕES (10 COLUNAS: 5 NOTAS + 5 MOEDAS) */}
+        {denomTarget && (
+          <CashRegisterDenominationModal
+            isOpen={isDenomModalOpen}
+            onClose={() => {
+              setIsDenomModalOpen(false);
+              setDenomTarget(null);
+            }}
+            registerName={denomTarget.name}
+            registerId={denomTarget.id}
+            targetOpeningAmount={denomTarget.amount}
+            onConfirmOpen={handleConfirmOpenWithDenominations}
+          />
+        )}
       </div>
     );
   }
@@ -15933,6 +16256,17 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
               />
             </div>
 
+            {session.denominations && (
+              <button
+                type="button"
+                onClick={() => setIsInventoryModalOpen(true)}
+                className="w-full py-3 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-colors border border-zinc-200"
+              >
+                <Coins size={16} className="text-amber-500" />
+                Ver Detalhes das Cédulas e Moedas no Caixa
+              </button>
+            )}
+
             {physicalAmount && (
               <div className={cn(
                 "p-4 rounded-2xl flex items-center justify-between",
@@ -15970,6 +16304,33 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
           )}
         </Card>
       </div>
+
+      {denomTarget && (
+        <CashRegisterDenominationModal
+          isOpen={isDenomModalOpen}
+          onClose={() => {
+            setIsDenomModalOpen(false);
+            setDenomTarget(null);
+          }}
+          registerName={denomTarget.name}
+          registerId={denomTarget.id}
+          targetOpeningAmount={denomTarget.amount}
+          onConfirmOpen={handleConfirmOpenWithDenominations}
+        />
+      )}
+
+      <CashDrawerInventoryModal
+        isOpen={isInventoryModalOpen}
+        onClose={() => setIsInventoryModalOpen(false)}
+        breakdown={session?.denominations}
+        initialBreakdown={session?.initial_denominations}
+        history={session?.denominations_history}
+        expectedBalance={session?.totals?.expected}
+        sessionTotals={session?.totals}
+        sessionOpeningTime={session?.opening_time}
+        sellerName={session?.seller_name || user.name}
+        registerName={cashRegisters.find(r => r.id === (session?.cash_register_id || user.cash_register_id))?.name || 'Caixa'}
+      />
     </div>
   );
 };

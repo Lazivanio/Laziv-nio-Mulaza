@@ -141,6 +141,55 @@
   scrollbar-width: none;
 }
 
+/* Floating Bubbles Animations */
+@keyframes floatBubble1 {
+  0% { transform: translate(0px, 0px) scale(1); }
+  50% { transform: translate(18px, -45px) scale(1.06); }
+  100% { transform: translate(-12px, -85px) scale(0.96); }
+}
+
+@keyframes floatBubble2 {
+  0% { transform: translate(0px, 0px) scale(0.95); }
+  50% { transform: translate(-22px, -55px) scale(1.08); }
+  100% { transform: translate(15px, -110px) scale(1); }
+}
+
+@keyframes floatBubble3 {
+  0% { transform: translate(0px, 0px) scale(1.04); }
+  50% { transform: translate(25px, 50px) scale(0.92); }
+  100% { transform: translate(-18px, 95px) scale(1.02); }
+}
+
+@keyframes floatBubble4 {
+  0% { transform: translate(0px, 0px) scale(1); }
+  50% { transform: translate(-30px, 40px) scale(1.05); }
+  100% { transform: translate(20px, 80px) scale(0.94); }
+}
+
+.animate-bubble-slow-1 {
+  animation: floatBubble1 14s ease-in-out infinite alternate;
+}
+
+.animate-bubble-slow-2 {
+  animation: floatBubble2 19s ease-in-out infinite alternate;
+}
+
+.animate-bubble-slow-3 {
+  animation: floatBubble3 22s ease-in-out infinite alternate;
+}
+
+.animate-bubble-slow-4 {
+  animation: floatBubble4 17s ease-in-out infinite alternate;
+}
+
+.animate-bubble-slow-5 {
+  animation: floatBubble1 25s ease-in-out infinite alternate-reverse;
+}
+
+.animate-bubble-slow-6 {
+  animation: floatBubble2 28s ease-in-out infinite alternate-reverse;
+}
+
 /* ==========================================================================
    PRINT STYLES - FATU-R ERP & PDV
    Garante impressão limpa, proporcional e sem quebras tanto para documentos A4

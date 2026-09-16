@@ -13,9 +13,12 @@ import {
   Monitor,
   CheckCircle,
   Lock,
-  AlertTriangle
+  AlertTriangle,
+  Coins
 } from 'lucide-react';
 import { User, Establishment as EstablishmentType, BankAccount } from '../types';
+import { CashRegisterDenominationModal } from './CashRegisterDenominationModal';
+import { DenominationBreakdown } from '../lib/cashDenominations';
 
 const cn = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
 
@@ -77,6 +80,61 @@ export const MyEstablishments = ({ user }: { user: User }) => {
   const [selectedEstablishmentForOpening, setSelectedEstablishmentForOpening] = useState<EstablishmentType | null>(null);
   const [registersForSelectedEstablishment, setRegistersForSelectedEstablishment] = useState<any[]>([]);
   const [openingAmounts, setOpeningAmounts] = useState<Record<number, string>>({});
+  const [denomTargetRegister, setDenomTargetRegister] = useState<{ id: number; name: string; amount: number } | null>(null);
+  const [isDenomModalOpen, setIsDenomModalOpen] = useState(false);
+
+  const handleInitiateOpenDenominations = (registerId: number, registerName: string, amountStr: string) => {
+    const cleanAmount = (amountStr || '').toString().replace(',', '.').trim();
+    const amount = parseFloat(cleanAmount);
+    if (isNaN(amount) || amount < 0) {
+      alert('Por favor, informe um valor de abertura válido antes de escolher as moedas.');
+      return;
+    }
+    setDenomTargetRegister({ id: registerId, name: registerName, amount });
+    setIsDenomModalOpen(true);
+  };
+
+  const handleConfirmOpenWithDenominations = async (breakdown: DenominationBreakdown, total: number) => {
+    if (!denomTargetRegister) return;
+    const registerId = denomTargetRegister.id;
+
+    try {
+      const res = await fetch('/api/seller/open-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          establishment_id: selectedEstablishmentForOpening?.id,
+          seller_id: user.id,
+          cash_register_id: registerId,
+          opening_amount: total,
+          denominations: breakdown
+        })
+      });
+
+      if (res.ok) {
+        setOpeningAmounts(prev => ({ ...prev, [registerId]: '' }));
+        setIsDenomModalOpen(false);
+        setDenomTargetRegister(null);
+        if (selectedEstablishmentForOpening) {
+          fetch(`/api/owner/establishments/${selectedEstablishmentForOpening.id}/cash-registers`)
+            .then(res => res.json())
+            .then(setRegistersForSelectedEstablishment);
+        }
+        alert('Caixa aberto com sucesso com as denominações selecionadas!');
+      } else {
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          alert(data.error || 'Erro ao abrir caixa.');
+        } else {
+          alert(`Erro ao abrir caixa (Código: ${res.status}). Por favor, tente novamente.`);
+        }
+      }
+    } catch (error) {
+      console.error("Error opening session:", error);
+      alert('Erro de conexão ao abrir caixa.');
+    }
+  };
   const [confirmCodeModalData, setConfirmCodeModalData] = useState<{
     isOpen: boolean;
     originalCode: string;
@@ -724,10 +782,11 @@ export const MyEstablishments = ({ user }: { user: User }) => {
                         />
                       </div>
                       <button
-                        onClick={() => handleOpenSession(register.id, openingAmounts[register.id] || '')}
-                        className="w-full bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 transition-all active:scale-95 shadow-lg shadow-green-100"
+                        onClick={() => handleInitiateOpenDenominations(register.id, register.name, openingAmounts[register.id] || register.default_initial_balance?.toString() || '0')}
+                        className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100 flex items-center justify-center gap-2"
                       >
-                        Abrir Caixa
+                        <Coins size={18} />
+                        <span>Escolher Moedas & Abrir</span>
                       </button>
                     </div>
                   )}
@@ -799,6 +858,20 @@ export const MyEstablishments = ({ user }: { user: User }) => {
             </div>
           </div>
         </div>
+      )}
+
+      {denomTargetRegister && (
+        <CashRegisterDenominationModal
+          isOpen={isDenomModalOpen}
+          onClose={() => {
+            setIsDenomModalOpen(false);
+            setDenomTargetRegister(null);
+          }}
+          registerName={denomTargetRegister.name}
+          registerId={denomTargetRegister.id}
+          targetOpeningAmount={denomTargetRegister.amount}
+          onConfirmOpen={handleConfirmOpenWithDenominations}
+        />
       )}
     </div>
   );

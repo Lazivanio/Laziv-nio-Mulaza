@@ -3,7 +3,7 @@
  * Utilitário de alta fidelidade para impressão e download de documentos no Fatu-R (A4 e Talões Térmicos POS).
  * 
  * Resolve os problemas de:
- * 1. Folha excessivamente longa ou com imensidão de parte branca em talões térmicos (auto-recorte e @page dinâmico).
+ * 1. Folha excessivamente longa ou com imensidão de parte branca em talões térmicos e faturas FR (auto-recorte e @page dinâmico no tamanho ideal da fatura).
  * 2. Quebra de layout de documentos A4 e Talões causados por estilos conflitantes (@media print inline).
  * 3. Corte de conteúdo por containers do modal (overflow-y-auto, max-h-[85vh], position: fixed, backdrop-blur).
  * 4. Ajuste milimétrico de tamanho de página na impressora física e no download em PDF.
@@ -21,8 +21,9 @@ export interface PrintInvoiceOptions {
 }
 
 /**
- * Remove o excesso de margens em branco verticais de um canvas renderizado do talão
- * para que a altura do PDF corresponda estritamente à extensão real do texto/conteúdo.
+ * Remove com precisão o excesso de margens em branco verticais de um canvas renderizado
+ * para que a altura do documento/PDF corresponda estritamente à extensão real dos dizeres/conteúdo,
+ * ignorando ruídos de bordas, sombras ou fundos claros das bordas exteriores.
  */
 export function trimCanvasToContent(
   canvas: HTMLCanvasElement,
@@ -33,24 +34,31 @@ export function trimCanvasToContent(
 
   const width = canvas.width;
   const height = canvas.height;
-  const topPadding = options.topPadding ?? 10;
-  const bottomPadding = options.bottomPadding ?? 24;
+  const topPadding = options.topPadding ?? 8;
+  const bottomPadding = options.bottomPadding ?? 18;
 
   try {
     const imgData = ctx.getImageData(0, 0, width, height);
     const data = imgData.data;
 
-    // Detectar a primeira linha com conteúdo (de cima para baixo)
+    // Descartamos 6% das extremidades laterais (mínimo 10px) para ignorar
+    // qualquer linha de contorno/borda externa do container no scan vertical
+    const sideMargin = Math.max(10, Math.floor(width * 0.06));
+    const scanLeft = sideMargin;
+    const scanRight = width - sideMargin;
+
+    // Detectar a primeira linha com conteúdo real (de cima para baixo)
     let firstContentY = -1;
     for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
+      for (let x = scanLeft; x < scanRight; x++) {
         const idx = (y * width + x) * 4;
         const r = data[idx];
         const g = data[idx + 1];
         const b = data[idx + 2];
         const a = data[idx + 3];
-        // Não-transparente e não puramente branco (texto, linhas, logos, qrcodes)
-        if (a > 25 && (r < 242 || g < 242 || b < 242)) {
+        // Conteúdo real (texto, números, qrcodes, linhas divisórias escuras):
+        // Ignora pixels quase brancos ou cinzas muito sutis (>218)
+        if (a > 35 && (r < 218 || g < 218 || b < 218)) {
           firstContentY = y;
           break;
         }
@@ -58,16 +66,16 @@ export function trimCanvasToContent(
       if (firstContentY !== -1) break;
     }
 
-    // Detectar a última linha com conteúdo (de baixo para cima)
+    // Detectar a última linha com conteúdo real (de baixo para cima)
     let lastContentY = -1;
     for (let y = height - 1; y >= 0; y--) {
-      for (let x = 0; x < width; x++) {
+      for (let x = scanLeft; x < scanRight; x++) {
         const idx = (y * width + x) * 4;
         const r = data[idx];
         const g = data[idx + 1];
         const b = data[idx + 2];
         const a = data[idx + 3];
-        if (a > 25 && (r < 242 || g < 242 || b < 242)) {
+        if (a > 35 && (r < 218 || g < 218 || b < 218)) {
           lastContentY = y;
           break;
         }
@@ -140,15 +148,15 @@ export async function downloadThermalInvoicePdf(
             width: ${pixelWidth}px !important;
             max-width: ${pixelWidth}px !important;
             min-width: ${pixelWidth}px !important;
-            padding: ${is58 ? '8px' : '14px'} !important;
+            padding: ${is58 ? '8px 8px 12px 8px' : '12px 12px 16px 12px'} !important;
             margin: 0 auto !important;
             background-color: #ffffff !important;
-            border: 1px solid #e4e4e7 !important;
+            border: none !important;
             box-shadow: none !important;
-            border-radius: 6px !important;
+            border-radius: 0 !important;
             height: auto !important;
             max-height: none !important;
-            min-height: auto !important;
+            min-height: 0 !important;
             overflow: visible !important;
           }
           .invoice-print *, .invoice-thermal-container * {
@@ -159,10 +167,10 @@ export async function downloadThermalInvoicePdf(
       }
     });
 
-    // Recorta qualquer excesso em branco abaixo do rodapé da fatura
+    // Recorta estritamente qualquer excesso em branco abaixo do rodapé da fatura
     const trimmedCanvas = trimCanvasToContent(canvas, {
-      topPadding: 10,
-      bottomPadding: 22
+      topPadding: 8,
+      bottomPadding: 16
     });
 
     const imgData = trimmedCanvas.toDataURL('image/png');
@@ -186,6 +194,94 @@ export async function downloadThermalInvoicePdf(
   }
 }
 
+/**
+ * Gera e descarrega um arquivo PDF de fatura A4 / formal (FR, FT, RC, etc.)
+ * ajustando a altura da folha ao tamanho ideal do conteúdo, evitando a "imensidão de folha branca"
+ * desnecessária abaixo dos dizeres da fatura.
+ */
+export async function downloadA4InvoicePdf(
+  targetElement: HTMLElement | null,
+  options: {
+    filename?: string;
+    fitToContent?: boolean;
+  } = {}
+): Promise<boolean> {
+  if (!targetElement) return false;
+
+  const fitToContent = options.fitToContent ?? true;
+
+  try {
+    const canvas = await html2canvas(targetElement, {
+      scale: 2.5,
+      useCORS: true,
+      logging: false,
+      backgroundColor: '#ffffff',
+      windowWidth: 850,
+      onclone: (clonedDoc) => {
+        const styleEl = clonedDoc.createElement('style');
+        styleEl.textContent = `
+          .invoice-a4-container, .invoice-print {
+            box-sizing: border-box !important;
+            width: 800px !important;
+            max-width: 800px !important;
+            min-height: 0 !important;
+            height: auto !important;
+            max-height: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            background-color: #ffffff !important;
+            overflow: visible !important;
+            padding: 24px 32px !important;
+            margin: 0 auto !important;
+          }
+          .invoice-a4-container *, .invoice-print * {
+            box-sizing: border-box !important;
+          }
+        `;
+        clonedDoc.head.appendChild(styleEl);
+
+        const styles = clonedDoc.querySelectorAll('style');
+        styles.forEach(style => {
+          if (style.textContent) {
+            style.textContent = style.textContent
+              .replace(/oklab\([^)]+\)/g, '#000')
+              .replace(/oklch\([^)]+\)/g, '#000')
+              .replace(/color-mix\([^)]+\)/g, '#000')
+              .replace(/light-dark\([^)]+\)/g, '#000');
+          }
+        });
+      }
+    });
+
+    const trimmedCanvas = trimCanvasToContent(canvas, {
+      topPadding: 16,
+      bottomPadding: 24
+    });
+
+    const imgData = trimmedCanvas.toDataURL('image/png');
+    const pdfWidth = 210; // Largura A4 padrão em mm
+    const rawHeightMm = (trimmedCanvas.height * pdfWidth) / trimmedCanvas.width;
+    
+    // Se fitToContent for true, calcula a altura ideal do documento para não sobrar folha vazia
+    const pdfHeight = fitToContent
+      ? Math.max(50, Math.round(rawHeightMm * 10) / 10)
+      : 297;
+
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: [pdfWidth, pdfHeight]
+    });
+
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save(options.filename || 'FATURA_A4.pdf');
+    return true;
+  } catch (err) {
+    console.error('Erro ao gerar PDF da fatura A4:', err);
+    return false;
+  }
+}
+
 export function executeInvoicePrint(
   targetElement: HTMLElement | null,
   options: PrintInvoiceOptions
@@ -193,7 +289,6 @@ export function executeInvoicePrint(
   try {
     options.onBeforePrint?.();
 
-    // Se o elemento não existir, faz fallback padrão
     if (!targetElement) {
       window.print();
       return true;
@@ -227,9 +322,8 @@ export function executeInvoicePrint(
       }
     });
 
-    // 3. Normalizar classes para evitar restrições de tela
+    // 3. Normalizar classes para evitar restrições de tela e remover sombras/bordas
     if (options.type === 'a4') {
-      // Remover restrições de largura fixa e overflow
       clone.classList.remove('w-[800px]', 'min-h-[1123px]', 'overflow-hidden', 'shadow-sm', 'shadow-md', 'border', 'rounded-lg', 'rounded-2xl', 'rounded-3xl');
       clone.classList.add('invoice-a4-clean-render');
     } else {
@@ -237,11 +331,18 @@ export function executeInvoicePrint(
       clone.classList.add('invoice-thermal-clean-render');
     }
 
+    // Forçar dimensões limpas sem altura mínima fixa
+    clone.style.height = 'auto';
+    clone.style.minHeight = '0';
+    clone.style.maxHeight = 'none';
+    clone.style.border = 'none';
+    clone.style.boxShadow = 'none';
+
     // 4. Injetar o clone no portal
     portal.innerHTML = '';
     portal.appendChild(clone);
 
-    // 5. Injetar estilos de página dinâmicos (@page) para garantir dimensões exatas na impressora
+    // 5. Injetar estilos de página dinâmicos (@page) para garantir dimensões exatas na impressora ("tamanho ideal")
     let dynamicStyle = document.getElementById('fatur-print-dynamic-style') as HTMLStyleElement;
     if (!dynamicStyle) {
       dynamicStyle = document.createElement('style');
@@ -251,12 +352,11 @@ export function executeInvoicePrint(
 
     const is58 = options.ticketSize === '58mm';
     if (options.type === 'thermal') {
-      // Mede altura real computada do elemento clonado ou original em pixels
       const origHeight = targetElement.getBoundingClientRect().height || targetElement.offsetHeight || 0;
-      const cloneHeight = clone.getBoundingClientRect().height || clone.offsetHeight || 0;
-      const heightPx = Math.max(origHeight, cloneHeight, 180);
-      // Converte pixels em mm (1px ~ 0.264583mm) e adiciona margem de respiro de 3mm
-      const heightMm = Math.max(35, Math.ceil(heightPx * 0.264583) + 3);
+      const cloneHeight = clone.scrollHeight || clone.offsetHeight || 0;
+      const heightPx = Math.max(origHeight, cloneHeight, 160);
+      // Converte pixels em mm (1px ~ 0.264583mm) e adiciona respiro mínimo de 3mm
+      const heightMm = Math.max(35, Math.ceil(heightPx * 0.264583) + 4);
       const widthMm = is58 ? 58 : 80;
 
       dynamicStyle.textContent = `
@@ -266,10 +366,14 @@ export function executeInvoicePrint(
         }
       `;
     } else {
+      // Para A4: ajusta dinamicamente a altura ao tamanho ideal do conteúdo
+      const cloneHeight = clone.scrollHeight || clone.offsetHeight || 0;
+      const heightMm = Math.min(297, Math.max(60, Math.ceil(cloneHeight * 0.264583) + 6));
+
       dynamicStyle.textContent = `
         @page {
-          size: A4 portrait !important;
-          margin: 8mm 8mm 8mm 8mm !important;
+          size: 210mm ${heightMm}mm !important;
+          margin: 4mm 4mm 4mm 4mm !important;
         }
       `;
     }
@@ -308,7 +412,6 @@ export function executeInvoicePrint(
       } catch (err) {
         console.error("Erro ao invocar window.print():", err);
       } finally {
-        // Fallback de limpeza caso o evento afterprint não dispare (ex: cancelamento rápido)
         setTimeout(cleanup, 2500);
       }
     }, 120);

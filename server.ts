@@ -459,6 +459,25 @@ function runStartupMigrations() {
       console.error("Migration error (Products):", e);
     }
 
+    // Cashier Sessions Denominations Migration
+    try {
+      const cashierSessionsCols = db.prepare("PRAGMA table_info(cashier_sessions)").all() as any[];
+      if (!cashierSessionsCols.some(col => col.name === 'denominations')) {
+        db.exec("ALTER TABLE cashier_sessions ADD COLUMN denominations TEXT");
+        console.log("[DB] Added denominations column to cashier_sessions");
+      }
+      if (!cashierSessionsCols.some(col => col.name === 'initial_denominations')) {
+        db.exec("ALTER TABLE cashier_sessions ADD COLUMN initial_denominations TEXT");
+        console.log("[DB] Added initial_denominations column to cashier_sessions");
+      }
+      if (!cashierSessionsCols.some(col => col.name === 'denominations_history')) {
+        db.exec("ALTER TABLE cashier_sessions ADD COLUMN denominations_history TEXT");
+        console.log("[DB] Added denominations_history column to cashier_sessions");
+      }
+    } catch (e) {
+      console.error("Migration error (Cashier Sessions denominations):", e);
+    }
+
     // Invoice Items Cost Enrichment
     try {
       const invoices = db.prepare("SELECT id, items FROM credit_invoices").all() as any[];
@@ -1468,6 +1487,7 @@ function initializeDatabase() {
         opening_time DATETIME DEFAULT CURRENT_TIMESTAMP,
         closing_time DATETIME,
         status TEXT DEFAULT 'open',
+        denominations TEXT,
         FOREIGN KEY(establishment_id) REFERENCES establishments(id),
         FOREIGN KEY(cash_register_id) REFERENCES cash_registers(id),
         FOREIGN KEY(seller_id) REFERENCES users(id)
@@ -2609,13 +2629,13 @@ async function startServer() {
       }
 
       // Check for active cashier session
-      let sessionQuery = "SELECT id, cash_register_id FROM cashier_sessions WHERE establishment_id = ? AND status = 'open'";
+      let sessionQuery = "SELECT id, cash_register_id, denominations FROM cashier_sessions WHERE establishment_id = ? AND status = 'open'";
       let sessionParams: any[] = [establishment_id];
       if (cash_register_id) {
         sessionQuery += " AND (cash_register_id = ? OR cash_register_id IS NULL)";
         sessionParams.push(cash_register_id);
       }
-      const activeSession = db.prepare(sessionQuery).get(...sessionParams);
+      const activeSession = db.prepare(sessionQuery).get(...sessionParams) as any;
       if (!activeSession) {
         console.warn(`[Checkout] No active session found for establishment ${establishment_id}${cash_register_id ? ' and register ' + cash_register_id : ''}`);
         return res.status(403).json({ error: "O caixa deve estar aberto para realizar vendas." });
@@ -2756,6 +2776,36 @@ async function startServer() {
       );
       
       console.log(`[Checkout] Transaction inserted: ${info.lastInsertRowid}`);
+
+      // Update session denominations if provided from client checkout
+      if (req.body.updated_denominations && activeSession?.id) {
+        try {
+          const denStr = typeof req.body.updated_denominations === 'string'
+            ? req.body.updated_denominations
+            : JSON.stringify(req.body.updated_denominations);
+          
+          if (req.body.denomination_history_entry) {
+            const currentSession = db.prepare("SELECT denominations_history FROM cashier_sessions WHERE id = ?").get(activeSession.id) as any;
+            let hist = [];
+            if (currentSession?.denominations_history) {
+              try {
+                hist = typeof currentSession.denominations_history === 'string' 
+                  ? JSON.parse(currentSession.denominations_history) 
+                  : currentSession.denominations_history;
+              } catch (e) {
+                hist = [];
+              }
+            }
+            hist.push(req.body.denomination_history_entry);
+            db.prepare("UPDATE cashier_sessions SET denominations = ?, denominations_history = ? WHERE id = ?").run(denStr, JSON.stringify(hist), activeSession.id);
+          } else {
+            db.prepare("UPDATE cashier_sessions SET denominations = ? WHERE id = ?").run(denStr, activeSession.id);
+          }
+          console.log(`[Checkout] Updated session ${activeSession.id} denominations and history after cash sale.`);
+        } catch (denErr) {
+          console.error("[Checkout] Error updating session denominations:", denErr);
+        }
+      }
 
       // Update stock
       for (const item of items) {
@@ -10718,19 +10768,99 @@ function formatDateToIso(dateStr?: string) {
     }
 
     // Check for active cashier session
-    let sessionQuery = "SELECT id FROM cashier_sessions WHERE establishment_id = ? AND status = 'open'";
+    let sessionQuery = "SELECT id, denominations FROM cashier_sessions WHERE establishment_id = ? AND status = 'open'";
     let sessionParams: any[] = [establishment_id];
     if (cash_register_id) {
       sessionQuery += " AND cash_register_id = ?";
       sessionParams.push(cash_register_id);
     }
-    const activeSession = db.prepare(sessionQuery).get(...sessionParams);
+    const activeSession = db.prepare(sessionQuery).get(...sessionParams) as any;
     if (!activeSession) {
       return res.status(403).json({ error: "O caixa deve estar aberto para registar movimentos." });
     }
 
     db.prepare("INSERT INTO cash_movements (establishment_id, seller_id, cash_register_id, type, amount, description) VALUES (?, ?, ?, ?, ?, ?)").run(establishment_id, seller_id, cash_register_id || null, type, amount, description);
     const movementId = db.prepare("SELECT last_insert_rowid() as id").get() as { id: number };
+
+    // Update session denominations if provided directly or via movement_breakdown
+    if (req.body.denominations) {
+      try {
+        const denStr = typeof req.body.denominations === 'string' 
+          ? req.body.denominations 
+          : JSON.stringify(req.body.denominations);
+        
+        if (req.body.history_entry) {
+          const curSession = db.prepare("SELECT denominations_history FROM cashier_sessions WHERE id = ?").get(activeSession.id) as any;
+          let curHist = [];
+          if (curSession?.denominations_history) {
+            try { curHist = typeof curSession.denominations_history === 'string' ? JSON.parse(curSession.denominations_history) : curSession.denominations_history; } catch (e) { curHist = []; }
+          }
+          curHist.push(req.body.history_entry);
+          db.prepare("UPDATE cashier_sessions SET denominations = ?, denominations_history = ? WHERE id = ?").run(denStr, JSON.stringify(curHist), activeSession.id);
+        } else {
+          db.prepare("UPDATE cashier_sessions SET denominations = ? WHERE id = ?").run(denStr, activeSession.id);
+        }
+      } catch (denomError) {
+        console.error("Error updating session denominations during cash movement:", denomError);
+      }
+    } else if (req.body.movement_breakdown && activeSession.denominations) {
+      try {
+        const currentDen = typeof activeSession.denominations === 'string' ? JSON.parse(activeSession.denominations) : activeSession.denominations;
+        const movDen = typeof req.body.movement_breakdown === 'string' ? JSON.parse(req.body.movement_breakdown) : req.body.movement_breakdown;
+        const newDen = { 
+          notes: { ...(currentDen.notes || {}) },
+          coins: { ...(currentDen.coins || {}) }
+        };
+
+        // Decompor o breakdown do movimento caso seja { notes, coins } ou plano
+        if (movDen.notes || movDen.coins) {
+          for (const [k, v] of Object.entries(movDen.notes || {})) {
+            const count = Number(v) || 0;
+            newDen.notes[k] = type === 'in' ? (Number(newDen.notes[k]) || 0) + count : Math.max(0, (Number(newDen.notes[k]) || 0) - count);
+          }
+          for (const [k, v] of Object.entries(movDen.coins || {})) {
+            const count = Number(v) || 0;
+            newDen.coins[k] = type === 'in' ? (Number(newDen.coins[k]) || 0) + count : Math.max(0, (Number(newDen.coins[k]) || 0) - count);
+          }
+        } else {
+          for (const [k, v] of Object.entries(movDen)) {
+            const count = Number(v) || 0;
+            if (newDen.notes[k] !== undefined) {
+              newDen.notes[k] = type === 'in' ? (Number(newDen.notes[k]) || 0) + count : Math.max(0, (Number(newDen.notes[k]) || 0) - count);
+            } else if (newDen.coins[k] !== undefined) {
+              newDen.coins[k] = type === 'in' ? (Number(newDen.coins[k]) || 0) + count : Math.max(0, (Number(newDen.coins[k]) || 0) - count);
+            }
+          }
+        }
+
+        const curSession = db.prepare("SELECT denominations_history FROM cashier_sessions WHERE id = ?").get(activeSession.id) as any;
+        let curHist = [];
+        if (curSession?.denominations_history) {
+          try { curHist = typeof curSession.denominations_history === 'string' ? JSON.parse(curSession.denominations_history) : curSession.denominations_history; } catch (e) { curHist = []; }
+        }
+        
+        const historyEntry = req.body.history_entry || {
+          id: Date.now(),
+          type: type === 'in' ? 'movement_in' : 'movement_out',
+          title: `${type === 'in' ? 'Entrada (Suprimento)' : 'Saída (Sangria)'}: ${description || ''}`,
+          timestamp: new Date().toISOString(),
+          in: type === 'in' ? movDen : null,
+          out: type === 'out' ? movDen : null,
+          current: newDen,
+          amount: amount,
+          description: description
+        };
+        curHist.push(historyEntry);
+
+        db.prepare("UPDATE cashier_sessions SET denominations = ?, denominations_history = ? WHERE id = ?").run(
+          JSON.stringify(newDen), 
+          JSON.stringify(curHist), 
+          activeSession.id
+        );
+      } catch (denomError) {
+        console.error("Error updating session denominations from movement breakdown:", denomError);
+      }
+    }
 
     // Record in financial_transactions
     try {
@@ -10755,6 +10885,23 @@ function formatDateToIso(dateStr?: string) {
     res.json({ success: true });
   });
 
+  // Cashier Sessions Helper
+  function calculateDenominationsTotalServer(d: any): number {
+    if (!d) return 0;
+    let total = 0;
+    if (d.notes) {
+      for (const [v, c] of Object.entries(d.notes)) {
+        total += (Number(v) || 0) * (Number(c) || 0);
+      }
+    }
+    if (d.coins) {
+      for (const [v, c] of Object.entries(d.coins)) {
+        total += (Number(v) || 0) * (Number(c) || 0);
+      }
+    }
+    return total;
+  }
+
   // Cashier Sessions
   app.get("/api/seller/active-session/:establishmentId", (req, res) => {
     const { cash_register_id } = req.query;
@@ -10776,6 +10923,19 @@ function formatDateToIso(dateStr?: string) {
     // 1. POS Sales (base_amount)
     const salesPos = db.prepare(`
       SELECT SUM(base_amount) as total 
+      FROM transactions 
+      WHERE establishment_id = ? AND timestamp >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
+    `).get(session.establishment_id, session.opening_time, session.cash_register_id) as any;
+
+    // Cash POS Sales (exact cash that entered drawer)
+    const salesPosCash = db.prepare(`
+      SELECT SUM(
+        CASE 
+          WHEN payment_method = 'cash' THEN base_amount 
+          WHEN payment_method = 'split' AND split_details IS NOT NULL THEN json_extract(split_details, '$.cash')
+          ELSE 0 
+        END
+      ) as total 
       FROM transactions 
       WHERE establishment_id = ? AND timestamp >= ? AND (cash_register_id = ? OR cash_register_id IS NULL)
     `).get(session.establishment_id, session.opening_time, session.cash_register_id) as any;
@@ -10810,20 +10970,55 @@ function formatDateToIso(dateStr?: string) {
 
     const totalSales = (salesPos?.total || 0) + (salesFormal?.total || 0);
 
+    let parsedDenominations = null;
+    if (session.denominations) {
+      try {
+        parsedDenominations = typeof session.denominations === 'string' ? JSON.parse(session.denominations) : session.denominations;
+      } catch (e) {
+        parsedDenominations = null;
+      }
+    }
+
+    let parsedInitialDenominations = null;
+    if (session.initial_denominations) {
+      try {
+        parsedInitialDenominations = typeof session.initial_denominations === 'string' ? JSON.parse(session.initial_denominations) : session.initial_denominations;
+      } catch (e) {
+        parsedInitialDenominations = null;
+      }
+    }
+
+    let parsedHistory = [];
+    if (session.denominations_history) {
+      try {
+        parsedHistory = typeof session.denominations_history === 'string' ? JSON.parse(session.denominations_history) : session.denominations_history;
+      } catch (e) {
+        parsedHistory = [];
+      }
+    }
+
+    const physicalDenomTotal = parsedDenominations ? calculateDenominationsTotalServer(parsedDenominations) : null;
+    const computedExpected = (session.opening_amount + (salesPosCash?.total || 0) + (cashIn?.total || 0)) - ((cashOut?.total || 0) + (refunds?.total || 0));
+
     res.json({
       ...session,
+      denominations: parsedDenominations,
+      initial_denominations: parsedInitialDenominations,
+      denominations_history: parsedHistory,
       totals: {
         sales: totalSales,
+        sales_cash: salesPosCash?.total || 0,
         in: cashIn?.total || 0,
         out: (cashOut?.total || 0) + (refunds?.total || 0),
-        expected: (session.opening_amount + totalSales + (cashIn?.total || 0)) - ((cashOut?.total || 0) + (refunds?.total || 0))
+        expected: computedExpected,
+        physical_denominations_total: physicalDenomTotal
       }
     });
   });
 
   app.post("/api/seller/open-session", (req, res) => {
-    const { establishment_id, seller_id, opening_amount, cash_register_id } = req.body;
-    console.log("Opening session request:", { establishment_id, seller_id, opening_amount, cash_register_id });
+    const { establishment_id, seller_id, opening_amount, cash_register_id, denominations } = req.body;
+    console.log("Opening session request:", { establishment_id, seller_id, opening_amount, cash_register_id, denominations });
     
     if (!hasPermission(seller_id, 'pos_open_cashier')) {
       return res.status(403).json({ error: "Você não tem permissão para abrir o caixa." });
@@ -10844,7 +11039,20 @@ function formatDateToIso(dateStr?: string) {
       return res.status(400).json({ error: "Este caixa já possui uma sessão aberta por outro funcionário." });
     }
 
-    const info = db.prepare("INSERT INTO cashier_sessions (establishment_id, seller_id, opening_amount, cash_register_id) VALUES (?, ?, ?, ?)").run(establishment_id, seller_id, opening_amount, cash_register_id);
+    const denStr = denominations ? (typeof denominations === 'object' ? JSON.stringify(denominations) : denominations) : null;
+    const parsedDen = denominations ? (typeof denominations === 'string' ? JSON.parse(denominations) : denominations) : null;
+    const initialHistory = parsedDen ? JSON.stringify([{
+      id: 1,
+      type: 'open',
+      title: 'Abertura de Caixa (Fundo Inicial)',
+      timestamp: new Date().toISOString(),
+      in: parsedDen,
+      out: null,
+      current: parsedDen,
+      amount: opening_amount
+    }]) : JSON.stringify([]);
+
+    const info = db.prepare("INSERT INTO cashier_sessions (establishment_id, seller_id, opening_amount, cash_register_id, denominations, initial_denominations, denominations_history) VALUES (?, ?, ?, ?, ?, ?, ?)").run(establishment_id, seller_id, opening_amount, cash_register_id, denStr, denStr, initialHistory);
     
     const est = db.prepare("SELECT owner_id FROM establishments WHERE id = ?").get(establishment_id) as any;
     logAction({
@@ -10857,11 +11065,37 @@ function formatDateToIso(dateStr?: string) {
       description: `Caixa aberto com valor inicial de Kz ${opening_amount}`,
       entityType: 'CASHIER_SESSION',
       entityId: Number(info.lastInsertRowid),
-      newValues: { opening_amount, cash_register_id },
+      newValues: { opening_amount, cash_register_id, denominations: denStr },
       req
     });
 
     res.json({ success: true, id: info.lastInsertRowid });
+  });
+
+  app.post("/api/seller/update-session-denominations", (req, res) => {
+    const { session_id, denominations, history_entry } = req.body;
+    if (!session_id || !denominations) {
+      return res.status(400).json({ error: "Sessão e denominações são obrigatórias." });
+    }
+    const denStr = typeof denominations === 'object' ? JSON.stringify(denominations) : denominations;
+    
+    if (history_entry) {
+      const currentSession = db.prepare("SELECT denominations_history FROM cashier_sessions WHERE id = ?").get(session_id) as any;
+      let hist = [];
+      if (currentSession?.denominations_history) {
+        try {
+          hist = typeof currentSession.denominations_history === 'string' ? JSON.parse(currentSession.denominations_history) : currentSession.denominations_history;
+        } catch (e) {
+          hist = [];
+        }
+      }
+      hist.push(history_entry);
+      db.prepare("UPDATE cashier_sessions SET denominations = ?, denominations_history = ? WHERE id = ?").run(denStr, JSON.stringify(hist), session_id);
+    } else {
+      db.prepare("UPDATE cashier_sessions SET denominations = ? WHERE id = ?").run(denStr, session_id);
+    }
+
+    res.json({ success: true });
   });
 
   app.post("/api/seller/close-session", (req, res) => {
