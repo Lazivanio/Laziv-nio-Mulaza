@@ -12078,10 +12078,10 @@ function formatDateToIso(dateStr?: string) {
           request_id: `REQ-DRAWER-${Date.now()}`,
           options: { pin: pin || 'pin2', printer }
         }));
-        return res.json({ success: true, message: 'Comando elétrico de abertura de gaveta enviado via WSS.' });
+        return res.json({ success: true, message: 'Comando elétrico de abertura de gaveta enviado via WSS ao Agente de Hardware.' });
       }
 
-      res.json({ success: true, message: 'Gaveta acionada via HTTP Local.' });
+      res.status(404).json({ success: false, error: 'Nenhum Agente de Hardware conectado via WebSocket para este estabelecimento.' });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }

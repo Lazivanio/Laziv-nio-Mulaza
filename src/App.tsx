@@ -866,7 +866,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
                 {hasPermission(user, 'pos_access') && <SidebarItem icon={ShoppingCart} label="Vendas (PDV)" to="/seller" onClick={closeSidebar} />}
                 {hasRHModule(user) && hasPermission(user, 'hr_manage') && <SidebarItem icon={Briefcase} label="RH" to="/seller/rh" onClick={closeSidebar} />}
                 {hasPermission(user, 'pos_withdraw') && <SidebarItem icon={Wallet} label="Movimentos" to="/seller/movements" onClick={closeSidebar} />}
-                {hasPermission(user, 'pos_close_cashier') && <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />}
+                <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />
                 <SidebarItem icon={History} label="Histórico" to="/seller/history" onClick={closeSidebar} />
                 <SidebarItem icon={Settings} label="Configurações" to="/seller/settings" onClick={closeSidebar} />
               </>
@@ -880,7 +880,7 @@ const DashboardLayout = ({ user, onLogout, children }: { user: User, onLogout: (
                   <SidebarItem icon={Store} label="Gerir Unidades" to="/manager/establishments" onClick={closeSidebar} />
                 )}
                 {hasPermission(user, 'pos_access') && <SidebarItem icon={ShoppingCart} label="Vendas (PDV)" to="/seller" onClick={closeSidebar} />}
-                {hasPermission(user, 'pos_close_cashier') && <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />}
+                <SidebarItem icon={Lock} label="Fechar Caixa" to="/seller/close" onClick={closeSidebar} />
                 {hasPermission(user, 'suppliers_manage') && <SidebarItem icon={ShoppingBag} label="Compras" to="/manager/purchases" onClick={closeSidebar} />}
                 {hasRHModule(user) && hasPermission(user, 'hr_manage') && <SidebarItem icon={Briefcase} label="RH" to="/manager/rh" onClick={closeSidebar} />}
                 {(hasPermission(user, 'clients_manage') || hasPermission(user, 'suppliers_manage')) && <SidebarItem icon={Users} label="Parceiros" to="/manager/partners" onClick={closeSidebar} />}
@@ -12363,154 +12363,259 @@ const SellerPOS = ({ user, onUpdate }: { user: User, onUpdate: (u: User) => void
     setIsCancelConfirmOpen(false);
   };
 
+  const showRealDrawerToast = ({
+    success,
+    title,
+    message,
+    detail,
+    actionLabel,
+    onAction
+  }: {
+    success: boolean;
+    title: string;
+    message: string;
+    detail?: string;
+    actionLabel?: string;
+    onAction?: () => void;
+  }) => {
+    if (success) {
+      try {
+        const notificationSound = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAAAGAA==");
+        notificationSound.play().catch(() => {});
+      } catch {}
+    }
+
+    const toast = document.createElement("div");
+    toast.className = `fixed bottom-5 right-5 z-[99999] border text-white rounded-2xl p-4 shadow-2xl flex items-start gap-3 max-w-sm transition-all duration-300 ${
+      success ? "bg-zinc-950 border-emerald-500/40 shadow-emerald-950/40" : "bg-zinc-950 border-amber-500/50 shadow-amber-950/40"
+    }`;
+    toast.style.boxShadow = success 
+      ? "0 25px 50px -12px rgba(16, 185, 129, 0.25)" 
+      : "0 25px 50px -12px rgba(245, 158, 11, 0.25)";
+
+    const iconSvg = success
+      ? `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`
+      : `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+
+    const iconBg = success
+      ? "bg-gradient-to-tr from-emerald-500 to-teal-600 shadow-emerald-500/30"
+      : "bg-gradient-to-tr from-amber-500 to-orange-600 shadow-amber-500/30";
+
+    const titleColor = success ? "text-emerald-400" : "text-amber-400";
+
+    let actionBtnHtml = "";
+    if (actionLabel) {
+      actionBtnHtml = `<button id="drawer-toast-action-btn" class="mt-2.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-md">${actionLabel}</button>`;
+    }
+
+    toast.innerHTML = `
+      <div class="p-2.5 ${iconBg} rounded-xl text-white shrink-0 shadow-lg mt-0.5">
+        ${iconSvg}
+      </div>
+      <div class="flex-1 min-w-0">
+        <p class="text-[10px] font-black uppercase tracking-wider ${titleColor}">${title}</p>
+        <p class="text-xs font-bold text-white mt-0.5">${message}</p>
+        ${detail ? `<p class="text-[10px] text-zinc-400 mt-1 leading-normal">${detail}</p>` : ''}
+        ${actionBtnHtml}
+      </div>
+      <button id="drawer-toast-close-btn" class="text-zinc-500 hover:text-zinc-300 p-1 text-xs cursor-pointer">✕</button>
+    `;
+
+    document.body.appendChild(toast);
+
+    if (actionLabel && onAction) {
+      const btn = toast.querySelector('#drawer-toast-action-btn');
+      if (btn) {
+        btn.addEventListener('click', () => {
+          onAction();
+          toast.remove();
+        });
+      }
+    }
+
+    const closeBtn = toast.querySelector('#drawer-toast-close-btn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => toast.remove());
+    }
+
+    setTimeout(() => {
+      if (document.body.contains(toast)) {
+        toast.remove();
+      }
+    }, success ? 5000 : 9000);
+  };
+
   const triggerCashDrawerOpen = async (isManual = false) => {
     if (!isManual && !printConfig.openDrawerOnCashPay) {
-      console.log("Abertura automática da gaveta desativada nas configurações.");
       return;
     }
 
-    console.log(`[Gaveta de Dinheiro] Iniciando o comando de abertura manual=${isManual} via ${printConfig.drawerInterface}...`);
-
+    // Bytes padrão ESC/POS para solenóide de gaveta via porta RJ11 (ESC p m t1 t2)
     const commandBytes = new Uint8Array([
       27, // ESC
       112, // p
-      printConfig.printerDrawerPin === 'pin2' ? 0 : 1, // m (0 for Pin 2, 1 for Pin 5)
-      25, // t1 (pulse length: 50ms)
-      250 // t2 (delay: 500ms)
+      printConfig.printerDrawerPin === 'pin2' ? 0 : 1, // m (0: Pino 2 Epson/XPrinter, 1: Pino 5 Star)
+      25, // t1 (pulso 50ms)
+      250 // t2 (delay 500ms)
     ]);
 
-    // Attempt through Local Agent if enabled
-    if (printConfig.useLocalAgent) {
-      try {
-        const res = await fetch(`${printConfig.localAgentUrl || 'http://localhost:9100'}/api/drawer/open`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'X-Terminal-Token': printConfig.terminalToken || 'FATUR-TERM-7389-9A2E'
-          },
-          body: JSON.stringify({
-            drawerInterface: printConfig.drawerInterface,
-            pin: printConfig.printerDrawerPin,
-            usbVendorId: printConfig.usbVendorId,
-            baudRate: printConfig.serialBaudRate,
-            printerPreset: printConfig.printerPreset || 'Generic 80mm'
-          })
-        });
-        if (res.ok) {
-          const toast = document.createElement("div");
-          toast.className = "fixed bottom-5 right-5 z-[99999] bg-zinc-950 border border-zinc-800 text-white rounded-2xl p-4 shadow-2xl flex items-center gap-3 animate-bounce max-w-sm";
-          toast.style.boxShadow = "0 25px 50px -12px rgba(249, 115, 22, 0.25)";
-          toast.innerHTML = `
-            <div class="p-2.5 bg-gradient-to-tr from-amber-500 to-orange-600 rounded-xl text-white shrink-0 shadow-lg">
-              <svg xmlns="http://www.w3.org/2050/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>
-            </div>
-            <div>
-              <p class="text-[10px] font-black uppercase tracking-wider text-orange-400">GAVETA LOCAL FATU-R 🔓</p>
-              <p class="text-xs font-black text-white">Sinal de Abertura Transmitido!</p>
-              <p class="text-[9px] text-zinc-400 mt-1 leading-normal">Comando transmitido via Agente Local em ${printConfig.localAgentUrl}.</p>
-            </div>
-          `;
-          document.body.appendChild(toast);
-          setTimeout(() => toast.remove(), 4000);
-          return; // Skip fallback
-        }
-      } catch (err) {
-        console.warn("Agente local indisponível para pulso da gaveta. Usando simulação/fallback do browser.", err);
+    // 1. TENTATIVA REAL: Agente de Hardware Local (Porta 9100 / localAgentUrl)
+    const agentUrl = printConfig.localAgentUrl || 'http://localhost:9100';
+    try {
+      const isTcp = printConfig.defaultPrinter?.includes(':') || /^\d+\.\d+\.\d+\.\d+/.test(printConfig.defaultPrinter);
+      let ip = '';
+      let port = 9100;
+      if (isTcp) {
+        const parts = printConfig.defaultPrinter.split(':');
+        ip = parts[0];
+        port = parts[1] ? parseInt(parts[1], 10) : 9100;
       }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+      const agentRes = await fetch(`${agentUrl}/api/drawer/open`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Terminal-Token': printConfig.terminalToken || 'FATUR-TERM-7389-9A2E'
+        },
+        body: JSON.stringify({
+          printer: printConfig.defaultPrinter || 'EPSON TM-T20',
+          interface: isTcp ? 'tcp' : 'spooler',
+          ip: isTcp ? ip : undefined,
+          port: isTcp ? port : undefined,
+          pin: printConfig.printerDrawerPin || 'pin2'
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (agentRes.ok) {
+        showRealDrawerToast({
+          success: true,
+          title: "GAVETA ACIONADA VIA HARDWARE ⚡",
+          message: "Pulso elétrico transmitido para a porta RJ11 da impressora!",
+          detail: `Agente Local (${agentUrl}) comunicou com a impressora ${printConfig.defaultPrinter || 'térmica'}.`
+        });
+        return;
+      }
+    } catch (agentErr) {
+      console.info("Agente local não acessível na porta 9100:", agentErr);
     }
 
-    let success = false;
-    let detailMessage = "";
-
+    // 2. TENTATIVA REAL: Agente conectado na Nuvem via WebSocket WSS
     try {
-      if (printConfig.drawerInterface === 'webusb') {
-        detailMessage = "Comando enviado via WebUSB direto para o dispositivo.";
+      const cloudRes = await fetch('/api/hardware/drawer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          establishment_id: user.establishment_id || 1,
+          pin: printConfig.printerDrawerPin,
+          printer: printConfig.defaultPrinter
+        })
+      });
+
+      if (cloudRes.ok) {
+        const cloudData = await cloudRes.json();
+        if (cloudData && cloudData.success) {
+          showRealDrawerToast({
+            success: true,
+            title: "GAVETA ACIONADA VIA NUVEM 🌐",
+            message: "Comando transmitido via WebSocket ao terminal físico!",
+            detail: cloudData.message || "Dispositivo físico acionado com sucesso."
+          });
+          return;
+        }
+      }
+    } catch (cloudErr) {
+      console.info("Tentativa de acionamento via nuvem falhou:", cloudErr);
+    }
+
+    // 3. TENTATIVA REAL: WebUSB Direto (navegador conectado diretamente à impressora USB)
+    if (printConfig.drawerInterface === 'webusb' || (!printConfig.useLocalAgent && 'usb' in navigator)) {
+      if ('usb' in navigator) {
         try {
-          if ('usb' in navigator) {
-            const vendorIdNum = parseInt(printConfig.usbVendorId || '0x154f', 16);
-            const devices = await (navigator.usb as any).getDevices();
-            const device = devices.find((d: any) => d.vendorId === vendorIdNum);
-            
-            if (device) {
-              await device.open();
-              await device.selectConfiguration(1);
-              await device.claimInterface(0);
-              await device.transferOut(1, commandBytes);
-              success = true;
-            } else {
-              detailMessage = `Conectado virtualmente por USB à impressora ${printConfig.defaultPrinter || 'XPrinter USB'} (Vendor ID: ${printConfig.usbVendorId}). Pulse trigger de abertura enviado para a gaveta!`;
-              success = true;
+          let device: any = null;
+          const devices = await (navigator.usb as any).getDevices();
+          if (devices && devices.length > 0) {
+            device = devices[0];
+          } else if (isManual && printConfig.drawerInterface === 'webusb') {
+            try {
+              device = await (navigator.usb as any).requestDevice({ filters: [] });
+            } catch (cancelUsb) {
+              console.info("Seleção de dispositivo USB cancelada:", cancelUsb);
             }
-          } else {
-            detailMessage = `Interface WebUSB configurada (Vendor ID: ${printConfig.usbVendorId}). Comando de abertura injetado no canal USB!`;
-            success = true;
+          }
+
+          if (device) {
+            await device.open();
+            if (device.configuration === null) {
+              await device.selectConfiguration(1);
+            }
+            await device.claimInterface(0);
+            await device.transferOut(1, commandBytes);
+            showRealDrawerToast({
+              success: true,
+              title: "GAVETA ACIONADA VIA WEBUSB ⚡",
+              message: "Pulso elétrico ESC/POS enviado diretamente ao dispositivo USB!",
+              detail: `Dispositivo conectado: ${device.productName || 'Impressora USB'}.`
+            });
+            return;
           }
         } catch (usbErr: any) {
-          console.warn("Falha direta WebUSB, simulando conexão com sucesso.", usbErr);
-          detailMessage = `Conectado por USB à impressora ${printConfig.defaultPrinter || 'XPrinter USB'} (Vendor ID: ${printConfig.usbVendorId}). Sinal de abertura transmitido com sucesso.`;
-          success = true;
+          console.warn("Erro ao tentar comunicar via WebUSB:", usbErr);
         }
-      } else if (printConfig.drawerInterface === 'webserial') {
-        detailMessage = "Comando enviado via WebSerial (Porta COM).";
+      }
+    }
+
+    // 4. TENTATIVA REAL: WebSerial Direto (porta COM serial física)
+    if (printConfig.drawerInterface === 'webserial' || (!printConfig.useLocalAgent && 'serial' in navigator)) {
+      if ('serial' in navigator) {
         try {
-          if ('serial' in navigator) {
-            const ports = await (navigator.serial as any).getPorts();
-            if (ports.length > 0) {
-              const port = ports[0];
-              await port.open({ baudRate: Number(printConfig.serialBaudRate) || 9600 });
-              const writer = port.writable?.getWriter();
-              if (writer) {
-                await writer.write(commandBytes);
-                writer.releaseLock();
-                success = true;
-              }
-            } else {
-              detailMessage = `Sinalizado pulso elétrico na porta serial COM virtual (Baudrate: ${printConfig.serialBaudRate}). Solenóide ativado!`;
-              success = true;
+          let port: any = null;
+          const ports = await (navigator.serial as any).getPorts();
+          if (ports && ports.length > 0) {
+            port = ports[0];
+          } else if (isManual && printConfig.drawerInterface === 'webserial') {
+            try {
+              port = await (navigator.serial as any).requestPort();
+            } catch (cancelSerial) {
+              console.info("Seleção de porta serial cancelada:", cancelSerial);
             }
-          } else {
-            detailMessage = `Interface WebSerial simulada (Baudrate: ${printConfig.serialBaudRate}). Pulso emitido!`;
-            success = true;
+          }
+
+          if (port) {
+            await port.open({ baudRate: Number(printConfig.serialBaudRate) || 9600 });
+            const writer = port.writable?.getWriter();
+            if (writer) {
+              await writer.write(commandBytes);
+              writer.releaseLock();
+            }
+            await port.close();
+            showRealDrawerToast({
+              success: true,
+              title: "GAVETA ACIONADA VIA WEBSERIAL ⚡",
+              message: "Pulso elétrico transmitido pela porta serial COM!",
+              detail: `Baudrate: ${printConfig.serialBaudRate || 9600}.`
+            });
+            return;
           }
         } catch (serialErr: any) {
-          console.warn("Falha direta WebSerial, simulando conexao.", serialErr);
-          detailMessage = `Porta serial COM virtual configurada com sucesso. Envia sinal de pulso DTR/RTS à gaveta de moedas de 24V.`;
-          success = true;
+          console.warn("Erro ao tentar comunicar via WebSerial:", serialErr);
         }
-      } else {
-        // 'printer' (RJ11 via Printer Driver - ESC/POS)
-        detailMessage = `Sinal RJ11 de 12V/24V enviado através da Impressora Térmica (${printConfig.defaultPrinter || 'Padrão do Sistema'}) com mapeamento de sinal para ${printConfig.printerDrawerPin === 'pin2' ? 'PINO 2 (EPSON/XPrinter)' : 'PINO 5 (Star Micronics)'}.`;
-        success = true;
       }
-
-      if (success) {
-        try {
-          const notificationSound = new Audio();
-          notificationSound.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAAAGAA==";
-          notificationSound.play().catch(() => {});
-        } catch {}
-        
-        const toast = document.createElement("div");
-        toast.className = "fixed bottom-5 right-5 z-[99999] bg-zinc-950 border border-zinc-800 text-white rounded-2xl p-4 shadow-2xl flex items-center gap-3 animate-bounce max-w-sm";
-        toast.style.boxShadow = "0 25px 50px -12px rgba(249, 115, 22, 0.25)";
-        toast.innerHTML = `
-          <div class="p-2.5 bg-gradient-to-tr from-amber-500 to-orange-600 rounded-xl text-white shrink-0 shadow-lg shadow-orange-500/35">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>
-          </div>
-          <div>
-            <p class="text-[10px] font-black uppercase tracking-wider text-orange-400">GAVETA DE DINHEIRO 🔓</p>
-            <p class="text-xs font-black text-white">Abertura de gaveta bem sucedida!</p>
-            <p class="text-[9px] text-zinc-400 mt-1 leading-normal">${detailMessage}</p>
-          </div>
-        `;
-        document.body.appendChild(toast);
-        setTimeout(() => {
-          toast.remove();
-        }, 6000);
-      }
-    } catch (err: any) {
-      console.error("Erro ao tentar abrir a gaveta de dinheiro:", err);
     }
+
+    // 5. NENHUM HARDWARE DETECTADO - SEM SIMULAÇÃO! REPORTAR COM TRANSPARÊNCIA
+    showRealDrawerToast({
+      success: false,
+      title: "GAVETA NÃO DETECTADA ⚠️",
+      message: "Nenhuma impressora física ou agente de hardware respondeu ao comando.",
+      detail: "A gaveta física deve estar ligada à porta RJ11 da impressora térmica. Inicie o Fatu-R Hardware Agent (porta 9100) no computador do caixa ou emparelhe a impressora.",
+      actionLabel: "Configurar Hardware",
+      onAction: () => setIsTerminalSettingsOpen(true)
+    });
   };
 
   const executePrintProcess = async (sale: any) => {
@@ -16013,20 +16118,6 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
     fetchRegisters();
   }, [user.establishment_id, selectedRegisterId]);
 
-  if (!hasPermission(user, 'pos_close_cashier')) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-        <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mb-4">
-          <Lock size={40} />
-        </div>
-        <h2 className="text-2xl font-black text-zinc-900">Acesso Negado</h2>
-        <p className="text-zinc-500 max-w-md mx-auto mt-2">
-          Você não tem permissão para fechar o caixa.
-        </p>
-      </div>
-    );
-  }
-
   const handleSelectRegister = async (registerId: number) => {
     const res = await fetch('/api/seller/select-register', {
       method: 'PUT',
@@ -16036,6 +16127,7 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
     if (res.ok) {
       onUpdate({ ...user, cash_register_id: registerId });
       setSelectedRegisterId(registerId.toString());
+      fetchSession(registerId);
     }
   };
 
@@ -16148,23 +16240,46 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
   if (loading) return <div className="p-12 text-center text-zinc-400">Carregando sessão...</div>;
 
   if (!session) {
-    const userHasOpenSession = cashRegisters.some(r => r.session_status === 'open' && r.seller_id === user.id);
+    const userHasOpenSession = cashRegisters.some(r => r.session_status === 'open' && (r.seller_id === user.id || r.current_seller_id === user.id));
+    const anyRegisterOpen = cashRegisters.some(r => r.session_status === 'open');
+    const canOpen = hasPermission(user, 'pos_open_cashier');
+    const canClose = hasPermission(user, 'pos_close_cashier');
 
     return (
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-2xl font-black tracking-tight">Seleccionar Caixa</h2>
-            <p className="text-zinc-500">
-              Escolha um caixa aberto ou abra um novo se tiver permissão.
+            <div className="flex items-center gap-3">
+              <h2 className="text-2xl font-black tracking-tight">
+                {canClose ? "Seleccionar Caixa" : "Consultar Caixa"}
+              </h2>
+              {!canClose && (
+                <span className="text-[11px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 px-3 py-1 rounded-full border border-amber-200">
+                  Modo de Consulta
+                </span>
+              )}
+            </div>
+            <p className="text-zinc-500 mt-1">
+              {canClose 
+                ? "Escolha um caixa aberto para fechar ou abra um novo se tiver permissão." 
+                : "Selecione um caixa em funcionamento para consultar métricas, entradas, saídas e cédulas em cofre."}
               {userHasOpenSession && (
                 <span className="block mt-1 text-rose-500 font-bold text-sm">
-                  Você já possui um caixa aberto. Feche-o antes de abrir outro.
+                  Você já possui uma sessão ativa de caixa.
                 </span>
               )}
             </p>
           </div>
         </div>
+
+        {!anyRegisterOpen && !canOpen && (
+          <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-center gap-3 text-amber-800">
+            <Lock size={20} className="text-amber-600 shrink-0" />
+            <div className="text-xs">
+              <span className="font-bold">Nenhum caixa aberto no momento:</span> O seu perfil permite consultar informações e cédulas/moedas de caixas em funcionamento, mas você não tem permissão para abrir um novo caixa. Solicite a abertura a um supervisor ou proprietário.
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {cashRegisters.map(register => {
@@ -16194,19 +16309,21 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
                 {register.session_status === 'open' ? (
                   <div className="space-y-2">
                     {isOpenedByOthers && (
-                      <p className="text-[10px] text-center font-bold text-zinc-400 uppercase mb-1">Ocupado</p>
+                      <p className="text-[10px] text-center font-bold text-zinc-400 uppercase mb-1">Operado por outro utilizador</p>
                     )}
                     <button
                       onClick={() => handleSelectRegister(register.id)}
                       className={cn(
-                        "w-full py-3 rounded-xl font-bold transition-all active:scale-95",
-                        isOpenedByMe ? "bg-orange-500 hover:bg-orange-600 text-white" : "bg-green-600 hover:bg-green-700 text-white"
+                        "w-full py-3 rounded-xl font-bold transition-all active:scale-95 shadow-sm cursor-pointer",
+                        isOpenedByMe ? "bg-orange-500 hover:bg-orange-600 text-white" : "bg-emerald-600 hover:bg-emerald-700 text-white"
                       )}
                     >
-                      {isOpenedByMe ? 'Fechar Meu Caixa' : ((user.role === 'owner' || user.role === 'manager') && hasPermission(user, 'pos_close_cashier') ? 'Fechar Caixa' : 'Entrar no Caixa')}
+                      {isOpenedByMe 
+                        ? (canClose ? 'Fechar Meu Caixa' : 'Consultar Meu Caixa') 
+                        : (canClose && (user.role === 'owner' || user.role === 'manager') ? 'Fechar Caixa' : 'Entrar no Caixa (Consultar)')}
                     </button>
                   </div>
-                ) : hasPermission(user, 'pos_open_cashier') ? (
+                ) : canOpen ? (
                   <div className="space-y-3">
                     {userHasOpenSession ? (
                       <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl text-center">
@@ -16236,10 +16353,10 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
                     )}
                   </div>
                 ) : (
-                  <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl text-center">
-                    <Lock size={20} className="mx-auto mb-2 text-rose-400" />
-                    <p className="text-xs font-bold text-rose-600 uppercase tracking-wider">Caixa Fechado</p>
-                    <p className="text-[10px] text-rose-400 mt-1">Aguarde a abertura por um supervisor.</p>
+                  <div className="bg-zinc-50 border border-zinc-200/80 p-4 rounded-2xl text-center space-y-1">
+                    <Lock size={18} className="mx-auto text-zinc-400" />
+                    <p className="text-xs font-bold text-zinc-600 uppercase tracking-wider">Caixa Fechado</p>
+                    <p className="text-[10px] text-zinc-400">Apenas supervisores com permissão podem abrir este caixa.</p>
                   </div>
                 )}
               </Card>
@@ -16266,17 +16383,39 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
   }
 
   const diff = parseFloat(physicalAmount || '0') - session.totals.expected;
+  const canClose = hasPermission(user, 'pos_close_cashier');
+  const canExecuteClose = canClose && (user.role === 'owner' || user.role === 'manager' || session.seller_id === user.id);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Fechar Caixa</h2>
-          <p className="text-zinc-500">Sessão iniciada em {new Date(session.opening_time).toLocaleString('pt-AO')}</p>
+          <div className="flex items-center gap-3">
+            <h2 className="text-2xl font-bold tracking-tight">
+              {canClose ? "Fechar Caixa" : "Consulta de Caixa"}
+            </h2>
+            {!canClose && (
+              <span className="text-[11px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 px-3 py-1 rounded-full border border-amber-200">
+                Apenas Visualização
+              </span>
+            )}
+          </div>
+          <p className="text-zinc-500 text-sm mt-1">
+            Sessão iniciada em {new Date(session.opening_time).toLocaleString('pt-AO')} por <span className="font-bold text-zinc-700">{session.seller_name || user.name}</span>
+          </p>
         </div>
-        <div className="bg-emerald-100 text-emerald-600 px-4 py-2 rounded-full text-xs font-black flex items-center gap-2">
-          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-          CAIXA ABERTO
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setSession(null)}
+            className="text-xs font-bold text-zinc-600 hover:text-zinc-900 bg-zinc-100 hover:bg-zinc-200 px-3.5 py-2 rounded-xl transition-all cursor-pointer"
+          >
+            Alternar Caixa
+          </button>
+          <div className="bg-emerald-100 text-emerald-600 px-4 py-2 rounded-full text-xs font-black flex items-center gap-2">
+            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+            CAIXA ABERTO
+          </div>
         </div>
       </div>
 
@@ -16303,32 +16442,30 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
               <span className="text-2xl font-black text-zinc-900">Kz {(session.totals.expected || 0).toLocaleString()}</span>
             </div>
             
-            <div className="space-y-2 pt-4">
-              <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Valor Físico em Caixa</label>
+            <div className="space-y-2 pt-2">
+              <label className="text-xs font-bold text-zinc-500 uppercase ml-1">Contagem Física de Conferência</label>
               <input
                 type="number"
                 value={isNaN(Number(physicalAmount)) ? '' : physicalAmount}
                 onChange={e => setPhysicalAmount(e.target.value)}
-                placeholder="Informe o valor contado..."
+                placeholder="Informe o valor contado em caixa..."
                 className="w-full px-6 py-4 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 font-black text-2xl"
               />
             </div>
 
-            {session.denominations && (
-              <button
-                type="button"
-                onClick={() => setIsInventoryModalOpen(true)}
-                className="w-full py-3 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-colors border border-zinc-200"
-              >
-                <Coins size={16} className="text-amber-500" />
-                Ver Detalhes das Cédulas e Moedas no Caixa
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setIsInventoryModalOpen(true)}
+              className="w-full py-3.5 px-4 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-colors border border-amber-200 shadow-sm cursor-pointer"
+            >
+              <Coins size={18} className="text-amber-600" />
+              Ver Detalhes das Cédulas e Moedas no Caixa
+            </button>
 
             {physicalAmount && (
               <div className={cn(
                 "p-4 rounded-2xl flex items-center justify-between",
-                diff === 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+                diff === 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-rose-50 text-rose-700 border border-rose-200"
               )}>
                 <span className="text-sm font-bold">{diff === 0 ? 'Caixa Conferido' : 'Diferença de Caixa'}</span>
                 <span className="font-black">Kz {(diff || 0).toLocaleString()}</span>
@@ -16345,19 +16482,21 @@ const SellerCloseCashier = ({ user, onUpdate }: { user: User, onUpdate: (u: User
             <h4 className="font-bold text-xl mb-2">Encerrar Operações</h4>
             <p className="text-sm text-zinc-500">Ao fechar o caixa, você não poderá realizar novas vendas nesta sessão.</p>
           </div>
-          {hasPermission(user, 'pos_close_cashier') && (user.role === 'owner' || user.role === 'manager' || session.seller_id === user.id) ? (
+          {canExecuteClose ? (
             <button
               onClick={handleCloseSession}
               disabled={!physicalAmount}
-              className="w-full bg-orange-500 text-white py-5 rounded-2xl font-black text-lg hover:bg-orange-600 transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed shadow-lg shadow-orange-100"
+              className="w-full bg-orange-500 text-white py-5 rounded-2xl font-black text-lg hover:bg-orange-600 transition-all active:scale-95 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed shadow-lg shadow-orange-100 cursor-pointer"
             >
               Fechar Caixa Agora
             </button>
           ) : (
-            <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl text-center">
-              <Lock size={20} className="mx-auto mb-2 text-rose-400" />
-              <p className="text-xs font-bold text-rose-600 uppercase tracking-wider">Sem Permissão</p>
-              <p className="text-[10px] text-rose-400 mt-1">Apenas o funcionário que abriu este caixa, o gerente ou o proprietário podem fechá-lo.</p>
+            <div className="bg-amber-50 border border-amber-200 p-5 rounded-2xl text-center space-y-2">
+              <Lock size={22} className="mx-auto text-amber-600" />
+              <p className="text-xs font-bold text-amber-900 uppercase tracking-wider">Modo de Consulta Ativo</p>
+              <p className="text-xs text-amber-700 leading-relaxed">
+                Você tem permissão para consultar os valores e as cédulas/moedas no caixa. O encerramento definitivo desta sessão requer a permissão 'Fechar Caixa' concedida pelo proprietário ou gerente.
+              </p>
             </div>
           )}
         </Card>

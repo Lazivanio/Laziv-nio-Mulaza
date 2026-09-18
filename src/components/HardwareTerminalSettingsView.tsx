@@ -217,37 +217,66 @@ export const HardwareTerminalSettingsView: React.FC<HardwareSettingsProps> = ({
     setIsKickingDrawer(true);
     const url = printConfig.localAgentUrl || 'http://localhost:9100';
     try {
-      const isTcp = printConfig.defaultPrinter?.includes(':') || /^\d+\.\d+\.\d+\.\d+/.test(printConfig.defaultPrinter);
-      let ip = '';
-      let port = 9100;
-      if (isTcp) {
-        const parts = printConfig.defaultPrinter.split(':');
-        ip = parts[0];
-        port = parts[1] ? parseInt(parts[1], 10) : 9100;
+      let localSuccess = false;
+      try {
+        const isTcp = printConfig.defaultPrinter?.includes(':') || /^\d+\.\d+\.\d+\.\d+/.test(printConfig.defaultPrinter);
+        let ip = '';
+        let port = 9100;
+        if (isTcp) {
+          const parts = printConfig.defaultPrinter.split(':');
+          ip = parts[0];
+          port = parts[1] ? parseInt(parts[1], 10) : 9100;
+        }
+
+        const res = await fetch(`${url}/api/drawer/open`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-Terminal-Token': printConfig.terminalToken || 'FATUR-TERM-7389-9A2E'
+          },
+          body: JSON.stringify({
+            printer: printConfig.defaultPrinter || 'EPSON TM-T20',
+            interface: isTcp ? 'tcp' : 'spooler',
+            ip: isTcp ? ip : undefined,
+            port: isTcp ? port : undefined,
+            pin: printConfig.printerDrawerPin || 'pin2'
+          })
+        });
+
+        if (res.ok) {
+          showToast("⚡ Pulso solenóide enviado para a porta RJ11 da impressora via Agente Local!");
+          localSuccess = true;
+          return;
+        }
+      } catch (err: any) {
+        console.info("Agente local não acessível:", err);
       }
 
-      const res = await fetch(`${url}/api/drawer/open`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-Terminal-Token': printConfig.terminalToken || 'FATUR-TERM-7389-9A2E'
-        },
-        body: JSON.stringify({
-          printer: printConfig.defaultPrinter || 'EPSON TM-T20',
-          interface: isTcp ? 'tcp' : 'spooler',
-          ip: isTcp ? ip : undefined,
-          port: isTcp ? port : undefined,
-          pin: printConfig.printerDrawerPin || 'pin2'
-        })
-      });
+      if (!localSuccess) {
+        // Tentativa via Servidor WSS
+        try {
+          const cloudRes = await fetch('/api/hardware/drawer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              establishment_id: (establishmentInfo as any)?.id || (user as any)?.establishment_id || 1,
+              pin: printConfig.printerDrawerPin || 'pin2',
+              printer: printConfig.defaultPrinter
+            })
+          });
+          if (cloudRes.ok) {
+            const data = await cloudRes.json();
+            if (data.success) {
+              showToast("⚡ Pulso solenóide enviado via Agente em Nuvem!");
+              return;
+            }
+          }
+        } catch (cloudErr) {
+          console.info("Tentativa nuvem falhou:", cloudErr);
+        }
 
-      if (res.ok) {
-        showToast("⚡ Pulso solenóide enviado para a porta RJ11 da impressora!");
-      } else {
-        showToast("Falha ao emitir pulso de abertura de gaveta.", "error");
+        showToast("Nenhum Agente de Hardware detectado na porta 9100 nem conectado via Nuvem.", "error");
       }
-    } catch (err: any) {
-      showToast(`Não foi possível enviar pulso para a gaveta: ${err.message}`, "error");
     } finally {
       setIsKickingDrawer(false);
     }
